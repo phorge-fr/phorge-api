@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/compute"
@@ -21,9 +22,11 @@ type Deps struct {
 	Authz   *authz.Authorizer
 	Tenants tenants.Store
 	// Images and Instances are the stores of the tenant routes.
-	Images    compute.ImageStore
-	Instances compute.InstanceStore
-	Log       *slog.Logger
+	Images      compute.ImageStore
+	Instances   compute.InstanceStore
+	Memberships access.MembershipStore
+	Keys        access.KeyStore
+	Log         *slog.Logger
 	// Now is the clock, time.Now when nil.
 	Now func() time.Time
 }
@@ -41,6 +44,8 @@ func Register(s *server.Server, d Deps) {
 	(&tenantRoutes{base: b, store: d.Tenants}).register(s, d.Auth.Middleware)
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances}).register(s, d.Auth.Middleware)
 	(&instanceRoutes{base: b, store: d.Instances, images: d.Images}).register(s, d.Auth.Middleware)
+	(&membershipRoutes{base: b, store: d.Memberships}).register(s, d.Auth.Middleware)
+	(&keyRoutes{base: b, store: d.Keys}).register(s, d.Auth.Middleware)
 
 	s.Handle("GET /openapi.yaml", openapi.SpecHandler())
 	s.Handle("GET /docs", openapi.UIHandler())
