@@ -13,7 +13,9 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/api"
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/config"
+	"github.com/phorge-fr/phorge-api/internal/fga"
 	"github.com/phorge-fr/phorge-api/internal/kube"
 	"github.com/phorge-fr/phorge-api/internal/server"
 )
@@ -30,12 +32,21 @@ func main() {
 		os.Exit(2)
 	}
 
+	fgaHTTP, err := fga.HTTPClient(cfg.CAFile)
+	if err != nil {
+		log.Error("invalid configuration", "error", err)
+		os.Exit(2)
+	}
+
 	srvAPI := server.New(log)
-	api.Register(srvAPI, api.Deps{Auth: &auth.Authenticator{
-		Users: auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil),
-		Keys:  auth.NewKeyVerifier(kube.NewLazyKeys(cfg.KubeContext)),
-		Log:   log,
-	}})
+	api.Register(srvAPI, api.Deps{
+		Auth: &auth.Authenticator{
+			Users: auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil),
+			Keys:  auth.NewKeyVerifier(kube.NewLazyKeys(cfg.KubeContext)),
+			Log:   log,
+		},
+		Authz: authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdmins),
+	})
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

@@ -6,13 +6,15 @@ import (
 	"net/http"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/openapi"
 	"github.com/phorge-fr/phorge-api/internal/server"
 )
 
 // Deps is what the routes need.
 type Deps struct {
-	Auth *auth.Authenticator
+	Auth  *auth.Authenticator
+	Authz *authz.Authorizer
 }
 
 // Register adds the routes. A route under /v1 must go through d.Auth.Middleware and be described in
