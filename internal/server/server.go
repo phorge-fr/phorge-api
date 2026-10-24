@@ -21,6 +21,7 @@ type Server struct {
 	duration *prometheus.HistogramVec
 	draining atomic.Bool
 	mux      *http.ServeMux
+	routes   []string
 }
 
 // New returns a Server with /healthz, /readyz and /metrics.
@@ -45,14 +46,20 @@ func New(log *slog.Logger) *Server {
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
 
-	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	s.mux.HandleFunc("GET /readyz", s.readyz)
-	s.mux.Handle("GET /metrics", promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}))
+	s.Handle("GET /healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	s.Handle("GET /readyz", http.HandlerFunc(s.readyz))
+	s.Handle("GET /metrics", promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}))
 	return s
 }
 
 // Handle registers a route (a Go 1.22 pattern such as "GET /v1/tenants/{t}"). Every route is logged and measured.
-func (s *Server) Handle(pattern string, h http.Handler) { s.mux.Handle(pattern, h) }
+func (s *Server) Handle(pattern string, h http.Handler) {
+	s.routes = append(s.routes, pattern)
+	s.mux.Handle(pattern, h)
+}
+
+// Routes lists the registered patterns, so that a test can compare them with the OpenAPI document.
+func (s *Server) Routes() []string { return append([]string(nil), s.routes...) }
 
 // Registry lets the other packages register their own metrics.
 func (s *Server) Registry() prometheus.Registerer { return s.registry }

@@ -1,0 +1,197 @@
+openapi: 3.0.3
+info:
+    title: Phorge API
+    version: 0.1.0
+    description: |
+        Manage tenants, images, instances, memberships and API keys of the Phorge cloud.
+
+        The API creates, reads and deletes the `phorge.fr` objects of the control cluster; Crossplane turns them into
+        Incus and OpenFGA objects. Everything it does is asynchronous: a creation is answered once the object exists,
+        and the client polls it until it is ready.
+
+        This document grows with the API. It lists the routes that exist, not the ones that are planned.
+
+        ## Authentication
+
+        Send `Authorization: Bearer <credential>`. The credential is one of:
+
+        - an **access token of Authentik** (OIDC, application "Phorge"), for a person. The user is the `email` claim of
+          the token. From a terminal, the device code flow gives one.
+        - an **API key** `phk_<tenant>_<name>_<secret>`, for a machine. It works on its tenant only, with the scopes it
+          was given.
+
+        Whatever is wrong with a credential, the answer is the same `401`, so that nothing can be probed.
+servers:
+    - url: /
+tags:
+    - name: Identity
+    - name: Operations
+paths:
+    /v1/whoami:
+        get:
+            tags:
+                - Identity
+            operationId: whoami
+            summary: Who the API takes you for
+            description: |
+                Answers with the identity the credential stands for. For a user, `subject` is `user:<email>`, the user of
+                every authorization check; for a key, `apikey:<tenant>.<name>`.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The caller.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Identity"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /healthz:
+        get:
+            tags:
+                - Operations
+            operationId: healthz
+            summary: The process is alive
+            description: Used by the liveness probe. It stays `200` while the API shuts down, so that the pod is not restarted.
+            security: []
+            responses:
+                "200":
+                    description: Alive.
+    /readyz:
+        get:
+            tags:
+                - Operations
+            operationId: readyz
+            summary: The process takes traffic
+            description: Used by the readiness probe. It answers `503` while the API shuts down.
+            security: []
+            responses:
+                "200":
+                    description: Ready.
+                "503":
+                    description: Shutting down.
+                    content:
+                        text/plain:
+                            schema:
+                                type: string
+    /metrics:
+        get:
+            tags:
+                - Operations
+            operationId: metrics
+            summary: Prometheus metrics
+            security: []
+            responses:
+                "200":
+                    description: Metrics in the Prometheus text format.
+                    content:
+                        text/plain:
+                            schema:
+                                type: string
+    /openapi.yaml:
+        get:
+            tags:
+                - Operations
+            operationId: openapi
+            summary: This document
+            security: []
+            responses:
+                "200":
+                    description: The OpenAPI document.
+                    content:
+                        application/yaml:
+                            schema:
+                                type: string
+components:
+    securitySchemes:
+        bearerAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: JWT
+            description: An access token of Authentik. Paste the token only, without `Bearer`.
+        apiKeyAuth:
+            type: http
+            scheme: bearer
+            bearerFormat: phk_<tenant>_<name>_<secret>
+            description: An API key of a tenant. Paste the key only, without `Bearer`.
+    responses:
+        Unauthenticated:
+            description: The credential is missing, wrong, expired or revoked.
+            headers:
+                WWW-Authenticate:
+                    schema:
+                        type: string
+                        example: Bearer realm="phorge"
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+        Unavailable:
+            description: The credential could not be checked, Authentik or the Kubernetes API does not answer. Try again.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+    schemas:
+        Identity:
+            type: object
+            required:
+                - kind
+                - subject
+            properties:
+                kind:
+                    type: string
+                    enum:
+                        - user
+                        - apikey
+                subject:
+                    type: string
+                    description: The user of the authorization checks.
+                    example: user:alice@example.org
+                email:
+                    type: string
+                    description: The email claim, exactly as Authentik gives it. Users only.
+                    example: alice@example.org
+                tenant:
+                    type: string
+                    description: The only tenant the key works on. Keys only.
+                    example: demo
+                name:
+                    type: string
+                    description: The name of the key. Keys only.
+                    example: ci
+                scopes:
+                    type: array
+                    description: What the key may do. Keys only.
+                    items:
+                        type: string
+                        enum:
+                            - tenant:read
+                            - instances:read
+                            - instances:write
+                            - images:read
+                            - images:write
+                            - memberships:read
+                            - memberships:write
+        Error:
+            type: object
+            required:
+                - error
+            properties:
+                error:
+                    type: object
+                    required:
+                        - code
+                        - message
+                    properties:
+                        code:
+                            type: string
+                            description: Stable, meant for programs.
+                            example: unauthenticated
+                        message:
+                            type: string
+                            description: Meant for people.
