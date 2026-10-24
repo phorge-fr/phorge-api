@@ -14,6 +14,7 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
+	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
@@ -122,9 +123,11 @@ func (t tokens) Verify(_ context.Context, token string) (auth.Identity, error) {
 const adminGroup = "phorge-platform-admins"
 
 type env struct {
-	srv   *server.Server
-	store *store
-	fga   *checker
+	srv       *server.Server
+	store     *store
+	fga       *checker
+	images    *imageStore
+	instances *instanceStore
 }
 
 func newEnv(t *testing.T) *env {
@@ -139,6 +142,23 @@ func newEnv(t *testing.T) *env {
 			"user:alice@example.org can_read_tenant tenant:demo":  true,
 			"user:viewer@example.org can_read_tenant tenant:demo": true,
 			"apikey:demo.ci can_read_tenant tenant:demo":          true,
+
+			// What the roles of the model give, written out (the model itself is tested against OpenFGA in authz).
+			"user:viewer@example.org can_read_images tenant:demo":    true,
+			"user:viewer@example.org can_read_instances tenant:demo": true,
+
+			"user:user@example.org can_read_tenant tenant:demo":     true,
+			"user:user@example.org can_read_images tenant:demo":     true,
+			"user:user@example.org can_read_instances tenant:demo":  true,
+			"user:user@example.org can_write_instances tenant:demo": true,
+
+			"user:operator@example.org can_read_tenant tenant:demo":     true,
+			"user:operator@example.org can_read_images tenant:demo":     true,
+			"user:operator@example.org can_write_images tenant:demo":    true,
+			"user:operator@example.org can_read_instances tenant:demo":  true,
+			"user:operator@example.org can_write_instances tenant:demo": true,
+
+			"apikey:demo.ci can_read_images tenant:demo": true,
 		},
 		objects: map[string][]string{
 			"user:alice@example.org":  {"tenant:demo"},
@@ -151,21 +171,27 @@ func newEnv(t *testing.T) *env {
 		"admin":    {Kind: auth.KindUser, Subject: "user:admin@example.org", Email: "admin@example.org", Groups: []string{adminGroup}},
 		"alice":    {Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org"},
 		"viewer":   {Kind: auth.KindUser, Subject: "user:viewer@example.org", Email: "viewer@example.org"},
+		"user":     {Kind: auth.KindUser, Subject: "user:user@example.org", Email: "user@example.org"},
+		"operator": {Kind: auth.KindUser, Subject: "user:operator@example.org", Email: "operator@example.org"},
 		"mallory":  {Kind: auth.KindUser, Subject: "user:mallory@example.org", Email: "mallory@example.org", Groups: []string{"staff"}},
 		"almostit": {Kind: auth.KindUser, Subject: "user:almost@example.org", Email: "almost@example.org", Groups: []string{adminGroup + "-ro"}},
 	}
 	keys := tokens{
 		"phk_demo_ci": {Kind: auth.KindAPIKey, Subject: "apikey:demo.ci", Tenant: "demo", Name: "ci", Scopes: []string{"tenant:read"}, Groups: []string{adminGroup}},
 	}
+	images := &imageStore{data: map[string]map[string]compute.Image{}}
+	instances := &instanceStore{data: map[string]map[string]compute.Instance{}}
 	s := server.New(log)
 	Register(s, Deps{
-		Auth:    &auth.Authenticator{Users: users, Keys: keys, Log: log},
-		Authz:   authz.New(fga, adminGroup),
-		Tenants: st,
-		Log:     log,
-		Now:     func() time.Time { return now },
+		Auth:      &auth.Authenticator{Users: users, Keys: keys, Log: log},
+		Authz:     authz.New(fga, adminGroup),
+		Tenants:   st,
+		Images:    images,
+		Instances: instances,
+		Log:       log,
+		Now:       func() time.Time { return now },
 	})
-	return &env{srv: s, store: st, fga: fga}
+	return &env{srv: s, store: st, fga: fga, images: images, instances: instances}
 }
 
 func (e *env) do(t *testing.T, method, path, token, body string) *httptest.ResponseRecorder {

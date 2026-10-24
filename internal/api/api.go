@@ -9,6 +9,7 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
+	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/openapi"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
@@ -19,7 +20,10 @@ type Deps struct {
 	Auth    *auth.Authenticator
 	Authz   *authz.Authorizer
 	Tenants tenants.Store
-	Log     *slog.Logger
+	// Images and Instances are the stores of the tenant routes.
+	Images    compute.ImageStore
+	Instances compute.InstanceStore
+	Log       *slog.Logger
 	// Now is the clock, time.Now when nil.
 	Now func() time.Time
 }
@@ -33,7 +37,10 @@ func Register(s *server.Server, d Deps) {
 	if now == nil {
 		now = time.Now
 	}
-	(&tenantRoutes{store: d.Tenants, authz: d.Authz, log: d.Log, now: now}).register(s, d.Auth.Middleware)
+	b := base{authz: d.Authz, tenants: d.Tenants, log: d.Log, now: now}
+	(&tenantRoutes{base: b, store: d.Tenants}).register(s, d.Auth.Middleware)
+	(&imageRoutes{base: b, store: d.Images, instances: d.Instances}).register(s, d.Auth.Middleware)
+	(&instanceRoutes{base: b, store: d.Instances, images: d.Images}).register(s, d.Auth.Middleware)
 
 	s.Handle("GET /openapi.yaml", openapi.SpecHandler())
 	s.Handle("GET /docs", openapi.UIHandler())

@@ -4,13 +4,13 @@ package tenants
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/resource"
+	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
 // Plan is the quota plan of a tenant, which Incus enforces as project limits.
@@ -30,24 +30,18 @@ func (p Plan) Valid() bool { return p == Small || p == Medium || p == Large }
 const MaxDisplayName = 100
 
 // Phase is where a tenant is, for a client that polls it.
-type Phase string
+type Phase = status.Phase
 
 // The phases.
 const (
-	// Provisioning: the composed resources are being created or updated. Nothing is wrong yet.
-	Provisioning Phase = "Provisioning"
-	// Ready: everything the tenant is made of is up.
-	Ready Phase = "Ready"
-	// Failed: it has not become ready and Problems says why, for longer than FailedAfter.
-	Failed Phase = "Failed"
-	// Deleting: it is being deleted, which takes up to a couple of minutes (Incus refuses to delete a project that is not
-	// empty, so it is retried until it is).
-	Deleting Phase = "Deleting"
+	Provisioning = status.Provisioning
+	Ready        = status.Ready
+	Failed       = status.Failed
+	Deleting     = status.Deleting
 )
 
-// FailedAfter is how long a tenant may be not ready with problems before it is called failed: the first reconciles of
-// Crossplane report problems that go away by themselves.
-const FailedAfter = 3 * time.Minute
+// FailedAfter is how long a tenant may be not ready with problems before it is called failed.
+const FailedAfter = status.FailedAfter
 
 // Tenant is a Tenant object as the API presents it.
 type Tenant struct {
@@ -72,16 +66,7 @@ type Tenant struct {
 
 // PhaseAt is the phase of the tenant at now.
 func (t Tenant) PhaseAt(now time.Time) Phase {
-	switch {
-	case t.Deleting:
-		return Deleting
-	case t.Ready:
-		return Ready
-	case t.Problems != "" && now.Sub(t.NotReadySince) >= FailedAfter:
-		return Failed
-	default:
-		return Provisioning
-	}
+	return status.Object{Ready: t.Ready, NotReadySince: t.NotReadySince, Problems: t.Problems, Deleting: t.Deleting}.At(now)
 }
 
 // CreateRequest is what creating a tenant asks for.
@@ -103,9 +88,7 @@ type PatchRequest struct {
 }
 
 // InvalidError lists what is wrong with a request, field by field.
-type InvalidError struct{ Problems []string }
-
-func (e *InvalidError) Error() string { return strings.Join(e.Problems, "; ") }
+type InvalidError = resource.InvalidError
 
 // Validate checks the request before anything is sent to the cluster.
 func (r CreateRequest) Validate() error {
@@ -148,8 +131,8 @@ func (r PatchRequest) Validate() error {
 
 // Errors of a Store.
 var (
-	ErrNotFound = errors.New("no such tenant")
-	ErrExists   = errors.New("the tenant already exists")
+	ErrNotFound = resource.ErrNotFound
+	ErrExists   = resource.ErrExists
 )
 
 // Store reads and writes the tenants. Delete is a foreground deletion: the tenant stays, as Deleting, until everything it
