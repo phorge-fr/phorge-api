@@ -26,6 +26,9 @@ type Config struct {
 	OpenFGAStoreID string
 	// CAFile is an optional PEM bundle added to the trusted roots (the internal CA that signs openfga.core.phorge).
 	CAFile string
+	// KubeContext picks a context of the kubeconfig when the API runs outside the cluster (development). In a pod
+	// the service account is used and this is ignored.
+	KubeContext string
 	// PlatformAdmins are the emails allowed to create, resize and delete tenants.
 	PlatformAdmins []string
 }
@@ -39,6 +42,7 @@ const (
 	EnvOpenFGAAPIKey  = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
 	EnvOpenFGAStoreID = "OPENFGA_STORE_ID"
 	EnvCAFile         = "CA_FILE"
+	EnvKubeContext    = "KUBE_CONTEXT"
 	EnvPlatformAdmins = "PLATFORM_ADMINS"
 )
 
@@ -60,6 +64,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		OpenFGAAPIKey:  get(EnvOpenFGAAPIKey),
 		OpenFGAStoreID: get(EnvOpenFGAStoreID),
 		CAFile:         get(EnvCAFile),
+		KubeContext:    get(EnvKubeContext),
 		PlatformAdmins: splitList(get(EnvPlatformAdmins)),
 	}
 	if c.ListenAddr == "" {
@@ -120,6 +125,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("openfga_url", c.OpenFGAURL),
 		slog.String("openfga_store_id", c.OpenFGAStoreID),
 		slog.String("ca_file", c.CAFile),
+		slog.String("kube_context", c.KubeContext),
 		slog.Int("platform_admins", len(c.PlatformAdmins)),
 	)
 }

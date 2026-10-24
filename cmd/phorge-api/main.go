@@ -11,7 +11,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/phorge-fr/phorge-api/internal/api"
+	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/config"
+	"github.com/phorge-fr/phorge-api/internal/kube"
 	"github.com/phorge-fr/phorge-api/internal/server"
 )
 
@@ -27,8 +30,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	api := server.New(log)
-	srv := &http.Server{Addr: cfg.ListenAddr, Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	srvAPI := server.New(log)
+	api.Register(srvAPI, api.Deps{Auth: &auth.Authenticator{
+		Users: auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil),
+		Keys:  auth.NewKeyVerifier(kube.NewLazyKeys(cfg.KubeContext)),
+		Log:   log,
+	}})
+	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -42,7 +50,7 @@ func main() {
 
 	<-ctx.Done()
 	log.Info("shutting down")
-	api.Drain()
+	srvAPI.Drain()
 	time.Sleep(drainDelay)
 	shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
