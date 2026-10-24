@@ -1,0 +1,112 @@
+name: docker
+
+on:
+    pull_request:
+    push:
+        branches:
+            - main
+        tags:
+            - 'v*'
+
+permissions:
+    contents: read
+
+jobs:
+    hadolint:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: hadolint/hadolint-action@v3.5.0
+              with:
+                  dockerfile: Dockerfile
+
+    image:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: docker/setup-buildx-action@v4
+
+            - name: Build the image (nothing is pushed)
+              uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  load: true
+                  tags: phorge-api:ci
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+
+            - name: Refuses to start without a configuration
+              run: |
+                  set +e
+                  docker run --rm phorge-api:ci
+                  code=$?
+                  echo "exit code: $code"
+                  test "$code" -eq 2
+
+            - name: Starts, answers its probes and stops cleanly
+              run: |
+                  docker run -d --name api -p 8080:8080 \
+                    -e OIDC_ISSUER=https://auth.example.org/application/o/phorge/ \
+                    -e OIDC_AUDIENCE=ci \
+                    -e OPENFGA_URL=https://openfga.example.org \
+                    -e OPENFGA_API_KEY=ci-key \
+                    -e OPENFGA_STORE_ID=ci-store \
+                    phorge-api:ci
+                  for _ in $(seq 1 20); do
+                    curl -fsS http://127.0.0.1:8080/healthz && break
+                    sleep 1
+                  done
+                  curl -fsS http://127.0.0.1:8080/readyz
+                  curl -fsS http://127.0.0.1:8080/metrics | grep -q '^go_goroutines'
+                  docker stop api
+                  test "$(docker inspect -f '{{.State.ExitCode}}' api)" -eq 0
+                  if docker logs api 2>&1 | grep -q ci-key; then echo "the OpenFGA key is in the logs"; exit 1; fi
+
+            - name: Logs of the container
+              if: failure()
+              run: docker logs api || true
+
+            - name: Cross-build for arm64 and amd64 (the control cluster is arm64)
+              uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  platforms: linux/amd64,linux/arm64
+                  cache-from: type=gha
+
+    publish:
+        if: github.event_name == 'push'
+        needs:
+            - hadolint
+            - image
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - uses: actions/checkout@v7
+            - uses: docker/setup-buildx-action@v4
+
+            - uses: docker/login-action@v4
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - id: meta
+              uses: docker/metadata-action@v6
+              with:
+                  images: ghcr.io/${{ github.repository }}
+                  tags: |
+                      type=sha
+                      type=raw,value=latest
+                      type=semver,pattern={{version}}
+
+            - uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  platforms: linux/amd64,linux/arm64
+                  push: true
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max

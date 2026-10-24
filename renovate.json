@@ -1,0 +1,22 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": [
+        "config:recommended",
+        ":semanticCommits"
+    ],
+    "baseBranchPatterns": [
+        "main"
+    ],
+    "prHourlyLimit": 0,
+    "prConcurrentLimit": 0,
+    "packageRules": [
+        {
+            "description": "The go directive of go.mod and the golang image of the Dockerfile move together, in one PR: building with a different Go than the one go.mod asks for is what the CI is there to catch, not to cause",
+            "matchPackageNames": [
+                "go",
+                "golang"
+            ],
+            "groupName": "go toolchain"
+        }
+    ]
+}

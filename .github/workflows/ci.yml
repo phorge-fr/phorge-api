@@ -1,19 +1,60 @@
 name: ci
+
 on:
     pull_request:
     push:
-        branches: [main]
+        branches:
+            - main
+
+permissions:
+    contents: read
+
 jobs:
+    lint:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-go@v7
+              with:
+                  go-version-file: go.mod
+            - uses: golangci/golangci-lint-action@v9
+              with:
+                  version: v2.5.0
+
     test:
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-go@v5
+            - uses: actions/checkout@v7
+            - uses: actions/setup-go@v7
               with:
                   go-version-file: go.mod
-            - uses: golangci/golangci-lint-action@v8
-              with:
-                  version: v2.5.0
             - run: go vet ./...
             - run: go test -race ./...
             - run: go build ./...
+
+    go-mod-tidy:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/setup-go@v7
+              with:
+                  go-version-file: go.mod
+            - name: go.mod and go.sum are tidy
+              run: |
+                  go mod tidy
+                  git diff --exit-code go.mod go.sum
+
+    govulncheck:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: golang/govulncheck-action@v1
+              with:
+                  go-version-file: go.mod
+                  go-package: ./...
+
+    yamllint:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - run: pipx run yamllint --strict .
