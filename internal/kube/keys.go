@@ -39,43 +39,52 @@ func NewClient(kubeContext string) (dynamic.Interface, error) {
 	return dynamic.NewForConfig(cfg)
 }
 
-// Keys reads the ApiKey objects. It implements auth.KeyStore.
-type Keys struct {
+// Connection is the client of the cluster. It is built on first use, and again after a failure, so that the API starts and
+// answers its probes without a cluster (as in the CI of the image): what needs the cluster is then an "unavailable",
+// not a crash.
+type Connection struct {
 	connect func() (dynamic.Interface, error)
 
 	mu     sync.Mutex
 	client dynamic.Interface
 }
 
-// NewKeys returns a store that reads the keys through client.
-func NewKeys(client dynamic.Interface) *Keys {
-	return &Keys{connect: func() (dynamic.Interface, error) { return client, nil }}
+// NewConnection returns a connection that builds its client with NewClient(kubeContext) when it is first needed.
+func NewConnection(kubeContext string) *Connection {
+	return &Connection{connect: func() (dynamic.Interface, error) { return NewClient(kubeContext) }}
 }
 
-// NewLazyKeys returns a store that builds its client (see NewClient) on the first key it reads, and again after a
-// failure. The API starts and answers its probes without a cluster, as in the CI of the image; a key is then an
-// "unavailable", not a crash.
-func NewLazyKeys(kubeContext string) *Keys {
-	return &Keys{connect: func() (dynamic.Interface, error) { return NewClient(kubeContext) }}
+// Static returns a connection to a client that already exists (tests).
+func Static(client dynamic.Interface) *Connection {
+	return &Connection{connect: func() (dynamic.Interface, error) { return client, nil }}
 }
 
-func (k *Keys) dynamic() (dynamic.Interface, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.client == nil {
-		c, err := k.connect()
+// Dynamic returns the client, building it if needed.
+func (c *Connection) Dynamic() (dynamic.Interface, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.client == nil {
+		client, err := c.connect()
 		if err != nil {
 			return nil, err
 		}
-		k.client = c
+		c.client = client
 	}
-	return k.client, nil
+	return c.client, nil
 }
+
+// Keys reads the ApiKey objects. It implements auth.KeyStore.
+type Keys struct {
+	conn *Connection
+}
+
+// NewKeys returns a store that reads the keys through conn.
+func NewKeys(conn *Connection) *Keys { return &Keys{conn: conn} }
 
 // GetKey gets the ApiKey <name> of the namespace t-<tenant>, with one get. tenant and name must already be checked
 // (auth.ParseKey does).
 func (k *Keys) GetKey(ctx context.Context, tenant, name string) (auth.KeyRecord, error) {
-	client, err := k.dynamic()
+	client, err := k.conn.Dynamic()
 	if err != nil {
 		return auth.KeyRecord{}, err
 	}

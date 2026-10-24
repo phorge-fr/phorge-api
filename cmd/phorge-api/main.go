@@ -38,14 +38,17 @@ func main() {
 		os.Exit(2)
 	}
 
+	kubeConn := kube.NewConnection(cfg.KubeContext)
 	srvAPI := server.New(log)
 	api.Register(srvAPI, api.Deps{
 		Auth: &auth.Authenticator{
 			Users: auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil),
-			Keys:  auth.NewKeyVerifier(kube.NewLazyKeys(cfg.KubeContext)),
+			Keys:  auth.NewKeyVerifier(kube.NewKeys(kubeConn)),
 			Log:   log,
 		},
-		Authz: authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdminGroup),
+		Authz:   authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdminGroup),
+		Tenants: kube.NewTenants(kubeConn),
+		Log:     log,
 	})
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

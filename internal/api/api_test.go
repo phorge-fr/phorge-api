@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -175,5 +176,12 @@ func TestSwaggerUI(t *testing.T) {
 	rec = get(h, "/docs/init.js", "")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "SwaggerUIBundle") {
 		t.Errorf("/docs/init.js: status %d", rec.Code)
+	}
+}
+
+func mustDecode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
+	t.Helper()
+	if err := json.NewDecoder(rec.Body).Decode(v); err != nil {
+		t.Fatalf("not JSON: %v", err)
 	}
 }

@@ -96,15 +96,15 @@ func (v *OIDCVerifier) Verify(ctx context.Context, token string) (Identity, erro
 	if !claims.EmailVerified {
 		return Identity{}, fmt.Errorf("%w: the email is not verified", ErrUnauthenticated)
 	}
-	if !safeEmail(claims.Email) {
+	if !SafeEmail(claims.Email) {
 		return Identity{}, fmt.Errorf("%w: the email is not usable as an OpenFGA user", ErrUnauthenticated)
 	}
 	return Identity{Kind: KindUser, Subject: "user:" + claims.Email, Email: claims.Email, Groups: claims.Groups}, nil
 }
 
-// safeEmail keeps what could change the meaning of "user:<email>" in OpenFGA out of it: a wildcard ("user:*"), a
+// SafeEmail keeps what could change the meaning of "user:<email>" in OpenFGA out of it: a wildcard ("user:*"), a
 // relation ("user:x#member"), a type separator or a space. The email is otherwise kept exactly as written.
-func safeEmail(email string) bool {
+func SafeEmail(email string) bool {
 	if strings.ContainsAny(email, "#:* \t\r\n") || strings.Count(email, "@") != 1 {
 		return false
 	}

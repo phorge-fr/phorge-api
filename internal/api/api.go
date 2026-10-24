@@ -3,24 +3,37 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/openapi"
 	"github.com/phorge-fr/phorge-api/internal/server"
+	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
 // Deps is what the routes need.
 type Deps struct {
-	Auth  *auth.Authenticator
-	Authz *authz.Authorizer
+	Auth    *auth.Authenticator
+	Authz   *authz.Authorizer
+	Tenants tenants.Store
+	Log     *slog.Logger
+	// Now is the clock, time.Now when nil.
+	Now func() time.Time
 }
 
 // Register adds the routes. A route under /v1 must go through d.Auth.Middleware and be described in
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
 	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz)))
+
+	now := d.Now
+	if now == nil {
+		now = time.Now
+	}
+	(&tenantRoutes{store: d.Tenants, authz: d.Authz, log: d.Log, now: now}).register(s, d.Auth.Middleware)
 
 	s.Handle("GET /openapi.yaml", openapi.SpecHandler())
 	s.Handle("GET /docs", openapi.UIHandler())
