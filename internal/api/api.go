@@ -20,7 +20,7 @@ type Deps struct {
 // Register adds the routes. A route under /v1 must go through d.Auth.Middleware and be described in
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
-	s.Handle("GET /v1/whoami", d.Auth.Middleware(http.HandlerFunc(whoami)))
+	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz)))
 
 	s.Handle("GET /openapi.yaml", openapi.SpecHandler())
 	s.Handle("GET /docs", openapi.UIHandler())
@@ -34,12 +34,17 @@ type identityBody struct {
 	Tenant  string    `json:"tenant,omitempty"`
 	Name    string    `json:"name,omitempty"`
 	Scopes  []string  `json:"scopes,omitempty"`
+	// PlatformAdmin: the caller may create, resize and delete tenants.
+	PlatformAdmin bool `json:"platformAdmin"`
 }
 
-func whoami(w http.ResponseWriter, r *http.Request) {
-	id, _ := auth.FromContext(r.Context())
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(identityBody{
-		Kind: id.Kind, Subject: id.Subject, Email: id.Email, Tenant: id.Tenant, Name: id.Name, Scopes: id.Scopes,
-	})
+func whoami(a *authz.Authorizer) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, _ := auth.FromContext(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(identityBody{
+			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Tenant: id.Tenant, Name: id.Name, Scopes: id.Scopes,
+			PlatformAdmin: a.IsPlatformAdmin(id),
+		})
+	}
 }

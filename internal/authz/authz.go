@@ -69,14 +69,14 @@ type Checker interface {
 
 // Authorizer answers the questions of the routes.
 type Authorizer struct {
-	fga    Checker
-	admins []string
+	fga        Checker
+	adminGroup string
 }
 
-// New returns an Authorizer. platformAdmins are the emails that may create, resize and delete tenants: the model has no
-// relation for that, so it is a list of the configuration.
-func New(fga Checker, platformAdmins []string) *Authorizer {
-	return &Authorizer{fga: fga, admins: platformAdmins}
+// New returns an Authorizer. The members of the Authentik group platformAdminGroup may create, resize and delete
+// tenants: the model has no relation for that, so it is read from the groups of the token. Empty: nobody can.
+func New(fga Checker, platformAdminGroup string) *Authorizer {
+	return &Authorizer{fga: fga, adminGroup: platformAdminGroup}
 }
 
 // Allowed reports whether the caller may do action on the tenant. The error is for a decision that could not be taken
@@ -120,10 +120,10 @@ func (a *Authorizer) Tenants(ctx context.Context, id auth.Identity) ([]string, e
 	return out, nil
 }
 
-// IsPlatformAdmin reports whether the caller may create, resize and delete tenants. Only a user can be one, and the
-// comparison is exact, case included: the email is the key of every tuple.
+// IsPlatformAdmin reports whether the caller may create, resize and delete tenants: a user that belongs to the platform
+// administrators group of Authentik. A key never can, and the name of the group is compared exactly.
 func (a *Authorizer) IsPlatformAdmin(id auth.Identity) bool {
-	return id.Kind == auth.KindUser && id.Email != "" && slices.Contains(a.admins, id.Email)
+	return id.Kind == auth.KindUser && a.adminGroup != "" && slices.Contains(id.Groups, a.adminGroup)
 }
 
 // UnknownScopeError is returned for a scope that does not exist.

@@ -20,7 +20,7 @@ Configuration is read from the environment and the process refuses to start, lis
 | `OPENFGA_API_KEY` | yes | Bearer key for OpenFGA (never logged) |
 | `OPENFGA_STORE_ID` | yes | Id of the `phorge-api` store |
 | `CA_FILE` | no | PEM bundle added to the trusted roots (the internal CA) |
-| `PLATFORM_ADMINS` | no | Comma-separated emails allowed to create, resize and delete tenants |
+| `PLATFORM_ADMIN_GROUP` | no | Name of the Authentik group (`phorge-platform-admins`) whose members create, resize and delete tenants, read from the `groups` claim of their token. Empty: nobody can |
 | `KUBE_CONTEXT` | no | Context of the kubeconfig, outside the cluster only (development). In a pod the service account is used |
 | `LISTEN_ADDR` | no | Default `:8080` |
 
@@ -64,7 +64,7 @@ Authentication tells who calls, OpenFGA decides what they may do (`internal/auth
 | write images | `can_write_images` | `images:write` |
 | read, write memberships and keys | `can_read_memberships`, `can_write_memberships` | `memberships:read`, `memberships:write` |
 
-A user gets those through a role (`admin` over `operator` over `user` over `viewer`), a key only through its scopes, which are relations of their own (`instances:write` does not give `instances:read`). `Authorizer.Require(action, ...)` is the middleware of a route: `404` when the caller cannot read the tenant (a tenant that is not yours is not shown to exist), `403` when it can but may not do this, `503` when OpenFGA cannot answer. A decision that cannot be taken is never an "allowed". `Authorizer.Missing` is what keeps a key within its creator, `Authorizer.IsPlatformAdmin` the list of the people who create tenants (`PLATFORM_ADMINS`, the model has no relation for it).
+A user gets those through a role (`admin` over `operator` over `user` over `viewer`), a key only through its scopes, which are relations of their own (`instances:write` does not give `instances:read`). `Authorizer.Require(action, ...)` is the middleware of a route: `404` when the caller cannot read the tenant (a tenant that is not yours is not shown to exist), `403` when it can but may not do this, `503` when OpenFGA cannot answer. A decision that cannot be taken is never an "allowed". `Authorizer.Missing` is what keeps a key within its creator, `Authorizer.IsPlatformAdmin` the people who create tenants: the members of the Authentik group `PLATFORM_ADMIN_GROUP` (the model has no relation for it); `GET /v1/whoami` says whether the caller is one. Members are added in Authentik, the group itself is created by the blueprint in Hangar.
 
 OpenFGA is reached with `OPENFGA_URL`, `OPENFGA_API_KEY` and `OPENFGA_STORE_ID`, and `CA_FILE` for the internal CA of `openfga.core.phorge` (the verification is never turned off).
 

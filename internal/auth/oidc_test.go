@@ -121,6 +121,29 @@ func TestOIDCKeepsTheEmailExactlyAsWritten(t *testing.T) {
 	}
 }
 
+func TestOIDCReadsTheGroups(t *testing.T) {
+	p := newIDP(t)
+	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+
+	id, err := v.Verify(t.Context(), p.token(t, map[string]any{"groups": []string{"authentik Admins", "phorge-platform-admins"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(id.Groups) != 2 || id.Groups[1] != "phorge-platform-admins" {
+		t.Errorf("Groups = %v", id.Groups)
+	}
+
+	id, err = v.Verify(t.Context(), p.token(t, nil))
+	if err != nil || len(id.Groups) != 0 {
+		t.Errorf("a token without groups: %+v, err %v", id, err)
+	}
+
+	// A claim that is not a list of names is not guessed at.
+	if _, err := v.Verify(t.Context(), p.token(t, map[string]any{"groups": "phorge-platform-admins"})); !errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("groups as a string: err = %v", err)
+	}
+}
+
 func TestOIDCRefuses(t *testing.T) {
 	p := newIDP(t)
 	other, err := rsa.GenerateKey(rand.Reader, 2048)

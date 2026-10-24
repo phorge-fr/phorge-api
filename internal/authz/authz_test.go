@@ -73,7 +73,7 @@ func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 
 func TestAllowedAsksTheRightQuestion(t *testing.T) {
 	f := &fake{grants: grants("user:alice@example.org can_write_instances tenant:demo")}
-	a := New(f, nil)
+	a := New(f, "")
 
 	ok, err := a.Allowed(t.Context(), alice, WriteInstances, "demo")
 	if err != nil || !ok {
@@ -97,7 +97,7 @@ func TestAllowedAsksTheRightQuestion(t *testing.T) {
 
 func TestAKeyIsAskedAsAnApiKey(t *testing.T) {
 	f := &fake{grants: grants("apikey:demo.ci can_read_instances tenant:demo")}
-	if ok, err := New(f, nil).Allowed(t.Context(), ci, ReadInstances, "demo"); err != nil || !ok {
+	if ok, err := New(f, "").Allowed(t.Context(), ci, ReadInstances, "demo"); err != nil || !ok {
 		t.Errorf("ok=%v err=%v", ok, err)
 	}
 }
@@ -105,7 +105,7 @@ func TestAKeyIsAskedAsAnApiKey(t *testing.T) {
 func TestAKeyNeverActsOnAnotherTenant(t *testing.T) {
 	// Even if OpenFGA were to say yes: the key belongs to one tenant.
 	f := &fake{grants: grants("apikey:demo.ci can_read_instances tenant:other")}
-	if ok, err := New(f, nil).Allowed(t.Context(), ci, ReadInstances, "other"); err != nil || ok {
+	if ok, err := New(f, "").Allowed(t.Context(), ci, ReadInstances, "other"); err != nil || ok {
 		t.Errorf("ok=%v err=%v", ok, err)
 	}
 	if len(f.asked) != 0 {
@@ -115,7 +115,7 @@ func TestAKeyNeverActsOnAnotherTenant(t *testing.T) {
 
 func TestNothingThatIsNotATenantReachesOpenFGA(t *testing.T) {
 	f := &fake{}
-	a := New(f, nil)
+	a := New(f, "")
 	for _, tenant := range []string{"", "x", "Demo", "demo#admin", "demo:x", "../demo", "*", "demo ", strings.Repeat("a", 40)} {
 		if ok, err := a.Allowed(t.Context(), alice, ReadTenant, tenant); err != nil || ok {
 			t.Errorf("%q: ok=%v err=%v", tenant, ok, err)
@@ -128,10 +128,10 @@ func TestNothingThatIsNotATenantReachesOpenFGA(t *testing.T) {
 
 func TestNoIdentityNoAnswer(t *testing.T) {
 	f := &fake{grants: grants(" can_read_tenant tenant:demo")}
-	if ok, _ := New(f, nil).Allowed(t.Context(), auth.Identity{}, ReadTenant, "demo"); ok {
+	if ok, _ := New(f, "").Allowed(t.Context(), auth.Identity{}, ReadTenant, "demo"); ok {
 		t.Error("an empty identity was allowed")
 	}
-	if ok, err := New(f, nil).Allowed(t.Context(), alice, Action("fly"), "demo"); ok || err == nil {
+	if ok, err := New(f, "").Allowed(t.Context(), alice, Action("fly"), "demo"); ok || err == nil {
 		t.Errorf("an unknown action: ok=%v err=%v", ok, err)
 	}
 }
@@ -139,7 +139,7 @@ func TestNoIdentityNoAnswer(t *testing.T) {
 func TestADecisionThatCannotBeTakenIsAnErrorAndARefusal(t *testing.T) {
 	boom := errors.New("openfga is down")
 	f := &fake{grants: grants("user:alice@example.org can_read_tenant tenant:demo"), err: boom}
-	ok, err := New(f, nil).Allowed(t.Context(), alice, ReadTenant, "demo")
+	ok, err := New(f, "").Allowed(t.Context(), alice, ReadTenant, "demo")
 	if ok || !errors.Is(err, boom) {
 		t.Errorf("ok=%v err=%v", ok, err)
 	}
@@ -147,7 +147,7 @@ func TestADecisionThatCannotBeTakenIsAnErrorAndARefusal(t *testing.T) {
 
 func TestTenants(t *testing.T) {
 	f := &fake{objects: []string{"tenant:zeta", "tenant:demo", "tenant:Bad", "group:x", "tenant:a#b", "tenant:"}}
-	got, err := New(f, nil).Tenants(t.Context(), alice)
+	got, err := New(f, "").Tenants(t.Context(), alice)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,32 +158,35 @@ func TestTenants(t *testing.T) {
 		t.Errorf("asked %q, want %q", f.asked[0], want)
 	}
 
-	if got, _ := New(f, nil).Tenants(t.Context(), auth.Identity{}); got != nil {
+	if got, _ := New(f, "").Tenants(t.Context(), auth.Identity{}); got != nil {
 		t.Errorf("an empty identity sees %v", got)
 	}
 	boom := errors.New("down")
-	if _, err := New(&fake{err: boom}, nil).Tenants(t.Context(), alice); !errors.Is(err, boom) {
+	if _, err := New(&fake{err: boom}, "").Tenants(t.Context(), alice); !errors.Is(err, boom) {
 		t.Errorf("err = %v", err)
 	}
 }
 
 func TestPlatformAdmins(t *testing.T) {
-	a := New(&fake{}, []string{"Alice@Example.org"})
-	if !a.IsPlatformAdmin(auth.Identity{Kind: auth.KindUser, Email: "Alice@Example.org"}) {
-		t.Error("an administrator was not recognised")
+	a := New(&fake{}, "phorge-platform-admins")
+	member := auth.Identity{Kind: auth.KindUser, Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}
+	if !a.IsPlatformAdmin(member) {
+		t.Error("a member of the group was not recognised")
 	}
 	for name, id := range map[string]auth.Identity{
-		"another case": {Kind: auth.KindUser, Email: "alice@example.org"},
-		"nobody":       {},
-		"a key":        {Kind: auth.KindAPIKey, Email: "Alice@Example.org", Subject: "apikey:demo.ci"},
-		"empty email":  {Kind: auth.KindUser},
+		"no group":          {Kind: auth.KindUser, Email: "alice@example.org"},
+		"another group":     {Kind: auth.KindUser, Groups: []string{"authentik Admins"}},
+		"another case":      {Kind: auth.KindUser, Groups: []string{"Phorge-Platform-Admins"}},
+		"a longer name":     {Kind: auth.KindUser, Groups: []string{"phorge-platform-admins-ro"}},
+		"nobody":            {},
+		"a key with groups": {Kind: auth.KindAPIKey, Subject: "apikey:demo.ci", Groups: []string{"phorge-platform-admins"}},
 	} {
 		if a.IsPlatformAdmin(id) {
 			t.Errorf("%s was taken for an administrator", name)
 		}
 	}
-	if New(&fake{}, nil).IsPlatformAdmin(alice) {
-		t.Error("with no administrator configured, nobody is one")
+	if New(&fake{}, "").IsPlatformAdmin(auth.Identity{Kind: auth.KindUser, Groups: []string{""}}) {
+		t.Error("with no group configured, nobody is an administrator, not even a user whose group has an empty name")
 	}
 }
 
@@ -193,7 +196,7 @@ func TestMissingKeepsAKeyWithinItsCreator(t *testing.T) {
 		"user:alice@example.org can_read_tenant tenant:demo",
 		"user:alice@example.org can_write_instances tenant:demo",
 	)}
-	a := New(f, nil)
+	a := New(f, "")
 
 	missing, err := a.Missing(t.Context(), alice, "demo", []string{"tenant:read", "instances:write"})
 	if err != nil || len(missing) != 0 {
@@ -211,7 +214,7 @@ func TestAKeyCanOnlyGiveASubsetOfItsOwnScopes(t *testing.T) {
 		"apikey:demo.ci can_write_memberships tenant:demo",
 		"apikey:demo.ci can_read_instances tenant:demo",
 	)}
-	a := New(f, nil)
+	a := New(f, "")
 	missing, err := a.Missing(t.Context(), ci, "demo", []string{"instances:read", "instances:write"})
 	if err != nil || !slices.Equal(missing, []string{"instances:write"}) {
 		t.Errorf("missing=%v err=%v", missing, err)
@@ -224,7 +227,7 @@ func TestAKeyCanOnlyGiveASubsetOfItsOwnScopes(t *testing.T) {
 }
 
 func TestMissingRefusesAnUnknownScopeAndPropagatesErrors(t *testing.T) {
-	a := New(&fake{}, nil)
+	a := New(&fake{}, "")
 	_, err := a.Missing(t.Context(), alice, "demo", []string{"tenant:read", "tenant:delete"})
 	var unknown *UnknownScopeError
 	if !errors.As(err, &unknown) || unknown.Scope != "tenant:delete" {
@@ -232,7 +235,7 @@ func TestMissingRefusesAnUnknownScopeAndPropagatesErrors(t *testing.T) {
 	}
 
 	boom := errors.New("down")
-	if _, err := New(&fake{err: boom}, nil).Missing(t.Context(), alice, "demo", []string{"tenant:read"}); !errors.Is(err, boom) {
+	if _, err := New(&fake{err: boom}, "").Missing(t.Context(), alice, "demo", []string{"tenant:read"}); !errors.Is(err, boom) {
 		t.Errorf("err = %v: if the rights of the creator cannot be read, the key must not be created", err)
 	}
 }

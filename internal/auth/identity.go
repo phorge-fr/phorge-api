@@ -38,6 +38,8 @@ type Identity struct {
 	Name   string
 	// Scopes the key was given. Keys only.
 	Scopes []string
+	// Groups are the names of the Authentik groups of the user, from the "groups" claim. Users only.
+	Groups []string
 }
 
 type ctxKey struct{}
