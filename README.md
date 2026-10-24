@@ -3,7 +3,7 @@
 The Phorge API: authenticated users and API keys manage tenants, images, instances, memberships and API keys.
 It creates `phorge.fr` objects on the `control` cluster (see `phorge-fr/Hangar`, `docs/phorge-api.md`), Crossplane turns them into Incus and OpenFGA objects.
 
-Status: step 2 (authorization with OpenFGA) on top of step 1 (authentication, OpenAPI document and Swagger UI) and step 0 (configuration, health, metrics, JSON logs, CI). The plan is `docs/phorge-api-implementation.md` in Hangar; `CLAUDE.md` tells an implementer how to start.
+Status: step 3 (tenants) on top of step 2 (authorization with OpenFGA), step 1 (authentication, OpenAPI document and Swagger UI) and step 0 (configuration, health, metrics, JSON logs, CI). The plan is `docs/phorge-api-implementation.md` in Hangar; `CLAUDE.md` tells an implementer how to start.
 
 ```bash
 make vet lint test build
@@ -31,6 +31,8 @@ Configuration is read from the environment and the process refuses to start, lis
 | `GET /docs` | Swagger UI |
 | `GET /openapi.yaml` | The OpenAPI document, written by hand in `internal/openapi/openapi.yaml`. A test compares it with the registered routes, so a route and its description go in together |
 | `GET /v1/whoami` | Who the credential stands for |
+| `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you can see (the platform administrators see all of them) |
+| `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create, resize and delete a tenant: platform administrators only |
 | `/healthz`, `/readyz` (503 while shutting down), `/metrics` | Probes and metrics |
 
 ## Authentication
@@ -75,4 +77,22 @@ kubectl --context core -n openfga port-forward svc/openfga 18080:8080 &
 export PHORGE_FGA_URL=http://127.0.0.1:18080 PHORGE_FGA_STORE=01M50R0P12MY8JHNKP3ATYSJC2
 export PHORGE_FGA_KEY=$(kubectl --context control -n phorge-api get secret phorge-api-openfga -o jsonpath='{.data.apiKey}' | base64 -d)
 go test -run TestAgainstTheRealModel ./internal/authz
+```
+
+## Tenants
+
+A tenant is a `Tenant` object of the `phorge.fr` group in `phorge-system` (`internal/kube/tenants.go`); Crossplane makes its namespace `t-<name>`, its Incus project and its network.
+
+- **Create** answers `202` with a `Location`: poll it until `phase` is `Ready`. `phase` is `Provisioning`, `Ready`, `Deleting`, or `Failed` when the tenant has not become ready for 3 minutes and `problems` holds the error of Incus or OpenFGA, shown as it is.
+- **Patch** changes `plan` and `displayName`. The owner cannot change (it is an OpenFGA tuple): a body that holds it is refused. To hand a tenant over, give the new person the `admin` role with a membership.
+- **Delete** is done in the foreground: `202`, then the tenant stays as `Deleting` until everything it is made of is gone (about two minutes), and a `404` means it is really gone. It destroys the virtual machines of the tenant.
+- Whoever cannot read a tenant is told it does not exist (`404`), whoever can but may not do this gets `403`. Bodies are JSON only, 64 KiB at most, with no field the API does not know.
+
+The test of the whole life of a tenant on the real cluster takes about five minutes and is skipped unless you give it the cluster and the store (it names its tenant `apitest-api-<random>` and deletes it, whatever happens):
+
+```bash
+kubectl --context core -n openfga port-forward svc/openfga 18080:8080 &
+export PHORGE_KUBE_CONTEXT=control PHORGE_FGA_URL=http://127.0.0.1:18080 PHORGE_FGA_STORE=01M50R0P12MY8JHNKP3ATYSJC2
+export PHORGE_FGA_KEY=$(kubectl --context control -n phorge-api get secret phorge-api-openfga -o jsonpath='{.data.apiKey}' | base64 -d)
+go test -run TestTenantLifecycle -timeout 20m ./internal/api
 ```

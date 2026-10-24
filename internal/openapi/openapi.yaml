@@ -25,6 +25,7 @@ servers:
     - url: /
 tags:
     - name: Identity
+    - name: Tenants
     - name: Operations
 paths:
     /v1/whoami:
@@ -48,6 +49,158 @@ paths:
                                 $ref: "#/components/schemas/Identity"
                 "401":
                     $ref: "#/components/responses/Unauthenticated"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants:
+        get:
+            tags:
+                - Tenants
+            operationId: listTenants
+            summary: The tenants you can see
+            description: |
+                The tenants on which you hold a role, or that your key was made for. The platform administrators see all of
+                them.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The tenants, by name.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/TenantList"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        post:
+            tags:
+                - Tenants
+            operationId: createTenant
+            summary: Create a tenant
+            description: |
+                Reserved to the platform administrators. The answer is `202`: the tenant exists but Crossplane takes about a
+                minute to make its namespace, its Incus project and its network. Poll the `Location` until `phase` is
+                `Ready`. A `phase` of `Failed` comes with `problems`, the error of Incus or OpenFGA as it is.
+            security:
+                - bearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/TenantCreate"
+            responses:
+                "202":
+                    description: Accepted, being created.
+                    headers:
+                        Location:
+                            schema:
+                                type: string
+                                example: /v1/tenants/demo
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tenant"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+        get:
+            tags:
+                - Tenants
+            operationId: getTenant
+            summary: One tenant
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The tenant.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tenant"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        patch:
+            tags:
+                - Tenants
+            operationId: updateTenant
+            summary: Change the plan or the display name
+            description: |
+                Reserved to the platform administrators. The name and the owner cannot change: to hand a tenant over, give
+                the new person the `admin` role with a membership.
+            security:
+                - bearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/TenantPatch"
+            responses:
+                "200":
+                    description: The tenant. The new plan is applied by Crossplane within a minute.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tenant"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        delete:
+            tags:
+                - Tenants
+            operationId: deleteTenant
+            summary: Delete a tenant and everything in it
+            description: |
+                Reserved to the platform administrators. **It destroys the virtual machines of the tenant**, ask for a
+                confirmation before calling it.
+
+                The deletion is done in the foreground: the answer is `202` and the tenant stays, with the phase `Deleting`,
+                until everything it is made of is gone, up to a couple of minutes. A `404` on a later get is what tells it
+                is really done.
+            security:
+                - bearerAuth: []
+            responses:
+                "202":
+                    description: Being deleted.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tenant"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /healthz:
@@ -118,7 +271,49 @@ components:
             scheme: bearer
             bearerFormat: phk_<tenant>_<name>_<secret>
             description: An API key of a tenant. Paste the key only, without `Bearer`.
+    parameters:
+        tenant:
+            name: t
+            in: path
+            required: true
+            description: The name of the tenant, 2 to 28 lowercase letters, digits and hyphens, starting with a letter.
+            schema:
+                type: string
+                pattern: '^[a-z][a-z0-9-]{1,27}$'
+                example: demo
     responses:
+        BadRequest:
+            description: The body is not JSON, holds a field the API does not know (an `owner` in a patch, for instance) or is too large.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+        Forbidden:
+            description: You can see the tenant but you are not allowed to do this on it.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+        NotFound:
+            description: |
+                No such tenant, or a tenant you have no right on: the two are not told apart, a tenant that is not yours is
+                not shown to exist.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+        Conflict:
+            description: A tenant of that name already exists.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+        Invalid:
+            description: A field is not valid, the message says which.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
         Unauthenticated:
             description: The credential is missing, wrong, expired or revoked.
             headers:
@@ -137,6 +332,102 @@ components:
                     schema:
                         $ref: "#/components/schemas/Error"
     schemas:
+        Plan:
+            type: string
+            description: |
+                The quota of the tenant, enforced by Incus. `small`: 1 VM, 2 vCPU, 4 GiB, 20 GiB of disk, 1 network.
+                `medium`: 3, 4, 8, 100, 2. `large`: 6, 8, 16, 250, 3.
+            enum:
+                - small
+                - medium
+                - large
+        Tenant:
+            type: object
+            required:
+                - name
+                - owner
+                - plan
+                - phase
+                - createdAt
+            properties:
+                name:
+                    type: string
+                    example: demo
+                displayName:
+                    type: string
+                    maxLength: 100
+                owner:
+                    type: string
+                    description: Email of the owner, who is `admin` of the tenant. It cannot change.
+                    example: alice@example.org
+                plan:
+                    $ref: "#/components/schemas/Plan"
+                phase:
+                    type: string
+                    description: |
+                        `Provisioning`: being made or changed. `Ready`: everything is up. `Failed`: not ready for more than
+                        3 minutes with `problems`. `Deleting`.
+                    enum:
+                        - Provisioning
+                        - Ready
+                        - Failed
+                        - Deleting
+                problems:
+                    type: string
+                    description: What is wrong with the composed resources, as Incus or OpenFGA says it. Absent when all is well.
+                namespace:
+                    type: string
+                    description: The Kubernetes namespace of the tenant, once it is made.
+                    example: t-demo
+                incusProject:
+                    type: string
+                    description: The Incus project of the tenant, once it is made.
+                    example: t-demo
+                createdAt:
+                    type: string
+                    format: date-time
+                createdBy:
+                    type: string
+                    description: Who created it through the API.
+        TenantList:
+            type: object
+            required:
+                - items
+            properties:
+                items:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/Tenant"
+        TenantCreate:
+            type: object
+            additionalProperties: false
+            required:
+                - name
+                - owner
+            properties:
+                name:
+                    type: string
+                    pattern: '^[a-z][a-z0-9-]{1,27}$'
+                    example: demo
+                owner:
+                    type: string
+                    description: Email of the owner, exactly as it is in Authentik (case included).
+                    example: alice@example.org
+                plan:
+                    $ref: "#/components/schemas/Plan"
+                displayName:
+                    type: string
+                    maxLength: 100
+        TenantPatch:
+            type: object
+            additionalProperties: false
+            minProperties: 1
+            properties:
+                plan:
+                    $ref: "#/components/schemas/Plan"
+                displayName:
+                    type: string
+                    maxLength: 100
         Identity:
             type: object
             required:

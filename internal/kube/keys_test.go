@@ -41,7 +41,7 @@ func store(t *testing.T, objs ...*unstructured.Unstructured) *Keys {
 			t.Fatal(err)
 		}
 	}
-	return NewKeys(client)
+	return NewKeys(Static(client))
 }
 
 func TestGetKeyReadsTheObjectOfTheTenantNamespace(t *testing.T) {
@@ -101,7 +101,7 @@ func TestAMalformedObjectMatchesNoKey(t *testing.T) {
 
 func TestAnUnreachableClusterIsNotAMissingKey(t *testing.T) {
 	boom := errors.New("no kubeconfig")
-	k := &Keys{connect: func() (dynamic.Interface, error) { return nil, boom }}
+	k := NewKeys(&Connection{connect: func() (dynamic.Interface, error) { return nil, boom }})
 	_, err := k.GetKey(t.Context(), "demo", "ci")
 	if !errors.Is(err, boom) || errors.Is(err, auth.ErrKeyNotFound) {
 		t.Errorf("err = %v: it would be reported as a 401 instead of a 503", err)
