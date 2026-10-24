@@ -13,6 +13,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/openapi"
 	"github.com/phorge-fr/phorge-api/internal/server"
 )
@@ -27,7 +28,10 @@ func (v verifier) Verify(context.Context, string) (auth.Identity, error) { retur
 func newServer(users, keys auth.Verifier) *server.Server {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := server.New(log)
-	Register(s, Deps{Auth: &auth.Authenticator{Users: users, Keys: keys, Log: log}})
+	Register(s, Deps{
+		Auth:  &auth.Authenticator{Users: users, Keys: keys, Log: log},
+		Authz: authz.New(nil, "phorge-platform-admins"), // nothing here asks OpenFGA
+	})
 	return s
 }
 
@@ -119,21 +123,29 @@ func TestEveryV1RouteRefusesAnonymousCallers(t *testing.T) {
 
 func TestWhoami(t *testing.T) {
 	s := newServer(
-		verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org"}},
-		verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "apikey:demo.ci", Tenant: "demo", Name: "ci", Scopes: []string{"tenant:read"}}},
+		verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}},
+		// A key is never a platform administrator, whatever it carries.
+		verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "apikey:demo.ci", Tenant: "demo", Name: "ci", Scopes: []string{"tenant:read"}, Groups: []string{"phorge-platform-admins"}}},
 	)
 
 	rec := get(s.Handler(), "/v1/whoami", "Bearer a.jwt.token")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"user","subject":"user:alice@example.org","email":"alice@example.org"}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"user","subject":"user:alice@example.org","email":"alice@example.org","platformAdmin":true}`; got != want {
 		t.Errorf("user: %s", got)
 	}
 
 	rec = get(s.Handler(), "/v1/whoami", "Bearer phk_demo_ci_"+strings.Repeat("a", 64))
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"apikey","subject":"apikey:demo.ci","tenant":"demo","name":"ci","scopes":["tenant:read"]}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"apikey","subject":"apikey:demo.ci","tenant":"demo","name":"ci","scopes":["tenant:read"],"platformAdmin":false}`; got != want {
 		t.Errorf("key: %s", got)
+	}
+}
+
+func TestWhoamiDoesNotShowTheGroups(t *testing.T) {
+	s := newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"secret-group"}}}, verifier{})
+	if body := get(s.Handler(), "/v1/whoami", "Bearer a.jwt.token").Body.String(); strings.Contains(body, "secret-group") {
+		t.Errorf("the groups are not part of the answer: %s", body)
 	}
 }
 

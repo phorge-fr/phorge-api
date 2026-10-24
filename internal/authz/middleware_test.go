@@ -44,7 +44,7 @@ func TestRequire(t *testing.T) {
 		"user:bob@example.org can_read_tenant tenant:demo",
 		"user:bob@example.org can_write_instances tenant:demo",
 	)}
-	a := New(f, nil)
+	a := New(f, "")
 	bob := auth.Identity{Kind: auth.KindUser, Subject: "user:bob@example.org", Email: "bob@example.org"}
 	mallory := auth.Identity{Kind: auth.KindUser, Subject: "user:mallory@example.org", Email: "mallory@example.org"}
 
@@ -83,14 +83,14 @@ func TestRequire(t *testing.T) {
 
 func TestANotFoundSaysNothingAboutTheTenant(t *testing.T) {
 	// Nobody granted anything: whatever the tenant, the answer is the same "no such tenant" and does not repeat the name.
-	rec, _ := serve(t, New(&fake{}, nil), WriteImages, &alice, "demo")
+	rec, _ := serve(t, New(&fake{}, ""), WriteImages, &alice, "demo")
 	if rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "demo") {
 		t.Errorf("status %d body %s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestRequireIs503WhenOpenFGAIsDown(t *testing.T) {
-	a := New(&fake{err: errors.New("openfga is down")}, nil)
+	a := New(&fake{err: errors.New("openfga is down")}, "")
 	for _, action := range []Action{ReadTenant, ReadInstances, WriteInstances} {
 		rec, reached := serve(t, a, action, &alice, "demo")
 		if rec.Code != http.StatusServiceUnavailable || reached || code(t, rec) != "unavailable" {

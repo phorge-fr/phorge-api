@@ -29,21 +29,22 @@ type Config struct {
 	// KubeContext picks a context of the kubeconfig when the API runs outside the cluster (development). In a pod
 	// the service account is used and this is ignored.
 	KubeContext string
-	// PlatformAdmins are the emails allowed to create, resize and delete tenants.
-	PlatformAdmins []string
+	// PlatformAdminGroup is the name of the Authentik group whose members may create, resize and delete tenants. The
+	// API reads it from the "groups" claim of the token. Empty: nobody can.
+	PlatformAdminGroup string
 }
 
 // Environment variables.
 const (
-	EnvListenAddr     = "LISTEN_ADDR"
-	EnvIssuer         = "OIDC_ISSUER"
-	EnvAudience       = "OIDC_AUDIENCE"
-	EnvOpenFGAURL     = "OPENFGA_URL"
-	EnvOpenFGAAPIKey  = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
-	EnvOpenFGAStoreID = "OPENFGA_STORE_ID"
-	EnvCAFile         = "CA_FILE"
-	EnvKubeContext    = "KUBE_CONTEXT"
-	EnvPlatformAdmins = "PLATFORM_ADMINS"
+	EnvListenAddr         = "LISTEN_ADDR"
+	EnvIssuer             = "OIDC_ISSUER"
+	EnvAudience           = "OIDC_AUDIENCE"
+	EnvOpenFGAURL         = "OPENFGA_URL"
+	EnvOpenFGAAPIKey      = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
+	EnvOpenFGAStoreID     = "OPENFGA_STORE_ID"
+	EnvCAFile             = "CA_FILE"
+	EnvKubeContext        = "KUBE_CONTEXT"
+	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
 )
 
 const defaultListenAddr = ":8080"
@@ -57,15 +58,15 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	c := Config{
-		ListenAddr:     get(EnvListenAddr),
-		Issuer:         get(EnvIssuer),
-		Audience:       get(EnvAudience),
-		OpenFGAURL:     get(EnvOpenFGAURL),
-		OpenFGAAPIKey:  get(EnvOpenFGAAPIKey),
-		OpenFGAStoreID: get(EnvOpenFGAStoreID),
-		CAFile:         get(EnvCAFile),
-		KubeContext:    get(EnvKubeContext),
-		PlatformAdmins: splitList(get(EnvPlatformAdmins)),
+		ListenAddr:         get(EnvListenAddr),
+		Issuer:             get(EnvIssuer),
+		Audience:           get(EnvAudience),
+		OpenFGAURL:         get(EnvOpenFGAURL),
+		OpenFGAAPIKey:      get(EnvOpenFGAAPIKey),
+		OpenFGAStoreID:     get(EnvOpenFGAStoreID),
+		CAFile:             get(EnvCAFile),
+		KubeContext:        get(EnvKubeContext),
+		PlatformAdminGroup: get(EnvPlatformAdminGroup),
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = defaultListenAddr
@@ -93,27 +94,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			}
 		}
 	}
-	for _, a := range c.PlatformAdmins {
-		// The email is the key of every tuple, so it is kept exactly as written; only an obviously wrong value is refused.
-		if !strings.Contains(a, "@") {
-			errs = append(errs, fmt.Errorf("%s: %q is not an email", EnvPlatformAdmins, a))
-		}
-	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return c, nil
-}
-
-// IsPlatformAdmin reports whether email is a platform administrator. The comparison is exact, case included: the
-// email claim is the key of the OpenFGA tuples.
-func (c Config) IsPlatformAdmin(email string) bool {
-	for _, a := range c.PlatformAdmins {
-		if a == email {
-			return true
-		}
-	}
-	return false
 }
 
 // LogValue logs the configuration without the OpenFGA key.
@@ -126,23 +110,13 @@ func (c Config) LogValue() slog.Value {
 		slog.String("openfga_store_id", c.OpenFGAStoreID),
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
-		slog.Int("platform_admins", len(c.PlatformAdmins)),
+		slog.String("platform_admin_group", c.PlatformAdminGroup),
 	)
 }
 
 // String and GoString keep the key out of %v, %+v and %#v.
 func (c Config) String() string   { return fmt.Sprint(c.LogValue()) }
 func (c Config) GoString() string { return c.String() }
-
-func splitList(s string) []string {
-	var out []string
-	for _, p := range strings.Split(s, ",") {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
-}
 
 func checkURL(s string) error {
 	u, err := url.Parse(s)

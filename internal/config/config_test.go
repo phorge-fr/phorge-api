@@ -28,7 +28,7 @@ func TestLoadDefaults(t *testing.T) {
 	if c.ListenAddr != ":8080" {
 		t.Errorf("ListenAddr = %q, want :8080", c.ListenAddr)
 	}
-	if len(c.PlatformAdmins) != 0 || c.CAFile != "" {
+	if c.PlatformAdminGroup != "" || c.CAFile != "" {
 		t.Errorf("optional values should be empty: %+v", c)
 	}
 }
@@ -37,7 +37,7 @@ func TestLoadAll(t *testing.T) {
 	m := valid()
 	m[EnvListenAddr] = ":9090"
 	m[EnvCAFile] = "/ca/ca.crt"
-	m[EnvPlatformAdmins] = " Alice@example.org, bob@example.org ,,"
+	m[EnvPlatformAdminGroup] = " phorge-platform-admins "
 	c, err := Load(env(m))
 	if err != nil {
 		t.Fatal(err)
@@ -45,35 +45,20 @@ func TestLoadAll(t *testing.T) {
 	if c.ListenAddr != ":9090" || c.CAFile != "/ca/ca.crt" {
 		t.Errorf("unexpected config: %+v", c)
 	}
-	if got := strings.Join(c.PlatformAdmins, "|"); got != "Alice@example.org|bob@example.org" {
-		t.Errorf("PlatformAdmins = %q", got)
+	if c.PlatformAdminGroup != "phorge-platform-admins" {
+		t.Errorf("PlatformAdminGroup = %q", c.PlatformAdminGroup)
 	}
 }
 
 func TestLoadReportsEverythingAtOnce(t *testing.T) {
-	_, err := Load(env(map[string]string{EnvOpenFGAURL: "openfga.core.phorge", EnvPlatformAdmins: "not-an-email"}))
+	_, err := Load(env(map[string]string{EnvOpenFGAURL: "openfga.core.phorge"}))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	for _, want := range []string{EnvIssuer, EnvAudience, EnvOpenFGAAPIKey, EnvOpenFGAStoreID, EnvOpenFGAURL, "not-an-email"} {
+	for _, want := range []string{EnvIssuer, EnvAudience, EnvOpenFGAAPIKey, EnvOpenFGAStoreID, EnvOpenFGAURL} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
 		}
-	}
-}
-
-func TestIsPlatformAdminIsExact(t *testing.T) {
-	m := valid()
-	m[EnvPlatformAdmins] = "Alice@example.org"
-	c, err := Load(env(m))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !c.IsPlatformAdmin("Alice@example.org") {
-		t.Error("exact match should be an admin")
-	}
-	if c.IsPlatformAdmin("alice@example.org") || c.IsPlatformAdmin("") {
-		t.Error("the comparison must be exact, case included, and never match an empty email")
 	}
 }
 
