@@ -1,0 +1,4 @@
+ignored:
+    # The build stage runs on the builder's own architecture and Go cross-compiles: the control cluster is arm64, the
+    # compute nodes x86_64, and emulating the toolchain with QEMU would be slow for no gain.
+    - DL3029
