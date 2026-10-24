@@ -162,28 +162,35 @@ func tenantOf(obj *unstructured.Unstructured) tenants.Tenant {
 	project, _, _ := unstructured.NestedString(obj.Object, "status", "incusProject")
 
 	t := tenants.Tenant{
-		Name:          obj.GetName(),
-		DisplayName:   displayName,
-		Owner:         owner,
-		Plan:          tenants.Plan(plan),
-		CreatedAt:     obj.GetCreationTimestamp().Time,
-		CreatedBy:     obj.GetAnnotations()[CreatedByAnnotation],
-		Namespace:     namespace,
-		IncusProject:  project,
-		NotReadySince: obj.GetCreationTimestamp().Time,
-		Problems:      problems,
-		Deleting:      obj.GetDeletionTimestamp() != nil,
+		Name:         obj.GetName(),
+		DisplayName:  displayName,
+		Owner:        owner,
+		Plan:         tenants.Plan(plan),
+		CreatedAt:    obj.GetCreationTimestamp().Time,
+		CreatedBy:    obj.GetAnnotations()[CreatedByAnnotation],
+		Namespace:    namespace,
+		IncusProject: project,
+		Problems:     problems,
+		Deleting:     obj.GetDeletionTimestamp() != nil,
 	}
+	t.Ready, t.NotReadySince = readyOf(obj)
+	return t
+}
+
+// readyOf reads the Ready condition: whether it is true, and since when it is what it is (the creation time of the object
+// when it has no such condition yet).
+func readyOf(obj *unstructured.Unstructured) (ready bool, since time.Time) {
+	since = obj.GetCreationTimestamp().Time
 	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 	for _, c := range conditions {
 		cond, ok := c.(map[string]any)
 		if !ok || cond["type"] != "Ready" {
 			continue
 		}
-		t.Ready = cond["status"] == "True"
+		ready = cond["status"] == "True"
 		if at, err := time.Parse(time.RFC3339, fmt.Sprint(cond["lastTransitionTime"])); err == nil {
-			t.NotReadySince = at
+			since = at
 		}
 	}
-	return t
+	return ready, since
 }
