@@ -23,6 +23,10 @@ var (
 	secretRe = regexp.MustCompile(`^[0-9a-f]{64,}$`)
 )
 
+// ValidTenantName reports whether s has the shape of a tenant slug. Anything that becomes part of an OpenFGA object
+// ("tenant:<name>") or of a namespace must pass it first.
+func ValidTenantName(s string) bool { return tenantRe.MatchString(s) }
+
 // ParsedKey is a key split in its parts.
 type ParsedKey struct {
 	Tenant string

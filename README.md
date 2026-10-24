@@ -3,7 +3,7 @@
 The Phorge API: authenticated users and API keys manage tenants, images, instances, memberships and API keys.
 It creates `phorge.fr` objects on the `control` cluster (see `phorge-fr/Hangar`, `docs/phorge-api.md`), Crossplane turns them into Incus and OpenFGA objects.
 
-Status: step 1 (authentication, OpenAPI document and Swagger UI) on top of step 0 (configuration, health, metrics, JSON logs, CI). The plan is `docs/phorge-api-implementation.md` in Hangar; `CLAUDE.md` tells an implementer how to start.
+Status: step 2 (authorization with OpenFGA) on top of step 1 (authentication, OpenAPI document and Swagger UI) and step 0 (configuration, health, metrics, JSON logs, CI). The plan is `docs/phorge-api-implementation.md` in Hangar; `CLAUDE.md` tells an implementer how to start.
 
 ```bash
 make vet lint test build
@@ -51,3 +51,28 @@ curl -s https://auth.phorge.fr/application/o/device/ -d client_id=<OIDC_AUDIENCE
 # while you have not approved it answers authorization_pending)
 ```
 
+
+## Authorization
+
+Authentication tells who calls, OpenFGA decides what they may do (`internal/authz`). Every decision is a `Check` in the `phorge-api` store on the object `tenant:<name>`, for the subject of the identity (`user:<email>` or `apikey:<tenant>.<name>`):
+
+| Action | Relation | Scope of a key |
+|---|---|---|
+| read the tenant | `can_read_tenant` | `tenant:read` |
+| read instances, images | `can_read_instances`, `can_read_images` | `instances:read`, `images:read` |
+| write instances | `can_write_instances` | `instances:write` |
+| write images | `can_write_images` | `images:write` |
+| read, write memberships and keys | `can_read_memberships`, `can_write_memberships` | `memberships:read`, `memberships:write` |
+
+A user gets those through a role (`admin` over `operator` over `user` over `viewer`), a key only through its scopes, which are relations of their own (`instances:write` does not give `instances:read`). `Authorizer.Require(action, ...)` is the middleware of a route: `404` when the caller cannot read the tenant (a tenant that is not yours is not shown to exist), `403` when it can but may not do this, `503` when OpenFGA cannot answer. A decision that cannot be taken is never an "allowed". `Authorizer.Missing` is what keeps a key within its creator, `Authorizer.IsPlatformAdmin` the list of the people who create tenants (`PLATFORM_ADMINS`, the model has no relation for it).
+
+OpenFGA is reached with `OPENFGA_URL`, `OPENFGA_API_KEY` and `OPENFGA_STORE_ID`, and `CA_FILE` for the internal CA of `openfga.core.phorge` (the verification is never turned off).
+
+The test against the real model is skipped unless you give it a store; it writes the tuples of a tenant of its own and removes them:
+
+```bash
+kubectl --context core -n openfga port-forward svc/openfga 18080:8080 &
+export PHORGE_FGA_URL=http://127.0.0.1:18080 PHORGE_FGA_STORE=01M50R0P12MY8JHNKP3ATYSJC2
+export PHORGE_FGA_KEY=$(kubectl --context control -n phorge-api get secret phorge-api-openfga -o jsonpath='{.data.apiKey}' | base64 -d)
+go test -run TestAgainstTheRealModel ./internal/authz
+```
