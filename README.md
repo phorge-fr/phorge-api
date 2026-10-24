@@ -3,7 +3,7 @@
 The Phorge API: authenticated users and API keys manage tenants, images, instances, memberships and API keys.
 It creates `phorge.fr` objects on the `control` cluster (see `phorge-fr/Hangar`, `docs/phorge-api.md`), Crossplane turns them into Incus and OpenFGA objects.
 
-Status: step 4 (images and instances) on top of step 3 (tenants), step 2 (authorization with OpenFGA), step 1 (authentication, OpenAPI document and Swagger UI) and step 0 (configuration, health, metrics, JSON logs, CI). The plan is `docs/phorge-api-implementation.md` in Hangar; `CLAUDE.md` tells an implementer how to start.
+Status: step 5 (memberships and API keys) on top of step 4 (images and instances), step 3 (tenants), step 2 (authorization with OpenFGA), step 1 (authentication, OpenAPI document and Swagger UI) and step 0 (configuration, health, metrics, JSON logs, CI). The plan is `docs/phorge-api-implementation.md` in Hangar; `CLAUDE.md` tells an implementer how to start.
 
 ```bash
 make vet lint test build
@@ -34,6 +34,8 @@ Configuration is read from the environment and the process refuses to start, lis
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you can see (the platform administrators see all of them) |
 | `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create, resize and delete a tenant: platform administrators only |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with `images:read` or a role, write with `operator` or `images:write` |
+| `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, or a key with `memberships:read` and `memberships:write` |
+| `GET`, `POST /v1/tenants/{t}/apikeys`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/apikeys/{name}` | The API keys of the tenant: same rights |
 | `GET`, `POST /v1/tenants/{t}/instances`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/instances/{name}` | The virtual machines: read with `instances:read` or a role, write with `user` or `instances:write` |
 | `/healthz`, `/readyz` (503 while shutting down), `/metrics` | Probes and metrics |
 
@@ -114,4 +116,21 @@ The test that pulls a real image and boots a real VM takes ten to twenty minutes
 
 ```bash
 go test -run TestImageAndInstance -timeout 40m ./internal/api
+```
+
+## Memberships and API keys
+
+Both are objects of the tenant's namespace, and both are read and written only by the admins of the tenant (the relations `can_read_memberships` and `can_write_memberships`), a platform administrator, or a key with the scopes `memberships:read` and `memberships:write`.
+
+- **A membership gives a user a role** (`admin`, `operator`, `user`, `viewer`). It cannot be edited, because a role is an OpenFGA tuple that cannot be changed in place: to change a role, delete the membership and create another. There is one per user and tenant: its name is derived from the email, so a second one is a `409`. The owner of a tenant already is admin through the tenant and a membership for it is refused (`409`, `owner_is_admin`): to hand a tenant over, give someone else the `admin` role. Only users are supported, a group is refused (nothing writes the tuples a group needs).
+- **Deleting a membership is not an instant revocation**: the object goes at once, its tuples within about a minute (measured on the cluster in the test below).
+- **An API key** is `phk_<tenant>_<name>_<secret>`. The answer to its creation holds the key, **once**; only the SHA-256 of the secret is stored (`spec.hash`), so no read ever shows it again. The secret is 32 random bytes in hex.
+- **A key never exceeds its creator.** You can only give a key the scopes you hold yourself on the tenant, a key can only create keys with a subset of its own scopes, and adding a scope with a patch is giving it (taking one away is always allowed). A platform administrator holds everything on every tenant that exists.
+- **A key stops at its `expiresAt` to the second**: the authentication checks the date itself and does not wait for the composition to remove the tuples, which takes up to a minute. A key that is being deleted stops at once too. The list shows `expired` as soon as the date has passed.
+- A key cannot be rotated: delete it and create another.
+
+The test of all this on the real cluster (a viewer, a user, a revoked member, a key within its scopes, a key that stops at its date and at its deletion) takes about five minutes:
+
+```bash
+go test -run TestMembershipsAndKeys -timeout 30m ./internal/api
 ```

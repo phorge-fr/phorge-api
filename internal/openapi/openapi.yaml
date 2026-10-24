@@ -28,6 +28,8 @@ tags:
     - name: Tenants
     - name: Images
     - name: Instances
+    - name: Memberships
+    - name: API keys
     - name: Operations
 paths:
     /v1/whoami:
@@ -484,6 +486,293 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/memberships:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+        get:
+            tags:
+                - Memberships
+            operationId: listMemberships
+            summary: The roles of the users of a tenant
+            description: |
+                Only the admins of the tenant, and keys with `memberships:read`, may read them.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The memberships, by user.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/MembershipList"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        post:
+            tags:
+                - Memberships
+            operationId: createMembership
+            summary: Give a user a role on a tenant
+            description: |
+                There is one membership per user and tenant, and a membership **cannot be edited** (a role is an OpenFGA tuple, which
+                cannot be changed in place): to change a role, delete the membership and create another.
+
+                The owner of a tenant already is admin through the tenant itself and cannot be given a membership: to hand a tenant over,
+                give someone else the `admin` role. Only users are supported, not groups.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/MembershipCreate"
+            responses:
+                "202":
+                    description: Accepted, the rights are written within a few seconds.
+                    headers:
+                        Location:
+                            schema:
+                                type: string
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Membership"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/memberships/{name}:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+            - $ref: "#/components/parameters/name"
+        get:
+            tags:
+                - Memberships
+            operationId: getMembership
+            summary: One membership
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The membership.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Membership"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        delete:
+            tags:
+                - Memberships
+            operationId: deleteMembership
+            summary: Take a role away
+            description: |
+                The membership goes at once, its rights within about a minute: the answer is not an instant revocation.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "202":
+                    description: Being deleted.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Membership"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/apikeys:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+        get:
+            tags:
+                - API keys
+            operationId: listApiKeys
+            summary: The API keys of a tenant
+            description: |
+                The keys themselves are never shown again, only what they may do.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The keys, by name.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ApiKeyList"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        post:
+            tags:
+                - API keys
+            operationId: createApiKey
+            summary: Create an API key
+            description: |
+                **The answer holds the key, once.** Only its hash is stored, so it cannot be shown again: keep it. Send it as
+                `Authorization: Bearer <key>`.
+
+                A key never exceeds its creator: you can only give it scopes you hold yourself on the tenant, and a key can only create
+                keys with a subset of its own scopes. A key stops working at its `expiresAt` to the second (the API checks the date
+                itself, it does not wait for Crossplane), or as soon as it is deleted.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ApiKeyCreate"
+            responses:
+                "202":
+                    description: Accepted, the rights of the scopes are written within a few seconds.
+                    headers:
+                        Location:
+                            schema:
+                                type: string
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ApiKey"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/apikeys/{name}:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+            - $ref: "#/components/parameters/name"
+        get:
+            tags:
+                - API keys
+            operationId: getApiKey
+            summary: One API key
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "200":
+                    description: The key, without its secret.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ApiKey"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        patch:
+            tags:
+                - API keys
+            operationId: updateApiKey
+            summary: Change the scopes, the expiry or the name of a key
+            description: |
+                Taking a scope away is always allowed and takes effect at once. Adding one is giving it: you must hold it yourself. The
+                secret cannot be rotated: delete the key and create another.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ApiKeyPatch"
+            responses:
+                "200":
+                    description: The key.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ApiKey"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        delete:
+            tags:
+                - API keys
+            operationId: deleteApiKey
+            summary: Revoke an API key
+            description: |
+                The key stops working at once. Its rights go within about a minute.
+            security:
+                - bearerAuth: []
+                - apiKeyAuth: []
+            responses:
+                "202":
+                    description: Being deleted.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ApiKey"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
     /healthz:
         get:
             tags:
@@ -845,6 +1134,175 @@ components:
                     maxItems: 20
                     items:
                         type: string
+        Role:
+            type: string
+            description: |
+                `admin`: everything on the tenant, memberships and keys included. `operator`: manage instances and images.
+                `user`: create and use instances. `viewer`: read only. Each holds what the next holds.
+            enum:
+                - admin
+                - operator
+                - user
+                - viewer
+        Scope:
+            type: string
+            description: What an API key may do on its tenant. `instances:write` does not give `instances:read`.
+            enum:
+                - tenant:read
+                - instances:read
+                - instances:write
+                - images:read
+                - images:write
+                - memberships:read
+                - memberships:write
+        MembershipSubject:
+            type: object
+            required:
+                - kind
+                - name
+            properties:
+                kind:
+                    type: string
+                    description: Only `User` for now.
+                    enum:
+                        - User
+                name:
+                    type: string
+                    description: The email of the user, exactly as it is in Authentik (case included).
+                    example: bob@example.org
+        Membership:
+            type: object
+            required:
+                - name
+                - subject
+                - role
+                - phase
+                - createdAt
+            properties:
+                name:
+                    type: string
+                    description: Derived from the user, so that a user has one membership per tenant.
+                    example: m-0123456789abcdef01234567
+                subject:
+                    $ref: "#/components/schemas/MembershipSubject"
+                role:
+                    $ref: "#/components/schemas/Role"
+                phase:
+                    $ref: "#/components/schemas/Phase"
+                problems:
+                    type: string
+                createdAt:
+                    type: string
+                    format: date-time
+                createdBy:
+                    type: string
+        MembershipList:
+            type: object
+            required:
+                - items
+            properties:
+                items:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/Membership"
+        MembershipCreate:
+            type: object
+            additionalProperties: false
+            required:
+                - subject
+                - role
+            properties:
+                subject:
+                    $ref: "#/components/schemas/MembershipSubject"
+                role:
+                    $ref: "#/components/schemas/Role"
+        ApiKey:
+            type: object
+            required:
+                - name
+                - scopes
+                - expired
+                - phase
+                - createdAt
+            properties:
+                name:
+                    type: string
+                    example: ci
+                displayName:
+                    type: string
+                scopes:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/Scope"
+                expiresAt:
+                    type: string
+                    format: date-time
+                expired:
+                    type: boolean
+                    description: The date has passed. The key then grants nothing.
+                phase:
+                    $ref: "#/components/schemas/Phase"
+                problems:
+                    type: string
+                createdAt:
+                    type: string
+                    format: date-time
+                createdBy:
+                    type: string
+                key:
+                    type: string
+                    description: The key, `phk_<tenant>_<name>_<secret>`. In the answer to the creation only, never again.
+                    example: phk_demo_ci_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        ApiKeyList:
+            type: object
+            required:
+                - items
+            properties:
+                items:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/ApiKey"
+        ApiKeyCreate:
+            type: object
+            additionalProperties: false
+            required:
+                - name
+                - scopes
+            properties:
+                name:
+                    type: string
+                    pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+                    example: ci
+                displayName:
+                    type: string
+                    maxLength: 100
+                scopes:
+                    type: array
+                    minItems: 1
+                    uniqueItems: true
+                    items:
+                        $ref: "#/components/schemas/Scope"
+                expiresAt:
+                    type: string
+                    format: date-time
+                    description: In the future. Without it the key does not expire.
+        ApiKeyPatch:
+            type: object
+            additionalProperties: false
+            minProperties: 1
+            properties:
+                scopes:
+                    type: array
+                    minItems: 1
+                    uniqueItems: true
+                    items:
+                        $ref: "#/components/schemas/Scope"
+                expiresAt:
+                    type: string
+                    format: date-time
+                displayName:
+                    type: string
+                    maxLength: 100
         Plan:
             type: string
             description: |
