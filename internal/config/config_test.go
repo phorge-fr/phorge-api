@@ -73,3 +73,40 @@ func TestKeyIsNeverPrinted(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthentikURLAndTokenGoTogether(t *testing.T) {
+	base := map[string]string{
+		EnvIssuer: "https://auth.example.org/application/o/phorge/", EnvAudience: "id", EnvOpenFGAURL: "https://fga.example.org",
+		EnvOpenFGAAPIKey: "k", EnvOpenFGAStoreID: "s",
+	}
+	load := func(extra map[string]string) (Config, error) {
+		return Load(func(k string) (string, bool) {
+			if v, ok := extra[k]; ok {
+				return v, true
+			}
+			v, ok := base[k]
+			return v, ok
+		})
+	}
+	if _, err := load(nil); err != nil {
+		t.Errorf("without Authentik: %v", err)
+	}
+	c, err := load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok"})
+	if err != nil || c.AuthentikURL != "https://auth.example.org" || c.AuthentikToken != "tok" {
+		t.Errorf("both: %+v, %v", c, err)
+	}
+	for name, extra := range map[string]map[string]string{
+		"a url without a token": {EnvAuthentikURL: "https://auth.example.org"},
+		"a token without a url": {EnvAuthentikToken: "tok"},
+		"a url that is not one": {EnvAuthentikURL: "auth", EnvAuthentikToken: "tok"},
+	} {
+		if _, err := load(extra); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	// The token is never logged.
+	c, _ = load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok-secret-value"})
+	if strings.Contains(c.String(), "tok-secret-value") {
+		t.Errorf("the token is in %s", c.String())
+	}
+}

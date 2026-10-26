@@ -17,8 +17,11 @@ info:
 
         - an **access token of Authentik** (OIDC, application "Phorge"), for a person. The user is the `email` claim of
           the token. From a terminal, the device code flow gives one.
-        - an **API key** `phk_<tenant>_<name>_<secret>`, for a machine. It works on its tenant only, with the scopes it
-          was given.
+        - a personal **API key** `phk_<id>_<secret>`, for a script, a CI or a tool such as OpenTofu. It belongs to the user
+          who created it and acts as them, never beyond its scopes: what its owner may do on a tenant (a role) or on the
+          platform (a platform administrator) is what the key may do when it has the scope for it. A key cannot create,
+          read or delete keys: that takes a person signed in with Authentik. For now only the platform administrators
+          (a group of Authentik) create keys; anyone lists and revokes their own.
 
         Whatever is wrong with a credential, the answer is the same `401`, so that nothing can be probed.
 servers:
@@ -40,7 +43,7 @@ paths:
             summary: Who the API takes you for
             description: |
                 Answers with the identity the credential stands for. For a user, `subject` is `user:<email>`, the user of
-                every authorization check; for a key, `apikey:<tenant>.<name>`.
+                every authorization check. A key is its owner: it has the same `subject`, and `name` is the id of the key.
             security:
                 - bearerAuth: []
                 - apiKeyAuth: []
@@ -62,8 +65,8 @@ paths:
             operationId: listTenants
             summary: The tenants you can see
             description: |
-                The tenants on which you hold a role, or that your key was made for. The platform administrators see all of
-                them.
+                The tenants on which you hold a role (with a key: that its owner holds, and the key has `tenants:read`). The
+                platform administrators see all of them.
             security:
                 - bearerAuth: []
                 - apiKeyAuth: []
@@ -495,7 +498,7 @@ paths:
             operationId: listMemberships
             summary: The roles of the users of a tenant
             description: |
-                Only the admins of the tenant, and keys with `memberships:read`, may read them.
+                Only the admins of the tenant, and the keys of an admin of the tenant that have `memberships:read`, may read them.
             security:
                 - bearerAuth: []
                 - apiKeyAuth: []
@@ -611,22 +614,20 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
-    /v1/tenants/{t}/apikeys:
-        parameters:
-            - $ref: "#/components/parameters/tenant"
+    /v1/apikeys:
         get:
             tags:
                 - API keys
             operationId: listApiKeys
-            summary: The API keys of a tenant
+            summary: Your API keys
             description: |
-                The keys themselves are never shown again, only what they may do.
+                The keys of the caller, by display name. The keys themselves are never shown again, only what they may do.
+                Only a person signed in with Authentik, not a key.
             security:
                 - bearerAuth: []
-                - apiKeyAuth: []
             responses:
                 "200":
-                    description: The keys, by name.
+                    description: Your keys.
                     content:
                         application/json:
                             schema:
@@ -635,8 +636,6 @@ paths:
                     $ref: "#/components/responses/Unauthenticated"
                 "403":
                     $ref: "#/components/responses/Forbidden"
-                "404":
-                    $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
         post:
@@ -648,12 +647,14 @@ paths:
                 **The answer holds the key, once.** Only its hash is stored, so it cannot be shown again: keep it. Send it as
                 `Authorization: Bearer <key>`.
 
-                A key never exceeds its creator: you can only give it scopes you hold yourself on the tenant, and a key can only create
-                keys with a subset of its own scopes. A key stops working at its `expiresAt` to the second (the API checks the date
-                itself, it does not wait for Crossplane), or as soon as it is deleted.
+                The key acts as you, within the scopes you give it: it can never do more than you can. It expires at
+                `expiresAt`, at most 366 days ahead; the API checks the date itself, to the second. It stops at once when it
+                is deleted, and when its owner is no longer a platform administrator it stops being worth one (within a minute).
+
+                For now only the platform administrators may create keys, and only a person signed in with Authentik: a key
+                cannot create a key.
             security:
                 - bearerAuth: []
-                - apiKeyAuth: []
             requestBody:
                 required: true
                 content:
@@ -662,7 +663,7 @@ paths:
                             $ref: "#/components/schemas/ApiKeyCreate"
             responses:
                 "202":
-                    description: Accepted, the rights of the scopes are written within a few seconds.
+                    description: Accepted.
                     headers:
                         Location:
                             schema:
@@ -677,26 +678,21 @@ paths:
                     $ref: "#/components/responses/Unauthenticated"
                 "403":
                     $ref: "#/components/responses/Forbidden"
-                "404":
-                    $ref: "#/components/responses/NotFound"
-                "409":
-                    $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
                 "503":
                     $ref: "#/components/responses/Unavailable"
-    /v1/tenants/{t}/apikeys/{name}:
+    /v1/apikeys/{id}:
         parameters:
-            - $ref: "#/components/parameters/tenant"
-            - $ref: "#/components/parameters/name"
+            - $ref: "#/components/parameters/keyId"
         get:
             tags:
                 - API keys
             operationId: getApiKey
-            summary: One API key
+            summary: One of your API keys
+            description: Someone else's key is answered `404`, as if it did not exist.
             security:
                 - bearerAuth: []
-                - apiKeyAuth: []
             responses:
                 "200":
                     description: The key, without its secret.
@@ -718,11 +714,10 @@ paths:
             operationId: updateApiKey
             summary: Change the scopes, the expiry or the name of a key
             description: |
-                Taking a scope away is always allowed and takes effect at once. Adding one is giving it: you must hold it yourself. The
-                secret cannot be rotated: delete the key and create another.
+                The change is read at the next request. The secret cannot be rotated: delete the key and create another. For
+                now only the platform administrators.
             security:
                 - bearerAuth: []
-                - apiKeyAuth: []
             requestBody:
                 required: true
                 content:
@@ -754,10 +749,9 @@ paths:
             operationId: deleteApiKey
             summary: Revoke an API key
             description: |
-                The key stops working at once. Its rights go within about a minute.
+                The key stops working at once. Anyone may revoke their own keys, administrator or not.
             security:
                 - bearerAuth: []
-                - apiKeyAuth: []
             responses:
                 "202":
                     description: Being deleted.
@@ -839,9 +833,18 @@ components:
         apiKeyAuth:
             type: http
             scheme: bearer
-            bearerFormat: phk_<tenant>_<name>_<secret>
-            description: An API key of a tenant. Paste the key only, without `Bearer`.
+            bearerFormat: phk_<id>_<secret>
+            description: A personal API key, which acts as its owner within its scopes. Paste the key only, without `Bearer`.
     parameters:
+        keyId:
+            name: id
+            in: path
+            required: true
+            description: The id of the key, the second part of the key itself.
+            schema:
+                type: string
+                pattern: '^[0-9a-f]{16}$'
+                example: 0123456789abcdef
         tenant:
             name: t
             in: path
@@ -1137,7 +1140,7 @@ components:
         Role:
             type: string
             description: |
-                `admin`: everything on the tenant, memberships and keys included. `operator`: manage instances and images.
+                `admin`: everything on the tenant, memberships included. `operator`: manage instances and images.
                 `user`: create and use instances. `viewer`: read only. Each holds what the next holds.
             enum:
                 - admin
@@ -1146,9 +1149,13 @@ components:
                 - viewer
         Scope:
             type: string
-            description: What an API key may do on its tenant. `instances:write` does not give `instances:read`.
+            description: |
+                What an API key may do, at most what its owner may. `instances:write` does not give `instances:read`.
+                `tenants:read` reads the tenants the owner sees (all of them for a platform administrator); `tenants:write`
+                creates, resizes and deletes tenants, which only a platform administrator can, and also reads them.
             enum:
-                - tenant:read
+                - tenants:read
+                - tenants:write
                 - instances:read
                 - instances:write
                 - images:read
@@ -1219,15 +1226,22 @@ components:
         ApiKey:
             type: object
             required:
-                - name
+                - id
+                - owner
+                - displayName
                 - scopes
                 - expired
                 - phase
                 - createdAt
             properties:
-                name:
+                id:
                     type: string
-                    example: ci
+                    description: The second part of the key, and the name of the object.
+                    example: 0123456789abcdef
+                owner:
+                    type: string
+                    description: The user the key acts as.
+                    example: alice@example.org
                 displayName:
                     type: string
                 scopes:
@@ -1247,12 +1261,10 @@ components:
                 createdAt:
                     type: string
                     format: date-time
-                createdBy:
-                    type: string
                 key:
                     type: string
-                    description: The key, `phk_<tenant>_<name>_<secret>`. In the answer to the creation only, never again.
-                    example: phk_demo_ci_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+                    description: The key, `phk_<id>_<secret>`. In the answer to the creation only, never again.
+                    example: phk_0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         ApiKeyList:
             type: object
             required:
@@ -1266,16 +1278,15 @@ components:
             type: object
             additionalProperties: false
             required:
-                - name
+                - displayName
                 - scopes
+                - expiresAt
             properties:
-                name:
-                    type: string
-                    pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
-                    example: ci
                 displayName:
                     type: string
+                    minLength: 1
                     maxLength: 100
+                    example: CI of the infra
                 scopes:
                     type: array
                     minItems: 1
@@ -1285,7 +1296,7 @@ components:
                 expiresAt:
                     type: string
                     format: date-time
-                    description: In the future. Without it the key does not expire.
+                    description: In the future, at most 366 days ahead.
         ApiKeyPatch:
             type: object
             additionalProperties: false
@@ -1302,6 +1313,7 @@ components:
                     format: date-time
                 displayName:
                     type: string
+                    minLength: 1
                     maxLength: 100
         Plan:
             type: string
@@ -1409,34 +1421,22 @@ components:
                     example: user:alice@example.org
                 email:
                     type: string
-                    description: The email claim, exactly as Authentik gives it. Users only.
+                    description: The email claim, exactly as Authentik gives it. For a key, its owner.
                     example: alice@example.org
-                tenant:
-                    type: string
-                    description: The only tenant the key works on. Keys only.
-                    example: demo
                 name:
                     type: string
-                    description: The name of the key. Keys only.
-                    example: ci
+                    description: The id of the key. Keys only.
+                    example: 0123456789abcdef
                 platformAdmin:
                     type: boolean
                     description: |
                         The caller may create, resize and delete tenants: a user that belongs to the platform
-                        administrators group of Authentik. Always false for a key.
+                        administrators group of Authentik. For a key, its owner does and the key has `tenants:write`.
                 scopes:
                     type: array
                     description: What the key may do. Keys only.
                     items:
-                        type: string
-                        enum:
-                            - tenant:read
-                            - instances:read
-                            - instances:write
-                            - images:read
-                            - images:write
-                            - memberships:read
-                            - memberships:write
+                        $ref: "#/components/schemas/Scope"
         Error:
             type: object
             required:

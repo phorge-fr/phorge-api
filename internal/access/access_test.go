@@ -64,27 +64,28 @@ func TestMembershipNameIsOnePerUser(t *testing.T) {
 
 func TestCreateKey(t *testing.T) {
 	later := now.Add(time.Hour)
-	good := CreateKey{Name: "ci", DisplayName: "CI", Scopes: []string{"tenant:read", "instances:write"}, ExpiresAt: &later}
+	good := CreateKey{DisplayName: "CI", Scopes: []string{"tenants:read", "instances:write"}, ExpiresAt: &later}
 	if err := good.Validate(now); err != nil {
 		t.Fatal(err)
 	}
-	if err := (CreateKey{Name: "a", Scopes: []string{"images:read"}}).Validate(now); err != nil {
-		t.Errorf("no expiry and no display name: %v", err)
+	lastDay := now.Add(MaxLifetime)
+	if err := (CreateKey{DisplayName: "a", Scopes: []string{"tenants:write"}, ExpiresAt: &lastDay}).Validate(now); err != nil {
+		t.Errorf("the longest lifetime: %v", err)
 	}
 
-	past := now.Add(-time.Second)
+	past, tooFar := now.Add(-time.Second), now.Add(MaxLifetime+time.Second)
 	for name, req := range map[string]CreateKey{
-		"no name":                     {Scopes: []string{"tenant:read"}},
-		"an underscore in a name":     {Name: "ci_1", Scopes: []string{"tenant:read"}},
-		"an upper case name":          {Name: "CI", Scopes: []string{"tenant:read"}},
-		"a name of 64 characters":     {Name: strings.Repeat("a", 64), Scopes: []string{"tenant:read"}},
-		"no scope":                    {Name: "ci"},
-		"an empty list":               {Name: "ci", Scopes: []string{}},
-		"a scope that does not exist": {Name: "ci", Scopes: []string{"tenant:delete"}},
-		"a scope twice":               {Name: "ci", Scopes: []string{"tenant:read", "tenant:read"}},
-		"an expiry that passed":       {Name: "ci", Scopes: []string{"tenant:read"}, ExpiresAt: &past},
-		"an expiry now":               {Name: "ci", Scopes: []string{"tenant:read"}, ExpiresAt: &now},
-		"a display name too long":     {Name: "ci", Scopes: []string{"tenant:read"}, DisplayName: strings.Repeat("a", 101)},
+		"no display name":             {Scopes: []string{"tenants:read"}, ExpiresAt: &later},
+		"a display name too long":     {DisplayName: strings.Repeat("a", 101), Scopes: []string{"tenants:read"}, ExpiresAt: &later},
+		"no scope":                    {DisplayName: "ci", ExpiresAt: &later},
+		"an empty list":               {DisplayName: "ci", Scopes: []string{}, ExpiresAt: &later},
+		"a scope that does not exist": {DisplayName: "ci", Scopes: []string{"tenants:delete"}, ExpiresAt: &later},
+		"the old scope name":          {DisplayName: "ci", Scopes: []string{"tenant:read"}, ExpiresAt: &later},
+		"a scope twice":               {DisplayName: "ci", Scopes: []string{"tenants:read", "tenants:read"}, ExpiresAt: &later},
+		"no expiry":                   {DisplayName: "ci", Scopes: []string{"tenants:read"}},
+		"an expiry that passed":       {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &past},
+		"an expiry now":               {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &now},
+		"an expiry too far":           {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &tooFar},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var invalid *InvalidError
@@ -96,7 +97,7 @@ func TestCreateKey(t *testing.T) {
 }
 
 func TestPatchKey(t *testing.T) {
-	later, past := now.Add(time.Hour), now.Add(-time.Hour)
+	later, past, tooFar := now.Add(time.Hour), now.Add(-time.Hour), now.Add(MaxLifetime+time.Hour)
 	scopes, none, bad := []string{"images:read"}, []string{}, []string{"nope"}
 	for name, ok := range map[string]PatchKey{
 		"scopes": {Scopes: &scopes}, "a date": {ExpiresAt: &later}, "a name": {DisplayName: ptr("CI")},
@@ -107,6 +108,7 @@ func TestPatchKey(t *testing.T) {
 	}
 	for name, req := range map[string]PatchKey{
 		"nothing": {}, "no scope left": {Scopes: &none}, "an unknown scope": {Scopes: &bad}, "a date that passed": {ExpiresAt: &past},
+		"a date too far": {ExpiresAt: &tooFar}, "an empty name": {DisplayName: ptr("")},
 	} {
 		if err := req.Validate(now); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -115,7 +117,7 @@ func TestPatchKey(t *testing.T) {
 }
 
 func TestNewKeyIsParsedAndHashedByTheAuthentication(t *testing.T) {
-	key, hash, err := NewKey("demo", "ci")
+	id, key, hash, err := NewKey()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +125,8 @@ func TestNewKeyIsParsedAndHashedByTheAuthentication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the key does not parse: %v", err)
 	}
-	if p.Tenant != "demo" || p.Name != "ci" || len(p.Secret) != 64 {
-		t.Errorf("parsed %+v: 32 bytes in hex are expected", p)
+	if p.ID != id || !ValidKeyName(id) || len(p.Secret) != 64 {
+		t.Errorf("parsed %+v for the id %q: 8 bytes in hex and 32 bytes in hex are expected", p, id)
 	}
 	if hash != auth.HashSecret(p.Secret) {
 		t.Error("the stored hash is not the one the authentication computes")
@@ -132,8 +134,21 @@ func TestNewKeyIsParsedAndHashedByTheAuthentication(t *testing.T) {
 	if strings.Contains(hash, p.Secret) {
 		t.Error("the hash holds the secret")
 	}
-	other, _, _ := NewKey("demo", "ci")
+	_, other, _, _ := NewKey()
 	if other == key {
 		t.Error("two keys are the same")
+	}
+}
+
+func TestOwnerLabel(t *testing.T) {
+	label := OwnerLabel("alice@example.org")
+	if len(label) != 32 || strings.ContainsAny(label, "@.") {
+		t.Errorf("%q is not usable as a label value", label)
+	}
+	if label != OwnerLabel(" Alice@Example.org ") {
+		t.Error("the label depends on the case: the keys of one user would be split")
+	}
+	if label == OwnerLabel("bob@example.org") {
+		t.Error("two users share a label")
 	}
 }

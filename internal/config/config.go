@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// Config is the whole configuration. It never contains anything that is not meant to be logged except OpenFGAAPIKey,
-// which is redacted by LogValue and String.
+// Config is the whole configuration. It never contains anything that is not meant to be logged except OpenFGAAPIKey and
+// AuthentikToken, which are redacted by LogValue and String.
 type Config struct {
 	// ListenAddr is the address of the HTTP server.
 	ListenAddr string
@@ -32,6 +32,11 @@ type Config struct {
 	// PlatformAdminGroup is the name of the Authentik group whose members may create, resize and delete tenants. The
 	// API reads it from the "groups" claim of the token. Empty: nobody can.
 	PlatformAdminGroup string
+	// AuthentikURL and AuthentikToken let the API ask Authentik which groups the owner of an API key belongs to (a key does
+	// not carry them). The token is a read-only one of a service account. Without them, a key is never a platform
+	// administrator's.
+	AuthentikURL   string
+	AuthentikToken string
 }
 
 // Environment variables.
@@ -45,6 +50,8 @@ const (
 	EnvCAFile             = "CA_FILE"
 	EnvKubeContext        = "KUBE_CONTEXT"
 	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
+	EnvAuthentikURL       = "AUTHENTIK_URL"
+	EnvAuthentikToken     = "AUTHENTIK_TOKEN" //nolint:gosec // the name of a variable, not a credential
 )
 
 const defaultListenAddr = ":8080"
@@ -67,6 +74,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		CAFile:             get(EnvCAFile),
 		KubeContext:        get(EnvKubeContext),
 		PlatformAdminGroup: get(EnvPlatformAdminGroup),
+		AuthentikURL:       get(EnvAuthentikURL),
+		AuthentikToken:     get(EnvAuthentikToken),
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = defaultListenAddr
@@ -87,6 +96,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	for _, u := range []struct{ key, value string }{
 		{EnvIssuer, c.Issuer},
 		{EnvOpenFGAURL, c.OpenFGAURL},
+		{EnvAuthentikURL, c.AuthentikURL},
 	} {
 		if u.value != "" {
 			if err := checkURL(u.value); err != nil {
@@ -94,13 +104,16 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			}
 		}
 	}
+	if (c.AuthentikURL == "") != (c.AuthentikToken == "") {
+		errs = append(errs, fmt.Errorf("%s and %s go together", EnvAuthentikURL, EnvAuthentikToken))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return c, nil
 }
 
-// LogValue logs the configuration without the OpenFGA key.
+// LogValue logs the configuration without the OpenFGA key nor the Authentik token.
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("listen_addr", c.ListenAddr),
@@ -111,6 +124,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
 		slog.String("platform_admin_group", c.PlatformAdminGroup),
+		slog.String("authentik_url", c.AuthentikURL),
 	)
 }
 

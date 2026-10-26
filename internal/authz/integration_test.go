@@ -34,20 +34,22 @@ func TestAgainstTheRealModel(t *testing.T) {
 		email := role + "-" + tenant + "@example.org"
 		return auth.Identity{Kind: auth.KindUser, Subject: "user:" + email, Email: email}
 	}
-	key1 := auth.Identity{Kind: auth.KindAPIKey, Subject: "apikey:" + tenant + ".ci", Tenant: tenant, Name: "ci"}
+	// Keys are their owner within their scopes: one of an operator, one of a viewer that was given every scope.
+	keyOf := func(owner auth.Identity, scopes ...string) auth.Identity {
+		return auth.Identity{Kind: auth.KindAPIKey, Subject: owner.Subject, Email: owner.Email, Name: "0123456789abcdef", Scopes: scopes}
+	}
+	key1 := keyOf(user("operator"), "tenants:read", "instances:write", "memberships:write")
+	greedy := keyOf(user("viewer"), authz.Scopes()...)
 
 	fgatest.Store{BaseURL: url, StoreID: store, Key: key}.Write(t,
 		fgatest.Tuple{User: user("admin").Subject, Relation: "admin", Object: object},
 		fgatest.Tuple{User: user("operator").Subject, Relation: "operator", Object: object},
 		fgatest.Tuple{User: user("user").Subject, Relation: "user", Object: object},
 		fgatest.Tuple{User: user("viewer").Subject, Relation: "viewer", Object: object},
-		// A key with two scopes: they are relations of their own, instances:write does not give instances:read.
-		fgatest.Tuple{User: key1.Subject, Relation: "key_tenant_read", Object: object},
-		fgatest.Tuple{User: key1.Subject, Relation: "key_instances_write", Object: object},
 	)
 
 	client := fga.New(url, store, key, nil)
-	a := authz.New(client, "")
+	a := authz.New(client, "", nil)
 
 	all := []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages, authz.WriteImages, authz.ReadMemberships, authz.WriteMemberships}
 	tests := []struct {
@@ -59,7 +61,9 @@ func TestAgainstTheRealModel(t *testing.T) {
 		{"operator", user("operator"), []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages, authz.WriteImages}},
 		{"user", user("user"), []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages}},
 		{"viewer", user("viewer"), []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.ReadImages}},
-		{"key tenant:read + instances:write", key1, []authz.Action{authz.ReadTenant, authz.WriteInstances}},
+		// The scope memberships:write is there, the operator it acts as may not: nothing. instances:read is not a scope of the key.
+		{"key of an operator: tenants:read, instances:write, memberships:write", key1, []authz.Action{authz.ReadTenant, authz.WriteInstances}},
+		{"key of a viewer with every scope", greedy, []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.ReadImages}},
 		{"stranger", user("stranger"), nil},
 	}
 	for _, tt := range tests {
@@ -76,14 +80,6 @@ func TestAgainstTheRealModel(t *testing.T) {
 		}
 	}
 
-	t.Run("a key does not act on another tenant", func(t *testing.T) {
-		other := key1
-		other.Tenant = "apitest-authz-other"
-		if ok, err := a.Allowed(t.Context(), other, authz.ReadTenant, "apitest-authz-other"); err != nil || ok {
-			t.Errorf("ok=%v err=%v", ok, err)
-		}
-	})
-
 	t.Run("tenants a caller sees", func(t *testing.T) {
 		seen, err := a.Tenants(t.Context(), user("viewer"))
 		if err != nil || !slices.Equal(seen, []string{tenant}) {
@@ -93,26 +89,14 @@ func TestAgainstTheRealModel(t *testing.T) {
 		if err != nil || !slices.Equal(seen, []string{tenant}) {
 			t.Errorf("the key sees %v (err %v), want only %s", seen, err, tenant)
 		}
+		// Without tenants:read a key sees nothing, whatever its owner sees.
+		seen, err = a.Tenants(t.Context(), keyOf(user("viewer"), "instances:read"))
+		if err != nil || len(seen) != 0 {
+			t.Errorf("a key without tenants:read sees %v (err %v)", seen, err)
+		}
 		seen, err = a.Tenants(t.Context(), user("stranger"))
 		if err != nil || len(seen) != 0 {
 			t.Errorf("a stranger sees %v (err %v)", seen, err)
-		}
-	})
-
-	t.Run("a key never exceeds its creator", func(t *testing.T) {
-		// An operator may give what an operator holds, not the memberships.
-		missing, err := a.Missing(t.Context(), user("operator"), tenant, authz.Scopes())
-		if err != nil || !slices.Equal(missing, []string{"memberships:read", "memberships:write"}) {
-			t.Errorf("operator: missing=%v err=%v", missing, err)
-		}
-		missing, err = a.Missing(t.Context(), user("admin"), tenant, authz.Scopes())
-		if err != nil || len(missing) != 0 {
-			t.Errorf("admin: missing=%v err=%v", missing, err)
-		}
-		// A key holds only its scopes, so it can only give those.
-		missing, err = a.Missing(t.Context(), key1, tenant, []string{"tenant:read", "instances:read", "instances:write"})
-		if err != nil || !slices.Equal(missing, []string{"instances:read"}) {
-			t.Errorf("key: missing=%v err=%v", missing, err)
 		}
 	})
 }

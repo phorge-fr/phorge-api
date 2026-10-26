@@ -23,6 +23,9 @@ var apiKeys = schema.GroupVersionResource{Group: "phorge.fr", Version: "v1alpha1
 // NamespaceOf is the namespace of a tenant: t-<name>.
 func NamespaceOf(tenant string) string { return "t-" + tenant }
 
+// KeysNamespace is where the ApiKey objects live: one namespace for all of them, a key belongs to a user, not to a tenant.
+const KeysNamespace = "phorge-keys"
+
 // NewClient returns a client for the cluster: the service account of the pod when there is one, otherwise the kubeconfig
 // (KUBECONFIG or ~/.kube/config), on kubeContext if it is not empty.
 func NewClient(kubeContext string) (dynamic.Interface, error) {
@@ -81,14 +84,13 @@ type Keys struct {
 // NewKeys returns a store that reads the keys through conn.
 func NewKeys(conn *Connection) *Keys { return &Keys{conn: conn} }
 
-// GetKey gets the ApiKey <name> of the namespace t-<tenant>, with one get. tenant and name must already be checked
-// (auth.ParseKey does).
-func (k *Keys) GetKey(ctx context.Context, tenant, name string) (auth.KeyRecord, error) {
+// GetKey gets the ApiKey <id> of the keys namespace, with one get. id must already be checked (auth.ParseKey does).
+func (k *Keys) GetKey(ctx context.Context, id string) (auth.KeyRecord, error) {
 	client, err := k.conn.Dynamic()
 	if err != nil {
 		return auth.KeyRecord{}, err
 	}
-	obj, err := client.Resource(apiKeys).Namespace(NamespaceOf(tenant)).Get(ctx, name, metav1.GetOptions{})
+	obj, err := client.Resource(apiKeys).Namespace(KeysNamespace).Get(ctx, id, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return auth.KeyRecord{}, auth.ErrKeyNotFound
 	}
@@ -99,18 +101,18 @@ func (k *Keys) GetKey(ctx context.Context, tenant, name string) (auth.KeyRecord,
 }
 
 func recordOf(obj *unstructured.Unstructured) auth.KeyRecord {
-	// A field of the wrong type reads as empty, which fails closed: an empty hash matches nothing.
+	// A field of the wrong type reads as empty, which fails closed: an empty hash matches nothing, an empty owner is refused.
 	hash, _, _ := unstructured.NestedString(obj.Object, "spec", "hash")
+	owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner")
 	scopes, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "scopes")
 	expiresAt, _, _ := unstructured.NestedString(obj.Object, "spec", "expiresAt")
-	createdBy, _, _ := unstructured.NestedString(obj.Object, "spec", "createdBy")
 	expired, _, _ := unstructured.NestedBool(obj.Object, "status", "expired")
 	return auth.KeyRecord{
 		Hash:      hash,
+		Owner:     owner,
 		Scopes:    scopes,
 		ExpiresAt: expiresAt,
 		Expired:   expired,
 		Deleting:  obj.GetDeletionTimestamp() != nil,
-		CreatedBy: createdBy,
 	}
 }

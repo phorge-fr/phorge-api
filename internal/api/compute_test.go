@@ -185,8 +185,8 @@ func TestImagesWhoMayDoWhat(t *testing.T) {
 		{"user", 200, 200, 403, 403},
 		{"operator", 200, 200, 202, 202},
 		{"admin", 200, 200, 202, 202},
-		{"phk_demo_ci", 200, 200, 403, 403}, // a key with images:read only
-		{"mallory", 404, 404, 404, 404},     // a stranger: there is no such tenant
+		{"phk_ci", 200, 200, 403, 403},  // a key with images:read only
+		{"mallory", 404, 404, 404, 404}, // a stranger: there is no such tenant
 		{"", 401, 401, 401, 401},
 	}
 	for _, tt := range tests {
@@ -299,7 +299,7 @@ func TestInstancesWhoMayDoWhat(t *testing.T) {
 		{"user", 200, 200, 202, 200, 202},
 		{"operator", 200, 200, 202, 200, 202},
 		{"admin", 200, 200, 202, 200, 202},
-		{"phk_demo_ci", 403, 403, 403, 403, 403}, // images:read and tenant:read only
+		{"phk_ci", 403, 403, 403, 403, 403}, // images:read and tenant:read only
 		{"mallory", 404, 404, 404, 404, 404},
 		{"", 401, 401, 401, 401, 401},
 	}
