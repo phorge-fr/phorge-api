@@ -5,6 +5,14 @@
     "bump-patch-for-minor-pre-major": false,
     "include-component-in-tag": false,
     "packages": {
-        ".": {}
+        ".": {
+            "extra-files": [
+                {
+                    "type": "yaml",
+                    "path": "internal/openapi/openapi.yaml",
+                    "jsonpath": "$.info.version"
+                }
+            ]
+        }
     }
 }
