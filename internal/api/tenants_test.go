@@ -112,10 +112,12 @@ func (c *checker) ListObjects(_ context.Context, user, _, _ string) ([]string, e
 	return c.objects[user], c.err
 }
 
-// directory is the Authentik of these tests: the groups of a user by email. The keys have none of their own.
+// directory is the Authentik of these tests: the members of each group, by email. The keys carry no group of their own.
 type directory map[string][]string
 
-func (d directory) Groups(_ context.Context, email string) ([]string, error) { return d[email], nil }
+func (d directory) Member(_ context.Context, email, group string) (bool, error) {
+	return slices.Contains(d[group], email), nil
+}
 
 type tokens map[string]auth.Identity
 
@@ -218,7 +220,7 @@ func newEnv(t *testing.T) *env {
 	s := server.New(log)
 	Register(s, Deps{
 		Auth:        &auth.Authenticator{Users: users, Keys: keys, Log: log},
-		Authz:       authz.New(fga, adminGroup, directory{"admin@example.org": {adminGroup}, "gone@example.org": {"staff"}}),
+		Authz:       authz.New(fga, adminGroup, directory{adminGroup: {"admin@example.org"}, "staff": {"gone@example.org"}}),
 		Tenants:     st,
 		Images:      images,
 		Instances:   instances,

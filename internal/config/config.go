@@ -32,9 +32,9 @@ type Config struct {
 	// PlatformAdminGroup is the name of the Authentik group whose members may create, resize and delete tenants. The
 	// API reads it from the "groups" claim of the token. Empty: nobody can.
 	PlatformAdminGroup string
-	// AuthentikURL and AuthentikToken let the API ask Authentik which groups the owner of an API key belongs to (a key does
-	// not carry them). The token is a read-only one of a service account. Without them, a key is never a platform
-	// administrator's.
+	// AuthentikURL and AuthentikToken let the API ask Authentik whether the owner of an API key is a member of the platform
+	// administrators group (a key does not carry groups). The token is the one of a service account that may read that group
+	// and nothing else. Without them, a key is never a platform administrator's.
 	AuthentikURL   string
 	AuthentikToken string
 }

@@ -377,7 +377,7 @@ func TestACreatedKeyActsAsItsOwnerWithinItsScopes(t *testing.T) {
 	s := server.New(log)
 	Register(s, Deps{
 		Auth:    &auth.Authenticator{Users: tokens{}, Keys: auth.NewKeyVerifier(keyReader{e.keys}), Log: log},
-		Authz:   authz.New(e.fga, adminGroup, directory{"admin@example.org": {adminGroup}}),
+		Authz:   authz.New(e.fga, adminGroup, directory{adminGroup: {"admin@example.org"}}),
 		Tenants: e.store, Images: e.images, Instances: e.instances, Memberships: e.memberships, Keys: e.keys,
 		Log: log, Now: func() time.Time { return now },
 	})

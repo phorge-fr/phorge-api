@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const alice = `{"email":"Alice@Example.org","is_active":true,"groups_obj":[{"name":"staff"},{"name":"phorge-platform-admins"}]}`
+const admins = `{"name":"phorge-platform-admins","users_obj":[
+	{"email":"Alice@Example.org","is_active":true},
+	{"email":"gone@example.org","is_active":false},
+	{"email":"","is_active":true}]}`
 
 // serve answers every request with body and counts them, and keeps the last request.
 func serve(t *testing.T, status int, body string) (*Directory, *atomic.Int32, *http.Request) {
@@ -26,16 +29,28 @@ func serve(t *testing.T, status int, body string) (*Directory, *atomic.Int32, *h
 	return New(srv.URL+"/", "s3cret", srv.Client()), &calls, &last
 }
 
-func TestGroupsOfAUser(t *testing.T) {
-	d, calls, last := serve(t, 200, `{"results":[`+alice+`]}`)
-	groups, err := d.Groups(t.Context(), "alice@example.org")
-	if err != nil {
-		t.Fatal(err)
+const group = "phorge-platform-admins"
+
+func TestMembersOfAGroup(t *testing.T) {
+	d, calls, last := serve(t, 200, `{"results":[`+admins+`]}`)
+	for email, want := range map[string]bool{
+		"alice@example.org":      true,
+		"ALICE@example.org":      true, // the case of an email does not matter
+		" alice@example.org ":    true,
+		"gone@example.org":       false, // inactive
+		"bob@example.org":        false,
+		"":                       false,
+		"alice@example.org.evil": false,
+	} {
+		got, err := d.Member(t.Context(), email, group)
+		if err != nil || got != want {
+			t.Errorf("Member(%q) = %v, %v, want %v", email, got, err, want)
+		}
 	}
-	if strings.Join(groups, ",") != "staff,phorge-platform-admins" {
-		t.Errorf("groups = %v", groups)
+	if calls.Load() != 1 {
+		t.Errorf("%d requests: one for the group, whoever is asked about", calls.Load())
 	}
-	if calls.Load() != 1 || last.URL.Path != "/api/v3/core/users/" || last.URL.Query().Get("email") != "alice@example.org" {
+	if last.URL.Path != "/api/v3/core/groups/" || last.URL.Query().Get("name") != group {
 		t.Errorf("request: %s", last.URL)
 	}
 	if got := last.Header.Get("Authorization"); got != "Bearer s3cret" {
@@ -44,19 +59,19 @@ func TestGroupsOfAUser(t *testing.T) {
 }
 
 func TestTheAnswerIsRememberedForAMinute(t *testing.T) {
-	d, calls, _ := serve(t, 200, `{"results":[`+alice+`]}`)
+	d, calls, _ := serve(t, 200, `{"results":[`+admins+`]}`)
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	d.now = func() time.Time { return now }
-	for _, email := range []string{"alice@example.org", "ALICE@example.org", " alice@example.org "} {
-		if _, err := d.Groups(t.Context(), email); err != nil {
+	for range 3 {
+		if _, err := d.Member(t.Context(), "alice@example.org", group); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if calls.Load() != 1 {
-		t.Errorf("%d requests, want 1: the case of an email does not matter and the answer is kept", calls.Load())
+		t.Errorf("%d requests, want 1: the answer is kept", calls.Load())
 	}
 	now = now.Add(CacheTTL + time.Second)
-	if _, err := d.Groups(t.Context(), "alice@example.org"); err != nil {
+	if _, err := d.Member(t.Context(), "alice@example.org", group); err != nil {
 		t.Fatal(err)
 	}
 	if calls.Load() != 2 {
@@ -64,40 +79,31 @@ func TestTheAnswerIsRememberedForAMinute(t *testing.T) {
 	}
 }
 
-func TestWhoIsNotAGroupMember(t *testing.T) {
-	for name, body := range map[string]string{
-		"nobody has this email":          `{"results":[]}`,
-		"another email (a loose filter)": `{"results":[{"email":"alice@example.org.evil","is_active":true,"groups_obj":[{"name":"phorge-platform-admins"}]}]}`,
-		"an inactive user":               `{"results":[{"email":"alice@example.org","is_active":false,"groups_obj":[{"name":"phorge-platform-admins"}]}]}`,
-		"a user without group":           `{"results":[{"email":"alice@example.org","is_active":true,"groups_obj":[]}]}`,
-		"a user with groups_obj missing": `{"results":[{"email":"alice@example.org","is_active":true}]}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			d, _, _ := serve(t, 200, body)
-			groups, err := d.Groups(t.Context(), "alice@example.org")
-			if err != nil || len(groups) != 0 {
-				t.Errorf("groups = %v, err = %v: no group, and that is an answer, not an error", groups, err)
-			}
-		})
+func TestAnEmptyGroupHasNoMember(t *testing.T) {
+	d, _, _ := serve(t, 200, `{"results":[{"name":"phorge-platform-admins","users_obj":[]}]}`)
+	if ok, err := d.Member(t.Context(), "alice@example.org", group); err != nil || ok {
+		t.Errorf("ok = %v, err = %v", ok, err)
 	}
 }
 
 func TestWhatCannotBeAskedIsAnError(t *testing.T) {
-	two := `{"results":[` + alice + `,` + alice + `]}`
+	two := `{"results":[` + admins + `,` + admins + `]}`
 	for name, tt := range map[string]struct {
 		status int
 		body   string
 	}{
-		"the token is refused":      {403, `{"detail":"nope"}`},
-		"authentik fails":           {500, ``},
-		"an answer that is no JSON": {200, `<html>`},
-		"two users share the email": {200, two},
+		"the token is refused":                 {403, `{"detail":"nope"}`},
+		"authentik fails":                      {500, ``},
+		"an answer that is no JSON":            {200, `<html>`},
+		"the token may not read the group":     {200, `{"results":[]}`},
+		"another group than the one asked for": {200, `{"results":[{"name":"staff","users_obj":[{"email":"alice@example.org","is_active":true}]}]}`},
+		"two groups of that name":              {200, two},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d, _, _ := serve(t, tt.status, tt.body)
-			groups, err := d.Groups(t.Context(), "alice@example.org")
-			if err == nil || groups != nil {
-				t.Errorf("groups = %v, err = %v: it must be an error, never read as \"no group\" nor as a member", groups, err)
+			ok, err := d.Member(t.Context(), "alice@example.org", group)
+			if err == nil || ok {
+				t.Errorf("ok = %v, err = %v: it must be an error, never read as \"not a member\" nor as a member", ok, err)
 			}
 			if strings.Contains(err.Error(), "s3cret") {
 				t.Errorf("the token is in the error: %v", err)
@@ -116,23 +122,26 @@ func TestAnErrorIsNotRemembered(t *testing.T) {
 			w.WriteHeader(500)
 			return
 		}
-		_, _ = w.Write([]byte(`{"results":[` + alice + `]}`))
+		_, _ = w.Write([]byte(`{"results":[` + admins + `]}`))
 	}))
 	defer srv.Close()
 	d := New(srv.URL, "t", srv.Client())
-	if _, err := d.Groups(t.Context(), "alice@example.org"); err == nil {
+	if _, err := d.Member(t.Context(), "alice@example.org", group); err == nil {
 		t.Fatal("no error")
 	}
 	fail.Store(false)
-	groups, err := d.Groups(t.Context(), "alice@example.org")
-	if err != nil || len(groups) != 2 || calls.Load() != 2 {
-		t.Errorf("groups = %v, err = %v, %d requests: a failure must not be kept", groups, err, calls.Load())
+	ok, err := d.Member(t.Context(), "alice@example.org", group)
+	if err != nil || !ok || calls.Load() != 2 {
+		t.Errorf("ok = %v, err = %v, %d requests: a failure must not be kept", ok, err, calls.Load())
 	}
 }
 
-func TestAnEmptyEmailAsksNothing(t *testing.T) {
+func TestNothingToAskNothingAsked(t *testing.T) {
 	d, calls, _ := serve(t, 200, `{"results":[]}`)
-	if groups, err := d.Groups(t.Context(), "  "); groups != nil || err != nil || calls.Load() != 0 {
-		t.Errorf("groups = %v, err = %v, %d requests", groups, err, calls.Load())
+	if ok, err := d.Member(t.Context(), "  ", group); ok || err != nil || calls.Load() != 0 {
+		t.Errorf("an empty email: ok = %v, err = %v, %d requests", ok, err, calls.Load())
+	}
+	if ok, err := d.Member(t.Context(), "alice@example.org", ""); ok || err != nil || calls.Load() != 0 {
+		t.Errorf("an empty group: ok = %v, err = %v, %d requests", ok, err, calls.Load())
 	}
 }

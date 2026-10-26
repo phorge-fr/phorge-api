@@ -46,16 +46,16 @@ var (
 		Scopes: []string{"instances:read", "tenants:read"}}
 )
 
-// groupsOf is a Directory that answers from a map.
-type groupsOf struct {
+// members is a Directory that answers from a map of group -> emails.
+type members struct {
 	groups map[string][]string
 	err    error
 	asked  []string
 }
 
-func (g *groupsOf) Groups(_ context.Context, email string) ([]string, error) {
-	g.asked = append(g.asked, email)
-	return g.groups[email], g.err
+func (m *members) Member(_ context.Context, email, group string) (bool, error) {
+	m.asked = append(m.asked, email+" in "+group)
+	return slices.Contains(m.groups[group], email), m.err
 }
 
 func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
@@ -240,13 +240,13 @@ func TestPlatformAdminForAUser(t *testing.T) {
 }
 
 func TestPlatformAdminForAKeyIsAskedToAuthentik(t *testing.T) {
-	dir := &groupsOf{groups: map[string][]string{"alice@example.org": {"phorge-platform-admins"}, "bob@example.org": {"staff"}}}
+	dir := &members{groups: map[string][]string{"phorge-platform-admins": {"alice@example.org"}, "staff": {"bob@example.org"}}}
 	a := New(&fake{}, "phorge-platform-admins", dir)
 
 	if ok, err := a.PlatformAdmin(t.Context(), ci); err != nil || !ok {
 		t.Errorf("a key of an administrator: ok=%v err=%v", ok, err)
 	}
-	if !slices.Equal(dir.asked, []string{"alice@example.org"}) {
+	if !slices.Equal(dir.asked, []string{"alice@example.org in phorge-platform-admins"}) {
 		t.Errorf("Authentik was asked about %q", dir.asked)
 	}
 	bobs := auth.Identity{Kind: auth.KindAPIKey, Email: "bob@example.org", Scopes: []string{"tenants:write"}}
@@ -268,7 +268,7 @@ func TestPlatformAdminForAKeyIsAskedToAuthentik(t *testing.T) {
 
 func TestPlatformAdminThatCannotBeAskedIsAnError(t *testing.T) {
 	boom := errors.New("authentik is down")
-	a := New(&fake{}, "phorge-platform-admins", &groupsOf{err: boom})
+	a := New(&fake{}, "phorge-platform-admins", &members{err: boom})
 	if ok, err := a.PlatformAdmin(t.Context(), ci); ok || !errors.Is(err, boom) {
 		t.Errorf("ok=%v err=%v: it must be a refusal that says the service is unavailable", ok, err)
 	}
@@ -280,7 +280,7 @@ func TestPlatformAdminThatCannotBeAskedIsAnError(t *testing.T) {
 }
 
 func TestAdminMayRespectsTheScopesOfAKey(t *testing.T) {
-	dir := &groupsOf{groups: map[string][]string{"alice@example.org": {"phorge-platform-admins"}}}
+	dir := &members{groups: map[string][]string{"phorge-platform-admins": {"alice@example.org"}}}
 	a := New(&fake{}, "phorge-platform-admins", dir)
 
 	// An administrator's key with tenants:read sees every tenant, and cannot delete one.

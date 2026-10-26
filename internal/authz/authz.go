@@ -73,9 +73,9 @@ type Checker interface {
 	ListObjects(ctx context.Context, user, relation, objectType string) ([]string, error)
 }
 
-// Directory tells the groups of a user, for the callers whose credential does not carry them (an API key).
+// Directory tells whether a user is in a group, for the callers whose credential does not carry their groups (an API key).
 type Directory interface {
-	Groups(ctx context.Context, email string) ([]string, error)
+	Member(ctx context.Context, email, group string) (bool, error)
 }
 
 // Authorizer answers the questions of the routes.
@@ -156,17 +156,13 @@ func (a *Authorizer) PlatformAdmin(ctx context.Context, id auth.Identity) (bool,
 	if a.adminGroup == "" {
 		return false, nil
 	}
-	groups := id.Groups
 	if id.Kind == auth.KindAPIKey {
 		if a.dir == nil || id.Email == "" {
 			return false, nil
 		}
-		var err error
-		if groups, err = a.dir.Groups(ctx, id.Email); err != nil {
-			return false, err
-		}
+		return a.dir.Member(ctx, id.Email, a.adminGroup)
 	}
-	return slices.Contains(groups, a.adminGroup), nil
+	return slices.Contains(id.Groups, a.adminGroup), nil
 }
 
 // AdminMay reports whether the caller is a platform administrator whose scopes let it do action: what the administrators do

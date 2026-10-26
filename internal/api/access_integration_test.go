@@ -52,7 +52,7 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 	Register(s, Deps{
 		// The keys are verified against their real objects, with their real hash: this is what a client would meet.
 		Auth:        &auth.Authenticator{Users: users, Keys: auth.NewKeyVerifier(kube.NewKeys(conn)), Log: log},
-		Authz:       authz.New(fga.New(url, storeID, key, nil), adminGroup, directory{admin.Email: {adminGroup}}),
+		Authz:       authz.New(fga.New(url, storeID, key, nil), adminGroup, directory{adminGroup: {admin.Email}}),
 		Tenants:     tenantStore,
 		Images:      kube.NewImages(conn),
 		Instances:   kube.NewInstances(conn),

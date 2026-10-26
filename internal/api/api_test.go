@@ -149,15 +149,15 @@ func TestWhoami(t *testing.T) {
 
 type fixedDirectory map[string][]string
 
-func (d fixedDirectory) Groups(_ context.Context, email string) ([]string, error) {
-	return d[email], nil
+func (d fixedDirectory) Member(_ context.Context, email, group string) (bool, error) {
+	return slices.Contains(d[group], email), nil
 }
 
 func TestWhoamiForTheKeyOfAnAdministrator(t *testing.T) {
 	key := func(scopes ...string) verifier {
 		return verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "user:alice@example.org", Email: "alice@example.org", Name: "0123456789abcdef", Scopes: scopes}}
 	}
-	dir := fixedDirectory{"alice@example.org": {"phorge-platform-admins"}}
+	dir := fixedDirectory{"phorge-platform-admins": {"alice@example.org"}}
 	for name, tt := range map[string]struct {
 		key  verifier
 		want bool
