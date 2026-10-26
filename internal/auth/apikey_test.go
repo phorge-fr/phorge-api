@@ -10,32 +10,33 @@ import (
 
 const goodSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" //nolint:gosec // a test value
 
+const goodID = "0123456789abcdef"
+
 func TestParseKey(t *testing.T) {
-	good := FormatKey("demo", "ci", goodSecret)
+	good := FormatKey(goodID, goodSecret)
 	p, err := ParseKey(good)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p != (ParsedKey{Tenant: "demo", Name: "ci", Secret: goodSecret}) {
+	if p != (ParsedKey{ID: goodID, Secret: goodSecret}) {
 		t.Errorf("parsed %+v", p)
 	}
 
 	for name, key := range map[string]string{ //nolint:gosec // test inputs, the names say "secret"
-		"empty":                    "",
-		"a JWT":                    "eyJhbGciOiJSUzI1NiJ9.e30.sig",
-		"another prefix":           "xxx_demo_ci_" + goodSecret,
-		"a part missing":           "phk_demo_" + goodSecret,
-		"an underscore in a name":  "phk_demo_c_i_" + goodSecret,
-		"an upper case tenant":     "phk_Demo_ci_" + goodSecret,
-		"a tenant too short":       "phk_d_ci_" + goodSecret,
-		"a tenant starting with 1": "phk_1demo_ci_" + goodSecret,
-		"a tenant too long":        "phk_" + strings.Repeat("a", 29) + "_ci_" + goodSecret,
-		"a slash in the name":      "phk_demo_a/b_" + goodSecret,
-		"a dot in the name":        "phk_demo_a.b_" + goodSecret,
-		"a name starting with -":   "phk_demo_-ci_" + goodSecret,
-		"a short secret":           "phk_demo_ci_abcdef",
-		"a secret not in hex":      "phk_demo_ci_" + strings.Repeat("z", 64),
-		"an upper case secret":     "phk_demo_ci_" + strings.ToUpper(goodSecret),
+		"empty":                "",
+		"a JWT":                "eyJhbGciOiJSUzI1NiJ9.e30.sig",
+		"another prefix":       "xxx_" + goodID + "_" + goodSecret,
+		"a part missing":       "phk_" + goodSecret,
+		"a part too many":      "phk_demo_" + goodID + "_" + goodSecret,
+		"the old tenant form":  "phk_demo_ci_" + goodSecret,
+		"an id too short":      "phk_0123456789abcde_" + goodSecret,
+		"an id too long":       "phk_0123456789abcdef0_" + goodSecret,
+		"an upper case id":     "phk_0123456789ABCDEF_" + goodSecret,
+		"an id not in hex":     "phk_0123456789abcdez_" + goodSecret,
+		"a slash in the id":    "phk_0123456789abcd/f_" + goodSecret,
+		"a short secret":       "phk_" + goodID + "_abcdef",
+		"a secret not in hex":  "phk_" + goodID + "_" + strings.Repeat("z", 64),
+		"an upper case secret": "phk_" + goodID + "_" + strings.ToUpper(goodSecret),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseKey(key); err == nil {
@@ -57,11 +58,11 @@ type fakeStore struct {
 	err     error
 }
 
-func (f fakeStore) GetKey(_ context.Context, tenant, name string) (KeyRecord, error) {
+func (f fakeStore) GetKey(_ context.Context, id string) (KeyRecord, error) {
 	if f.err != nil {
 		return KeyRecord{}, f.err
 	}
-	r, ok := f.records[tenant+"/"+name]
+	r, ok := f.records[id]
 	if !ok {
 		return KeyRecord{}, ErrKeyNotFound
 	}
@@ -70,13 +71,16 @@ func (f fakeStore) GetKey(_ context.Context, tenant, name string) (KeyRecord, er
 
 func TestKeyVerifier(t *testing.T) {
 	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
-	key := FormatKey("demo", "ci", goodSecret)
+	key := FormatKey(goodID, goodSecret)
 	record := func(edit func(*KeyRecord)) KeyRecord {
-		r := KeyRecord{Hash: HashSecret(goodSecret), Scopes: []string{"tenant:read", "instances:write"}}
+		r := KeyRecord{Hash: HashSecret(goodSecret), Owner: "alice@example.org", Scopes: []string{"tenants:read", "instances:write"}}
 		if edit != nil {
 			edit(&r)
 		}
 		return r
+	}
+	one := func(edit func(*KeyRecord)) fakeStore {
+		return fakeStore{records: map[string]KeyRecord{goodID: record(edit)}}
 	}
 
 	tests := []struct {
@@ -85,17 +89,18 @@ func TestKeyVerifier(t *testing.T) {
 		store   fakeStore
 		wantErr error // nil: accepted
 	}{
-		{"a valid key", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(nil)}}, nil},
-		{"a key that expires later", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T12:00:01Z" })}}, nil},
-		{"a key with an offset date", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T14:30:00+02:00" })}}, nil},
-		{"an expired date", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T11:59:59Z" })}}, ErrUnauthenticated},
-		{"exactly at the date", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T12:00:00Z" })}}, ErrUnauthenticated},
-		{"marked expired, the date still ahead", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.Expired = true; r.ExpiresAt = "2027-01-01T00:00:00Z" })}}, ErrUnauthenticated},
-		{"an unreadable date", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.ExpiresAt = "tomorrow" })}}, ErrUnauthenticated},
-		{"being deleted", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.Deleting = true })}}, ErrUnauthenticated},
-		{"a wrong secret", FormatKey("demo", "ci", strings.Repeat("a", 64)), fakeStore{records: map[string]KeyRecord{"demo/ci": record(nil)}}, ErrUnauthenticated},
-		{"an object without a hash", key, fakeStore{records: map[string]KeyRecord{"demo/ci": record(func(r *KeyRecord) { r.Hash = "" })}}, ErrUnauthenticated},
-		{"the key of another tenant", FormatKey("other", "ci", goodSecret), fakeStore{records: map[string]KeyRecord{"demo/ci": record(nil)}}, ErrUnauthenticated},
+		{"a valid key", key, one(nil), nil},
+		{"a key that expires later", key, one(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T12:00:01Z" }), nil},
+		{"a key with an offset date", key, one(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T14:30:00+02:00" }), nil},
+		{"an expired date", key, one(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T11:59:59Z" }), ErrUnauthenticated},
+		{"exactly at the date", key, one(func(r *KeyRecord) { r.ExpiresAt = "2026-10-24T12:00:00Z" }), ErrUnauthenticated},
+		{"marked expired, the date still ahead", key, one(func(r *KeyRecord) { r.Expired = true; r.ExpiresAt = "2027-01-01T00:00:00Z" }), ErrUnauthenticated},
+		{"an unreadable date", key, one(func(r *KeyRecord) { r.ExpiresAt = "tomorrow" }), ErrUnauthenticated},
+		{"being deleted", key, one(func(r *KeyRecord) { r.Deleting = true }), ErrUnauthenticated},
+		{"a wrong secret", FormatKey(goodID, strings.Repeat("a", 64)), one(nil), ErrUnauthenticated},
+		{"an object without a hash", key, one(func(r *KeyRecord) { r.Hash = "" }), ErrUnauthenticated},
+		{"an object without an owner", key, one(func(r *KeyRecord) { r.Owner = "" }), ErrUnauthenticated},
+		{"the id of another key", FormatKey("fedcba9876543210", goodSecret), one(nil), ErrUnauthenticated},
 		{"an unknown key", key, fakeStore{}, ErrUnauthenticated},
 		{"not a key", "phk_nope", fakeStore{}, ErrUnauthenticated},
 		{"the cluster does not answer", key, fakeStore{err: errors.New("connection refused")}, ErrUnavailable},
@@ -114,7 +119,8 @@ func TestKeyVerifier(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if id.Kind != KindAPIKey || id.Subject != "apikey:demo.ci" || id.Tenant != "demo" || id.Name != "ci" {
+			// A key is its owner, within its scopes: OpenFGA is asked about the owner.
+			if id.Kind != KindAPIKey || id.Subject != "user:alice@example.org" || id.Email != "alice@example.org" || id.Name != goodID {
 				t.Errorf("unexpected identity: %+v", id)
 			}
 			if len(id.Scopes) != 2 || id.Scopes[1] != "instances:write" {
@@ -125,8 +131,8 @@ func TestKeyVerifier(t *testing.T) {
 }
 
 func TestKeyErrorsNeverContainTheSecret(t *testing.T) {
-	v := NewKeyVerifier(fakeStore{records: map[string]KeyRecord{"demo/ci": {Hash: HashSecret("other")}}})
-	_, err := v.Verify(t.Context(), FormatKey("demo", "ci", goodSecret))
+	v := NewKeyVerifier(fakeStore{records: map[string]KeyRecord{goodID: {Hash: HashSecret("other")}}})
+	_, err := v.Verify(t.Context(), FormatKey(goodID, goodSecret))
 	if err == nil || strings.Contains(err.Error(), goodSecret) {
 		t.Errorf("the secret is in the error, which is logged: %v", err)
 	}

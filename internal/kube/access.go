@@ -3,12 +3,14 @@ package kube
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/dynamic"
 
 	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/status"
@@ -100,8 +102,8 @@ func membershipOf(obj *unstructured.Unstructured) access.Membership {
 	}
 }
 
-// ApiKeys reads and writes the ApiKey objects of a tenant, for the routes that manage them (the authentication reads them
-// with Keys). It implements access.KeyStore.
+// ApiKeys reads and writes the ApiKey objects, for the routes that manage them (the authentication reads them with Keys). They
+// all live in KeysNamespace. It implements access.KeyStore.
 type ApiKeys struct{ conn *Connection }
 
 // NewApiKeys returns a store that works through conn.
@@ -109,28 +111,42 @@ func NewApiKeys(conn *Connection) *ApiKeys { return &ApiKeys{conn: conn} }
 
 var _ access.KeyStore = (*ApiKeys)(nil)
 
-func (s *ApiKeys) List(ctx context.Context, tenant string) ([]access.ApiKey, error) {
-	r, err := namespaced(s.conn, apiKeys, tenant)
+// ownerLabel is the label that finds the keys of a user.
+const ownerLabel = "phorge.fr/owner"
+
+func (s *ApiKeys) resource() (dynamic.ResourceInterface, error) {
+	client, err := s.conn.Dynamic()
 	if err != nil {
 		return nil, err
 	}
-	list, err := r.List(ctx, metav1.ListOptions{})
+	return client.Resource(apiKeys).Namespace(KeysNamespace), nil
+}
+
+func (s *ApiKeys) List(ctx context.Context, owner string) ([]access.ApiKey, error) {
+	r, err := s.resource()
+	if err != nil {
+		return nil, err
+	}
+	list, err := r.List(ctx, metav1.ListOptions{LabelSelector: ownerLabel + "=" + access.OwnerLabel(owner)})
 	if err != nil {
 		return nil, mapError(err)
 	}
 	out := make([]access.ApiKey, 0, len(list.Items))
 	for i := range list.Items {
-		out = append(out, apiKeyOf(&list.Items[i]))
+		// The label is a hash: the owner field is what decides.
+		if k := apiKeyOf(&list.Items[i]); strings.EqualFold(k.Owner, owner) {
+			out = append(out, k)
+		}
 	}
 	return out, nil
 }
 
-func (s *ApiKeys) Get(ctx context.Context, tenant, name string) (access.ApiKey, error) {
-	r, err := namespaced(s.conn, apiKeys, tenant)
+func (s *ApiKeys) Get(ctx context.Context, id string) (access.ApiKey, error) {
+	r, err := s.resource()
 	if err != nil {
 		return access.ApiKey{}, err
 	}
-	obj, err := r.Get(ctx, name, metav1.GetOptions{})
+	obj, err := r.Get(ctx, id, metav1.GetOptions{})
 	if err != nil {
 		return access.ApiKey{}, mapError(err)
 	}
@@ -138,26 +154,23 @@ func (s *ApiKeys) Get(ctx context.Context, tenant, name string) (access.ApiKey, 
 }
 
 // Create writes the object of a key: its hash, never the key.
-func (s *ApiKeys) Create(ctx context.Context, tenant string, req access.KeyRecord) (access.ApiKey, error) {
-	r, err := namespaced(s.conn, apiKeys, tenant)
+func (s *ApiKeys) Create(ctx context.Context, req access.KeyRecord) (access.ApiKey, error) {
+	r, err := s.resource()
 	if err != nil {
 		return access.ApiKey{}, err
 	}
-	spec := map[string]any{"hash": req.Hash, "scopes": toAny(req.Scopes)}
-	if req.DisplayName != "" {
-		spec["displayName"] = req.DisplayName
-	}
+	spec := map[string]any{"hash": req.Hash, "owner": req.Owner, "scopes": toAny(req.Scopes), "displayName": req.DisplayName}
 	if req.ExpiresAt != nil {
 		spec["expiresAt"] = req.ExpiresAt.UTC().Format(time.RFC3339)
-	}
-	if req.CreatedBy != "" {
-		spec["createdBy"] = req.CreatedBy
 	}
 	obj, err := r.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": apiKeys.GroupVersion().String(),
 		"kind":       "ApiKey",
-		"metadata":   map[string]any{"name": req.Name, "namespace": NamespaceOf(tenant)},
-		"spec":       spec,
+		"metadata": map[string]any{
+			"name": req.ID, "namespace": KeysNamespace,
+			"labels": map[string]any{ownerLabel: access.OwnerLabel(req.Owner)},
+		},
+		"spec": spec,
 	}}, metav1.CreateOptions{})
 	if err != nil {
 		return access.ApiKey{}, mapError(err)
@@ -165,9 +178,9 @@ func (s *ApiKeys) Create(ctx context.Context, tenant string, req access.KeyRecor
 	return apiKeyOf(obj), nil
 }
 
-// Patch is a JSON merge patch of what was given. Removing a scope removes its tuple at once.
-func (s *ApiKeys) Patch(ctx context.Context, tenant, name string, req access.PatchKey) (access.ApiKey, error) {
-	r, err := namespaced(s.conn, apiKeys, tenant)
+// Patch is a JSON merge patch of what was given.
+func (s *ApiKeys) Patch(ctx context.Context, id string, req access.PatchKey) (access.ApiKey, error) {
+	r, err := s.resource()
 	if err != nil {
 		return access.ApiKey{}, err
 	}
@@ -185,40 +198,40 @@ func (s *ApiKeys) Patch(ctx context.Context, tenant, name string, req access.Pat
 	if err != nil {
 		return access.ApiKey{}, err
 	}
-	obj, err := r.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+	obj, err := r.Patch(ctx, id, types.MergePatchType, patch, metav1.PatchOptions{})
 	if err != nil {
 		return access.ApiKey{}, mapError(err)
 	}
 	return apiKeyOf(obj), nil
 }
 
-// Delete deletes a key in the foreground. The key stops working at once (the authentication refuses an object that is being
-// deleted), its tuples go within about a minute.
-func (s *ApiKeys) Delete(ctx context.Context, tenant, name string) error {
-	r, err := namespaced(s.conn, apiKeys, tenant)
+// Delete deletes a key in the foreground. The key stops working at once: the authentication refuses an object that is being
+// deleted.
+func (s *ApiKeys) Delete(ctx context.Context, id string) error {
+	r, err := s.resource()
 	if err != nil {
 		return err
 	}
 	foreground := metav1.DeletePropagationForeground
-	return mapError(r.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &foreground}))
+	return mapError(r.Delete(ctx, id, metav1.DeleteOptions{PropagationPolicy: &foreground}))
 }
 
 func apiKeyOf(obj *unstructured.Unstructured) access.ApiKey {
 	displayName, _, _ := unstructured.NestedString(obj.Object, "spec", "displayName")
+	owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner")
 	scopes, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "scopes")
-	createdBy, _, _ := unstructured.NestedString(obj.Object, "spec", "createdBy")
 	expiresAt, _, _ := unstructured.NestedString(obj.Object, "spec", "expiresAt")
 	expired, _, _ := unstructured.NestedBool(obj.Object, "status", "expired")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 
 	ready, since := readyOf(obj)
 	k := access.ApiKey{
-		Name:        obj.GetName(),
+		ID:          obj.GetName(),
+		Owner:       owner,
 		DisplayName: displayName,
 		Scopes:      scopes,
 		Expired:     expired,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
-		CreatedBy:   createdBy,
 		Status:      status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
 	}
 	if at, err := time.Parse(time.RFC3339, expiresAt); err == nil {

@@ -20,9 +20,9 @@ func apiKey(namespace, name string, edit func(*unstructured.Unstructured)) *unst
 		"metadata":   map[string]any{"namespace": namespace, "name": name},
 		"spec": map[string]any{
 			"hash":      auth.HashSecret("secret"),
-			"scopes":    []any{"tenant:read", "images:write"},
+			"owner":     "alice@example.org",
+			"scopes":    []any{"tenants:read", "images:write"},
 			"expiresAt": "2027-01-01T00:00:00Z",
-			"createdBy": "alice@example.org",
 		},
 	}}
 	if edit != nil {
@@ -44,19 +44,19 @@ func store(t *testing.T, objs ...*unstructured.Unstructured) *Keys {
 	return NewKeys(Static(client))
 }
 
-func TestGetKeyReadsTheObjectOfTheTenantNamespace(t *testing.T) {
-	k := store(t, apiKey("t-demo", "ci", nil), apiKey("t-other", "ci", func(o *unstructured.Unstructured) {
-		_ = unstructured.SetNestedField(o.Object, "someone-else", "spec", "createdBy")
+func TestGetKeyReadsTheObjectOfTheKeysNamespace(t *testing.T) {
+	k := store(t, apiKey(KeysNamespace, "0123456789abcdef", nil), apiKey("t-demo", "0123456789abcdef", func(o *unstructured.Unstructured) {
+		_ = unstructured.SetNestedField(o.Object, "someone-else@example.org", "spec", "owner")
 	}))
 
-	rec, err := k.GetKey(t.Context(), "demo", "ci")
+	rec, err := k.GetKey(t.Context(), "0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Hash != auth.HashSecret("secret") || rec.ExpiresAt != "2027-01-01T00:00:00Z" || rec.CreatedBy != "alice@example.org" {
-		t.Errorf("unexpected record: %+v", rec)
+	if rec.Hash != auth.HashSecret("secret") || rec.ExpiresAt != "2027-01-01T00:00:00Z" || rec.Owner != "alice@example.org" {
+		t.Errorf("unexpected record: %+v (a key of another namespace must not be read)", rec)
 	}
-	if len(rec.Scopes) != 2 || rec.Scopes[0] != "tenant:read" || rec.Scopes[1] != "images:write" {
+	if len(rec.Scopes) != 2 || rec.Scopes[0] != "tenants:read" || rec.Scopes[1] != "images:write" {
 		t.Errorf("scopes = %v", rec.Scopes)
 	}
 	if rec.Expired || rec.Deleting {
@@ -66,11 +66,11 @@ func TestGetKeyReadsTheObjectOfTheTenantNamespace(t *testing.T) {
 
 func TestGetKeyReadsTheStatusAndTheDeletion(t *testing.T) {
 	now := metav1.Now()
-	k := store(t, apiKey("t-demo", "ci", func(o *unstructured.Unstructured) {
+	k := store(t, apiKey(KeysNamespace, "0123456789abcdef", func(o *unstructured.Unstructured) {
 		_ = unstructured.SetNestedField(o.Object, true, "status", "expired")
 		o.SetDeletionTimestamp(&now)
 	}))
-	rec, err := k.GetKey(t.Context(), "demo", "ci")
+	rec, err := k.GetKey(t.Context(), "0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,17 +80,18 @@ func TestGetKeyReadsTheStatusAndTheDeletion(t *testing.T) {
 }
 
 func TestGetKeyNotFound(t *testing.T) {
-	k := store(t, apiKey("t-demo", "ci", nil))
-	for _, c := range [][2]string{{"demo", "other"}, {"other", "ci"}} {
-		if _, err := k.GetKey(t.Context(), c[0], c[1]); !errors.Is(err, auth.ErrKeyNotFound) {
-			t.Errorf("%v: err = %v, want ErrKeyNotFound", c, err)
+	k := store(t, apiKey(KeysNamespace, "0123456789abcdef", nil), apiKey("t-demo", "fedcba9876543210", nil))
+	// Another id, and a key that exists in a namespace that is not the keys one.
+	for _, id := range []string{"ffffffffffffffff", "fedcba9876543210"} {
+		if _, err := k.GetKey(t.Context(), id); !errors.Is(err, auth.ErrKeyNotFound) {
+			t.Errorf("%v: err = %v, want ErrKeyNotFound", id, err)
 		}
 	}
 }
 
 func TestAMalformedObjectMatchesNoKey(t *testing.T) {
-	k := store(t, apiKey("t-demo", "ci", func(o *unstructured.Unstructured) { o.Object["spec"] = map[string]any{"hash": int64(3)} }))
-	rec, err := k.GetKey(t.Context(), "demo", "ci")
+	k := store(t, apiKey(KeysNamespace, "0123456789abcdef", func(o *unstructured.Unstructured) { o.Object["spec"] = map[string]any{"hash": int64(3)} }))
+	rec, err := k.GetKey(t.Context(), "0123456789abcdef")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ func TestAMalformedObjectMatchesNoKey(t *testing.T) {
 func TestAnUnreachableClusterIsNotAMissingKey(t *testing.T) {
 	boom := errors.New("no kubeconfig")
 	k := NewKeys(&Connection{connect: func() (dynamic.Interface, error) { return nil, boom }})
-	_, err := k.GetKey(t.Context(), "demo", "ci")
+	_, err := k.GetKey(t.Context(), "0123456789abcdef")
 	if !errors.Is(err, boom) || errors.Is(err, auth.ErrKeyNotFound) {
 		t.Errorf("err = %v: it would be reported as a 401 instead of a 503", err)
 	}

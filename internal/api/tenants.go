@@ -15,9 +15,9 @@ import (
 
 // tenantRoutes are the routes of the tenants.
 //
-// Seeing a tenant takes a right on it (a role, or a key with the scope tenant:read), and the platform administrators see
-// all of them. Creating, resizing and deleting one is for the platform administrators only: the model has no relation
-// for it, see authz.Authorizer.IsPlatformAdmin.
+// Seeing a tenant takes a right on it (a role; for a key, the scope tenants:read too), and the platform administrators see
+// all of them. Creating, resizing and deleting one is for the platform administrators only (for a key, with the scope
+// tenants:write): the model has no relation for it, see authz.Authorizer.PlatformAdmin.
 type tenantRoutes struct {
 	base
 	store tenants.Store
@@ -39,8 +39,13 @@ func (t *tenantRoutes) visible(next http.Handler) http.Handler {
 func (t *tenantRoutes) adminOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := auth.FromContext(r.Context())
-		if !t.authz.IsPlatformAdmin(id) {
-			t.log.Info("authorization refused", "subject", id.Subject, "route", r.Pattern)
+		admin, err := t.authz.AdminMay(r.Context(), id, authz.WriteTenants)
+		if err != nil {
+			t.unavailable(w, "authorization", err)
+			return
+		}
+		if !admin {
+			t.log.Info("authorization refused", "subject", id.Subject, "key", id.Name, "route", r.Pattern)
 			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may do this")
 			return
 		}
@@ -73,7 +78,11 @@ func (t *tenantRoutes) list(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
 
 	var visible []string
-	all := t.authz.IsPlatformAdmin(id)
+	all, err := t.authz.AdminMay(r.Context(), id, authz.ReadTenant)
+	if err != nil {
+		t.unavailable(w, "authorization", err)
+		return
+	}
 	if !all {
 		var err error
 		if visible, err = t.authz.Tenants(r.Context(), id); err != nil {
@@ -89,8 +98,7 @@ func (t *tenantRoutes) list(w http.ResponseWriter, r *http.Request) {
 
 	items := []tenantBody{}
 	for _, tn := range found {
-		// A key belongs to one tenant, whatever OpenFGA says.
-		if all || (slices.Contains(visible, tn.Name) && (id.Kind != auth.KindAPIKey || id.Tenant == tn.Name)) {
+		if all || slices.Contains(visible, tn.Name) {
 			items = append(items, t.body(tn))
 		}
 	}

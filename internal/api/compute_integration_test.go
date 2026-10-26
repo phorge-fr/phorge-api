@@ -50,7 +50,7 @@ func TestImageAndInstanceOnTheRealCluster(t *testing.T) {
 	s := server.New(log)
 	Register(s, Deps{
 		Auth:      &auth.Authenticator{Users: users, Keys: tokens{}, Log: log},
-		Authz:     authz.New(fga.New(url, storeID, key, nil), adminGroup),
+		Authz:     authz.New(fga.New(url, storeID, key, nil), adminGroup, nil),
 		Tenants:   tenantStore,
 		Images:    imageStore,
 		Instances: instanceStore,

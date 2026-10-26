@@ -71,15 +71,15 @@ func TestMiddlewareRefusesWithoutACredential(t *testing.T) {
 
 func TestMiddlewarePicksTheVerifierFromThePrefix(t *testing.T) {
 	users := &fakeVerifier{identity: Identity{Kind: KindUser, Subject: "user:alice@example.org"}}
-	keys := &fakeVerifier{identity: Identity{Kind: KindAPIKey, Subject: "apikey:demo.ci"}}
+	keys := &fakeVerifier{identity: Identity{Kind: KindAPIKey, Subject: "user:alice@example.org"}}
 	a := &Authenticator{Users: users, Keys: keys, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	rec, seen := run(t, a, "bearer eyJ.token.sig") // the scheme is not case sensitive
 	if rec.Code != http.StatusOK || seen == nil || seen.Subject != "user:alice@example.org" {
 		t.Errorf("user: status %d, identity %+v", rec.Code, seen)
 	}
-	rec, seen = run(t, a, "Bearer phk_demo_ci_"+goodSecret)
-	if rec.Code != http.StatusOK || seen == nil || seen.Subject != "apikey:demo.ci" {
+	rec, seen = run(t, a, "Bearer phk_0123456789abcdef_"+goodSecret)
+	if rec.Code != http.StatusOK || seen == nil || seen.Subject != "user:alice@example.org" {
 		t.Errorf("key: status %d, identity %+v", rec.Code, seen)
 	}
 	if len(users.got) != 1 || len(keys.got) != 1 {
@@ -94,7 +94,7 @@ func TestMiddlewareAnswersTheSameWhateverWasWrong(t *testing.T) {
 		Keys:  &fakeVerifier{err: errors.New("unauthenticated: wrong secret for demo.ci")},
 		Log:   slog.New(slog.NewTextHandler(&logs, nil)),
 	}
-	secretKey := "phk_demo_ci_" + goodSecret
+	secretKey := "phk_0123456789abcdef_" + goodSecret
 	var bodies []string
 	for _, header := range []string{"Bearer some.jwt.token", "Bearer " + secretKey} {
 		rec, _ := run(t, a, header)
@@ -125,7 +125,7 @@ func TestMiddlewareAnswers503WhenTheBackendIsDown(t *testing.T) {
 		Keys:  &fakeVerifier{err: ErrUnavailable},
 		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	for _, header := range []string{"Bearer some.jwt.token", "Bearer phk_demo_ci_" + goodSecret} {
+	for _, header := range []string{"Bearer some.jwt.token", "Bearer phk_0123456789abcdef_" + goodSecret} {
 		rec, seen := run(t, a, header)
 		if rec.Code != http.StatusServiceUnavailable || seen != nil || errorCode(t, rec) != "unavailable" {
 			t.Errorf("%q: status %d", header, rec.Code)

@@ -2,6 +2,7 @@ package kube
 
 import (
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -64,45 +65,72 @@ func TestApiKeysStoreTheHashNeverTheKey(t *testing.T) {
 	s := NewApiKeys(Static(client))
 	expires := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
 
-	got, err := s.Create(t.Context(), "demo", access.KeyRecord{
-		CreateKey: access.CreateKey{Name: "ci", DisplayName: "CI", Scopes: []string{"tenant:read", "images:write"}, ExpiresAt: &expires},
-		Hash:      "abcd", CreatedBy: "user:a@b",
+	got, err := s.Create(t.Context(), access.KeyRecord{
+		CreateKey: access.CreateKey{DisplayName: "CI", Scopes: []string{"tenants:read", "images:write"}, ExpiresAt: &expires},
+		ID:        "0123456789abcdef", Owner: "alice@example.org", Hash: "abcd",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "ci" || got.DisplayName != "CI" || len(got.Scopes) != 2 || got.ExpiresAt == nil || !got.ExpiresAt.Equal(expires) || got.CreatedBy != "user:a@b" {
+	if got.ID != "0123456789abcdef" || got.Owner != "alice@example.org" || got.DisplayName != "CI" || len(got.Scopes) != 2 ||
+		got.ExpiresAt == nil || !got.ExpiresAt.Equal(expires) {
 		t.Errorf("unexpected key: %+v", got)
 	}
-	obj, _ := client.Resource(apiKeys).Namespace("t-demo").Get(t.Context(), "ci", metav1.GetOptions{})
+	obj, _ := client.Resource(apiKeys).Namespace(KeysNamespace).Get(t.Context(), "0123456789abcdef", metav1.GetOptions{})
 	if hash, _, _ := unstructured.NestedString(obj.Object, "spec", "hash"); hash != "abcd" {
 		t.Errorf("hash = %q", hash)
 	}
 	if exp, _, _ := unstructured.NestedString(obj.Object, "spec", "expiresAt"); exp != "2027-01-02T03:04:05Z" {
 		t.Errorf("expiresAt = %q: RFC 3339 in UTC", exp)
 	}
+	if label := obj.GetLabels()[ownerLabel]; label != access.OwnerLabel("alice@example.org") {
+		t.Errorf("owner label = %q", label)
+	}
+}
+
+func TestApiKeysOfAUserOnly(t *testing.T) {
+	s := NewApiKeys(Static(newAccessClient()))
+	for id, owner := range map[string]string{"00000000000000a1": "alice@example.org", "00000000000000a2": "Alice@Example.org", "00000000000000b1": "bob@example.org"} {
+		if _, err := s.Create(t.Context(), access.KeyRecord{CreateKey: access.CreateKey{DisplayName: "k", Scopes: []string{"tenants:read"}}, ID: id, Owner: owner, Hash: "ab"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The fake cluster does not filter on labels: the owner field is what decides, whatever the selector let through.
+	got, err := s.List(t.Context(), "alice@example.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, k := range got {
+		ids = append(ids, k.ID)
+	}
+	slices.Sort(ids)
+	if !slices.Equal(ids, []string{"00000000000000a1", "00000000000000a2"}) {
+		t.Errorf("alice's keys = %v: bob's must not be in it, the case of an email does not matter", ids)
+	}
 }
 
 func TestApiKeyPatchAndStatus(t *testing.T) {
 	s := NewApiKeys(Static(newAccessClient()))
-	if _, err := s.Create(t.Context(), "demo", access.KeyRecord{CreateKey: access.CreateKey{Name: "ci", Scopes: []string{"tenant:read", "images:write"}}, Hash: "ab"}); err != nil {
+	const id = "0123456789abcdef"
+	if _, err := s.Create(t.Context(), access.KeyRecord{CreateKey: access.CreateKey{DisplayName: "k", Scopes: []string{"tenants:read", "images:write"}}, ID: id, Owner: "a@b.fr", Hash: "ab"}); err != nil {
 		t.Fatal(err)
 	}
-	scopes := []string{"tenant:read"}
-	got, err := s.Patch(t.Context(), "demo", "ci", access.PatchKey{Scopes: &scopes})
+	scopes := []string{"tenants:read"}
+	got, err := s.Patch(t.Context(), id, access.PatchKey{Scopes: &scopes})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Scopes) != 1 || got.Scopes[0] != "tenant:read" {
+	if len(got.Scopes) != 1 || got.Scopes[0] != "tenants:read" {
 		t.Errorf("scopes after the patch: %v", got.Scopes)
 	}
-	if _, err := s.Patch(t.Context(), "demo", "ghost", access.PatchKey{Scopes: &scopes}); !errors.Is(err, access.ErrNotFound) {
+	if _, err := s.Patch(t.Context(), "ffffffffffffffff", access.PatchKey{Scopes: &scopes}); !errors.Is(err, access.ErrNotFound) {
 		t.Errorf("patch of a missing key: %v", err)
 	}
 
 	obj := &unstructured.Unstructured{Object: map[string]any{
 		"metadata": map[string]any{"name": "x"},
-		"spec":     map[string]any{"scopes": []any{"tenant:read"}, "expiresAt": "garbage"},
+		"spec":     map[string]any{"scopes": []any{"tenants:read"}, "expiresAt": "garbage"},
 		"status":   map[string]any{"expired": true, "problems": "p"},
 	}}
 	k := apiKeyOf(obj)

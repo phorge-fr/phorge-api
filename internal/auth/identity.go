@@ -1,4 +1,4 @@
-// Package auth tells who is calling: a user with an Authentik token, or an API key of a tenant.
+// Package auth tells who is calling: a user with an Authentik token, or an API key that acts as its owner.
 //
 // It only authenticates. What the caller may do is decided by OpenFGA, from Identity.Subject.
 package auth
@@ -29,14 +29,13 @@ const (
 // Identity is an authenticated caller.
 type Identity struct {
 	Kind Kind
-	// Subject is the user of the OpenFGA tuples: "user:<email>" or "apikey:<tenant>.<name>".
+	// Subject is the user of the OpenFGA tuples: "user:<email>". A key is its owner, limited to its scopes.
 	Subject string
-	// Email is the email claim, exactly as it is (case included). Users only.
+	// Email is the email of the user: the claim of the token, exactly as it is (case included), or the owner of the key.
 	Email string
-	// Tenant and Name locate the key, which only works on that tenant. Keys only.
-	Tenant string
-	Name   string
-	// Scopes the key was given. Keys only.
+	// Name is the id of the key. Keys only.
+	Name string
+	// Scopes the key was given: it can do nothing else, whatever its owner may do. Keys only.
 	Scopes []string
 	// Groups are the names of the Authentik groups of the user, from the "groups" claim. Users only.
 	Groups []string

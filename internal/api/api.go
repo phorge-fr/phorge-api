@@ -34,7 +34,7 @@ type Deps struct {
 // Register adds the routes. A route under /v1 must go through d.Auth.Middleware and be described in
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
-	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz)))
+	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz, d.Log)))
 
 	now := d.Now
 	if now == nil {
@@ -56,20 +56,24 @@ type identityBody struct {
 	Kind    auth.Kind `json:"kind"`
 	Subject string    `json:"subject"`
 	Email   string    `json:"email,omitempty"`
-	Tenant  string    `json:"tenant,omitempty"`
-	Name    string    `json:"name,omitempty"`
-	Scopes  []string  `json:"scopes,omitempty"`
+	// Name is the id of the key.
+	Name   string   `json:"name,omitempty"`
+	Scopes []string `json:"scopes,omitempty"`
 	// PlatformAdmin: the caller may create, resize and delete tenants.
 	PlatformAdmin bool `json:"platformAdmin"`
 }
 
-func whoami(a *authz.Authorizer) http.HandlerFunc {
+func whoami(a *authz.Authorizer, log *slog.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, _ := auth.FromContext(r.Context())
+		admin, err := a.AdminMay(r.Context(), id, authz.WriteTenants)
+		if err != nil {
+			// Who you are does not depend on Authentik being up: the answer is "not an administrator" rather than a failure.
+			log.Error("platform administrator status unknown", "error", err)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(identityBody{
-			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Tenant: id.Tenant, Name: id.Name, Scopes: id.Scopes,
-			PlatformAdmin: a.IsPlatformAdmin(id),
+			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Name: id.Name, Scopes: id.Scopes, PlatformAdmin: admin,
 		})
 	}
 }

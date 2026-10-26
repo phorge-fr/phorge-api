@@ -174,7 +174,7 @@ func TestOIDCRefuses(t *testing.T) {
 		"a symmetric signature":  sign(t, jose.SigningKey{Algorithm: jose.HS256, Key: []byte("0123456789abcdef0123456789abcdef")}, p.claims(nil)),
 		"alg none":               noneHeader + "." + base64.RawURLEncoding.EncodeToString(noneBody) + ".",
 		"not a token":            "hello",
-		"an API key given to us": "phk_demo_ci_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		"an API key given to us": "phk_0123456789abcdef_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 	for name, token := range tests {
 		t.Run(name, func(t *testing.T) {

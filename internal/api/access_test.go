@@ -3,7 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -11,6 +14,8 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/authz"
+	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
@@ -74,50 +79,52 @@ func (s *membershipStore) put(tenant string, m access.Membership) {
 }
 
 type keyStore struct {
-	data    map[string]map[string]access.ApiKey
-	hashes  map[string]string // tenant/name -> the hash that was stored
+	data    map[string]access.ApiKey
+	hashes  map[string]string // id -> the hash that was stored
 	err     error
 	deleted []string
 }
 
-func (s *keyStore) List(_ context.Context, tenant string) ([]access.ApiKey, error) {
+func (s *keyStore) List(_ context.Context, owner string) ([]access.ApiKey, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	var out []access.ApiKey
-	for _, k := range s.data[tenant] {
-		out = append(out, k)
+	for _, k := range s.data {
+		if strings.EqualFold(k.Owner, owner) {
+			out = append(out, k)
+		}
 	}
 	return out, nil
 }
 
-func (s *keyStore) Get(_ context.Context, tenant, name string) (access.ApiKey, error) {
+func (s *keyStore) Get(_ context.Context, id string) (access.ApiKey, error) {
 	if s.err != nil {
 		return access.ApiKey{}, s.err
 	}
-	k, ok := s.data[tenant][name]
+	k, ok := s.data[id]
 	if !ok {
 		return access.ApiKey{}, access.ErrNotFound
 	}
 	return k, nil
 }
 
-func (s *keyStore) Create(_ context.Context, tenant string, r access.KeyRecord) (access.ApiKey, error) {
+func (s *keyStore) Create(_ context.Context, r access.KeyRecord) (access.ApiKey, error) {
 	if s.err != nil {
 		return access.ApiKey{}, s.err
 	}
-	if _, ok := s.data[tenant][r.Name]; ok {
+	if _, ok := s.data[r.ID]; ok {
 		return access.ApiKey{}, access.ErrExists
 	}
-	k := access.ApiKey{Name: r.Name, DisplayName: r.DisplayName, Scopes: r.Scopes, ExpiresAt: r.ExpiresAt, CreatedBy: r.CreatedBy, CreatedAt: now,
+	k := access.ApiKey{ID: r.ID, Owner: r.Owner, DisplayName: r.DisplayName, Scopes: r.Scopes, ExpiresAt: r.ExpiresAt, CreatedAt: now,
 		Status: status.Object{NotReadySince: now}}
-	s.put(tenant, k)
-	s.hashes[tenant+"/"+r.Name] = r.Hash
+	s.data[r.ID] = k
+	s.hashes[r.ID] = r.Hash
 	return k, nil
 }
 
-func (s *keyStore) Patch(_ context.Context, tenant, name string, r access.PatchKey) (access.ApiKey, error) {
-	k, err := s.Get(context.Background(), tenant, name)
+func (s *keyStore) Patch(_ context.Context, id string, r access.PatchKey) (access.ApiKey, error) {
+	k, err := s.Get(context.Background(), id)
 	if err != nil {
 		return k, err
 	}
@@ -130,26 +137,19 @@ func (s *keyStore) Patch(_ context.Context, tenant, name string, r access.PatchK
 	if r.DisplayName != nil {
 		k.DisplayName = *r.DisplayName
 	}
-	s.put(tenant, k)
+	s.data[id] = k
 	return k, nil
 }
 
-func (s *keyStore) Delete(_ context.Context, tenant, name string) error {
-	k, err := s.Get(context.Background(), tenant, name)
+func (s *keyStore) Delete(_ context.Context, id string) error {
+	k, err := s.Get(context.Background(), id)
 	if err != nil {
 		return err
 	}
 	k.Status.Deleting = true
-	s.put(tenant, k)
-	s.deleted = append(s.deleted, tenant+"/"+name)
+	s.data[id] = k
+	s.deleted = append(s.deleted, id)
 	return nil
-}
-
-func (s *keyStore) put(tenant string, k access.ApiKey) {
-	if s.data[tenant] == nil {
-		s.data[tenant] = map[string]access.ApiKey{}
-	}
-	s.data[tenant][k.Name] = k
 }
 
 var bob = access.Subject{Kind: "User", Name: "bob@example.org"}
@@ -164,11 +164,11 @@ func TestMembershipsWhoMayDoWhat(t *testing.T) {
 	}{
 		{"tadmin", 200, 200, 202, 202},
 		{"admin", 200, 200, 202, 202},
-		{"phk_demo_mgr", 200, 200, 202, 202},
+		{"phk_mgr", 200, 200, 202, 202},
 		{"operator", 403, 403, 403, 403}, // an operator manages the instances, not who may
 		{"user", 403, 403, 403, 403},
 		{"viewer", 403, 403, 403, 403},
-		{"phk_demo_ci", 403, 403, 403, 403},
+		{"phk_ci", 403, 403, 403, 403},
 		{"mallory", 404, 404, 404, 404},
 		{"", 401, 401, 401, 401},
 	}
@@ -251,26 +251,37 @@ func TestDeleteMembership(t *testing.T) {
 	}
 }
 
+const keyID = "0123456789abcdef"
+
+// adminsKey is a key of admin@example.org, who is a platform administrator.
+func adminsKey(id string) access.ApiKey {
+	return access.ApiKey{ID: id, Owner: "admin@example.org", DisplayName: "CI", Scopes: []string{"tenants:read"}}
+}
+
 func TestApiKeysWhoMayDoWhat(t *testing.T) {
-	const coll, item = "/v1/tenants/demo/apikeys", "/v1/tenants/demo/apikeys/ci"
-	create := `{"name":"new","scopes":["tenant:read"]}`
+	const coll, item = "/v1/apikeys", "/v1/apikeys/" + keyID
+	create := `{"displayName":"new","scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z"}`
 	tests := []struct {
 		who                              string
 		list, get, create, patch, delete int
 	}{
-		{"tadmin", 200, 200, 202, 200, 202},
+		// The owner, a platform administrator.
 		{"admin", 200, 200, 202, 200, 202},
-		{"phk_demo_mgr", 200, 200, 202, 200, 202},
-		{"operator", 403, 403, 403, 403, 403},
-		{"viewer", 403, 403, 403, 403, 403},
-		{"phk_demo_ci", 403, 403, 403, 403, 403},
-		{"mallory", 404, 404, 404, 404, 404},
+		// Another administrator: someone else's key is not shown to exist.
+		{"admin2", 200, 404, 202, 404, 404},
+		// Anyone may look at their own keys and revoke them, so a key can always be revoked; creating and changing is for the
+		// administrators for now.
+		{"alice", 200, 404, 403, 403, 404},
+		{"exadmin", 200, 404, 403, 403, 404},
+		// A key never manages keys, whoever it belongs to and whatever it is worth.
+		{"phk_admin_write", 403, 403, 403, 403, 403},
+		{"phk_mgr", 403, 403, 403, 403, 403},
 		{"", 401, 401, 401, 401, 401},
 	}
 	for _, tt := range tests {
 		t.Run(tt.who, func(t *testing.T) {
 			e := newEnv(t)
-			e.keys.put("demo", access.ApiKey{Name: "ci", Scopes: []string{"tenant:read"}})
+			e.keys.data[keyID] = adminsKey(keyID)
 			for _, c := range []struct {
 				method, path, body string
 				want               int
@@ -286,29 +297,54 @@ func TestApiKeysWhoMayDoWhat(t *testing.T) {
 	}
 }
 
+func TestAUserSeesOnlyTheirOwnKeys(t *testing.T) {
+	e := newEnv(t)
+	e.keys.data["0000000000000001"] = access.ApiKey{ID: "0000000000000001", Owner: "admin@example.org", DisplayName: "b", Scopes: []string{"tenants:read"}}
+	e.keys.data["0000000000000002"] = access.ApiKey{ID: "0000000000000002", Owner: "Admin@Example.org", DisplayName: "a", Scopes: []string{"tenants:read"}}
+	e.keys.data["0000000000000003"] = access.ApiKey{ID: "0000000000000003", Owner: "admin2@example.org", DisplayName: "c", Scopes: []string{"tenants:read"}}
+
+	var got struct {
+		Items []keyBody `json:"items"`
+	}
+	mustDecode(t, e.do(t, "GET", "/v1/apikeys", "admin", ""), &got)
+	var ids []string
+	for _, k := range got.Items {
+		ids = append(ids, k.ID)
+	}
+	if !slices.Equal(ids, []string{"0000000000000002", "0000000000000001"}) {
+		t.Errorf("admin sees %v: its two keys, sorted by name, and not admin2's", ids)
+	}
+	if rec := e.do(t, "GET", "/v1/apikeys", "alice", ""); !strings.Contains(rec.Body.String(), `"items":[]`) {
+		t.Errorf("no key is [], not null: %s", rec.Body.String())
+	}
+}
+
 func TestCreateApiKeyShowsTheKeyOnceAndStoresOnlyItsHash(t *testing.T) {
 	e := newEnv(t)
-	rec := e.do(t, "POST", "/v1/tenants/demo/apikeys", "tadmin", `{"name":"ci","displayName":"CI","scopes":["tenant:read","instances:write"],"expiresAt":"2026-12-31T00:00:00Z"}`)
-	if rec.Code != http.StatusAccepted || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Location") != "/v1/tenants/demo/apikeys/ci" {
+	rec := e.do(t, "POST", "/v1/apikeys", "admin", `{"displayName":"CI","scopes":["tenants:read","tenants:write","instances:write"],"expiresAt":"2026-12-31T00:00:00Z"}`)
+	if rec.Code != http.StatusAccepted || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("status %d, headers %v, %s", rec.Code, rec.Header(), rec.Body.String())
 	}
 	var created keyBody
 	mustDecode(t, rec, &created)
 	parsed, err := auth.ParseKey(created.Key)
-	if err != nil || parsed.Tenant != "demo" || parsed.Name != "ci" {
-		t.Fatalf("the key %q does not parse: %v", created.Key, err)
+	if err != nil || parsed.ID != created.ID {
+		t.Fatalf("the key %q does not parse, or not to its id %q: %v", created.Key, created.ID, err)
 	}
-	if e.keys.hashes["demo/ci"] != auth.HashSecret(parsed.Secret) {
+	if rec.Header().Get("Location") != "/v1/apikeys/"+created.ID {
+		t.Errorf("Location = %q", rec.Header().Get("Location"))
+	}
+	if e.keys.hashes[created.ID] != auth.HashSecret(parsed.Secret) {
 		t.Error("the stored hash is not the hash of the secret of the key")
 	}
-	if created.CreatedBy != "user:tadmin@example.org" || created.ExpiresAt == nil || created.Expired {
+	if created.Owner != "admin@example.org" || created.ExpiresAt == nil || created.Expired || created.DisplayName != "CI" {
 		t.Errorf("body: %+v", created)
 	}
 
 	// Never again: not the key, not the hash, not the secret.
-	for _, path := range []string{"/v1/tenants/demo/apikeys/ci", "/v1/tenants/demo/apikeys"} {
-		body := e.do(t, "GET", path, "tadmin", "").Body.String()
-		for _, leak := range []string{created.Key, parsed.Secret, e.keys.hashes["demo/ci"], `"key"`, "hash"} {
+	for _, path := range []string{"/v1/apikeys/" + created.ID, "/v1/apikeys"} {
+		body := e.do(t, "GET", path, "admin", "").Body.String()
+		for _, leak := range []string{created.Key, parsed.Secret, e.keys.hashes[created.ID], `"key"`, "hash"} {
 			if strings.Contains(body, leak) {
 				t.Errorf("%s shows %q: %s", path, leak, body)
 			}
@@ -316,104 +352,158 @@ func TestCreateApiKeyShowsTheKeyOnceAndStoresOnlyItsHash(t *testing.T) {
 	}
 }
 
-func TestAKeyNeverExceedsItsCreator(t *testing.T) {
-	e := newEnv(t)
-	n := 0
-	post := func(who, scopes string) *httpResult {
-		n++
-		rec := e.do(t, "POST", "/v1/tenants/demo/apikeys", who, `{"name":"k`+strings.Repeat("x", n)+`","scopes":[`+scopes+`]}`)
-		return &httpResult{rec.Code, rec.Body.String()}
+// keyReader lets the real verifier read the keys of the fake store.
+type keyReader struct{ s *keyStore }
+
+func (r keyReader) GetKey(ctx context.Context, id string) (auth.KeyRecord, error) {
+	k, err := r.s.Get(ctx, id)
+	if errors.Is(err, access.ErrNotFound) {
+		return auth.KeyRecord{}, auth.ErrKeyNotFound
 	}
-	// The key mgr holds tenant:read, instances:read and the memberships scopes. Nothing else.
-	if r := post("phk_demo_mgr", `"instances:read","tenant:read"`); r.code != http.StatusAccepted {
-		t.Errorf("a subset of its scopes: %d %s", r.code, r.body)
+	if err != nil {
+		return auth.KeyRecord{}, err
 	}
-	e.keys.data = map[string]map[string]access.ApiKey{}
-	r := post("phk_demo_mgr", `"instances:write","images:write","tenant:read"`)
-	if r.code != http.StatusForbidden || !strings.Contains(r.body, "images:write, instances:write") || strings.Contains(r.body, "tenant:read,") {
-		t.Errorf("beyond its scopes: %d %s: the ones it lacks are named", r.code, r.body)
-	}
-	if len(e.keys.data["demo"]) != 0 {
-		t.Error("a key was created that exceeds its creator")
-	}
-	// A member who may write memberships holds what an admin holds.
-	if r := post("tadmin", strings.Join([]string{`"tenant:read"`, `"instances:read"`, `"instances:write"`, `"images:read"`, `"images:write"`, `"memberships:read"`, `"memberships:write"`}, ",")); r.code != http.StatusAccepted {
-		t.Errorf("an admin: %d %s", r.code, r.body)
-	}
-	// A platform administrator holds everything on every tenant.
-	e.keys.data = map[string]map[string]access.ApiKey{}
-	if r := post("admin", `"instances:write","memberships:write"`); r.code != http.StatusAccepted {
-		t.Errorf("a platform administrator: %d %s", r.code, r.body)
-	}
+	return auth.KeyRecord{Hash: r.s.hashes[id], Owner: k.Owner, Scopes: k.Scopes, Deleting: k.Status.Deleting}, nil
 }
 
-type httpResult struct {
-	code int
-	body string
-}
-
-func TestApiKeyPatch(t *testing.T) {
+func TestACreatedKeyActsAsItsOwnerWithinItsScopes(t *testing.T) {
+	// The whole chain with the real verifier: create a key, present it, see what it can do. The owner is a platform
+	// administrator (Authentik says so for admin@example.org, the key carries no group).
 	e := newEnv(t)
-	e.keys.put("demo", access.ApiKey{Name: "ci", Scopes: []string{"tenant:read", "instances:read"}})
+	var created keyBody
+	mustDecode(t, e.do(t, "POST", "/v1/apikeys", "admin", `{"displayName":"CI","scopes":["tenants:read","tenants:write"],"expiresAt":"2026-12-31T00:00:00Z"}`), &created)
 
-	// mgr may take scopes away, and may not add one it does not hold.
-	if code := call(t, e, "PATCH", "/v1/tenants/demo/apikeys/ci", "phk_demo_mgr", `{"scopes":["tenant:read"]}`); code != http.StatusOK {
-		t.Errorf("taking a scope away: %d", code)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := server.New(log)
+	Register(s, Deps{
+		Auth:    &auth.Authenticator{Users: tokens{}, Keys: auth.NewKeyVerifier(keyReader{e.keys}), Log: log},
+		Authz:   authz.New(e.fga, adminGroup, directory{adminGroup: {"admin@example.org"}}),
+		Tenants: e.store, Images: e.images, Instances: e.instances, Memberships: e.memberships, Keys: e.keys,
+		Log: log, Now: func() time.Time { return now },
+	})
+	do := func(method, path, token, body string) int {
+		req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		return rec.Code
 	}
-	if code := call(t, e, "PATCH", "/v1/tenants/demo/apikeys/ci", "phk_demo_mgr", `{"scopes":["tenant:read","images:write"]}`); code != http.StatusForbidden {
-		t.Errorf("adding a scope it does not hold: %d", code)
-	}
-	if got := e.keys.data["demo"]["ci"].Scopes; !slices.Equal(got, []string{"tenant:read"}) {
-		t.Errorf("scopes = %v", got)
-	}
-	if code := call(t, e, "PATCH", "/v1/tenants/demo/apikeys/ci", "tadmin", `{"scopes":["tenant:read","images:write"]}`); code != http.StatusOK {
-		t.Errorf("an admin adding one: %d", code)
-	}
-	later := now.Add(time.Hour).Format(time.RFC3339)
-	for name, tt := range map[string]struct {
-		body string
-		want int
+
+	for _, c := range []struct {
+		name, method, path, body string
+		want                     int
 	}{
-		"nothing":            {`{}`, http.StatusUnprocessableEntity},
-		"no scope left":      {`{"scopes":[]}`, http.StatusUnprocessableEntity},
-		"a date that passed": {`{"expiresAt":"2020-01-01T00:00:00Z"}`, http.StatusUnprocessableEntity},
-		"the hash":           {`{"hash":"` + strings.Repeat("a", 64) + `"}`, http.StatusBadRequest},
-		"the name":           {`{"name":"x"}`, http.StatusBadRequest},
-		"a new date":         {`{"expiresAt":"` + later + `"}`, http.StatusOK},
+		{"it sees every tenant", "GET", "/v1/tenants", "", http.StatusOK},
+		{"it creates one", "POST", "/v1/tenants", `{"name":"fresh","owner":"x@y.fr","plan":"small"}`, http.StatusAccepted},
+		{"it reads one it has no role on", "GET", "/v1/tenants/other", "", http.StatusOK},
+		// tenants:read and tenants:write say nothing about what is inside a tenant.
+		{"it does not list the images", "GET", "/v1/tenants/other/images", "", http.StatusForbidden},
+		// A key never manages keys, not even an administrator's.
+		{"it does not list keys", "GET", "/v1/apikeys", "", http.StatusForbidden},
+		{"it does not create keys", "POST", "/v1/apikeys", `{"displayName":"x","scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusForbidden},
 	} {
-		if code := call(t, e, "PATCH", "/v1/tenants/demo/apikeys/ci", "tadmin", tt.body); code != tt.want {
-			t.Errorf("%s: status %d, want %d", name, code, tt.want)
+		if got := do(c.method, c.path, created.Key, c.body); got != c.want {
+			t.Errorf("%s: %s %s gave %d, want %d", c.name, c.method, c.path, got, c.want)
 		}
+	}
+
+	// Deleted, it stops at once.
+	if code := call(t, e, "DELETE", "/v1/apikeys/"+created.ID, "admin", ""); code != http.StatusAccepted {
+		t.Fatalf("delete: %d", code)
+	}
+	if got := do("GET", "/v1/tenants", created.Key, ""); got != http.StatusUnauthorized {
+		t.Errorf("a deleted key gave %d, want 401", got)
+	}
+	// And a wrong secret never gets in.
+	if got := do("GET", "/v1/tenants", auth.FormatKey(created.ID, strings.Repeat("a", 64)), ""); got != http.StatusUnauthorized {
+		t.Errorf("a wrong secret gave %d, want 401", got)
 	}
 }
 
 func TestCreateApiKeyRefusesABadRequest(t *testing.T) {
 	e := newEnv(t)
-	e.keys.put("demo", access.ApiKey{Name: "taken", Scopes: []string{"tenant:read"}})
+	long := now.Add(400 * 24 * time.Hour).Format(time.RFC3339)
 	for name, tt := range map[string]struct {
 		body string
 		want int
 	}{
-		"a name that exists":          {`{"name":"taken","scopes":["tenant:read"]}`, http.StatusConflict},
-		"an underscore in a name":     {`{"name":"ci_1","scopes":["tenant:read"]}`, http.StatusUnprocessableEntity},
-		"no scope":                    {`{"name":"ci"}`, http.StatusUnprocessableEntity},
-		"a scope that does not exist": {`{"name":"ci","scopes":["tenant:delete"]}`, http.StatusUnprocessableEntity},
-		"a date that passed":          {`{"name":"ci","scopes":["tenant:read"],"expiresAt":"2020-01-01T00:00:00Z"}`, http.StatusUnprocessableEntity},
-		"a date that is not one":      {`{"name":"ci","scopes":["tenant:read"],"expiresAt":"tomorrow"}`, http.StatusBadRequest},
-		"a hash given by the caller":  {`{"name":"ci","scopes":["tenant:read"],"hash":"` + strings.Repeat("a", 64) + `"}`, http.StatusBadRequest},
+		"no display name":              {`{"scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"no scope":                     {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"a scope that does not exist":  {`{"displayName":"ci","scopes":["tenants:delete"],"expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"the former scope name":        {`{"displayName":"ci","scopes":["tenant:read"],"expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"no expiry":                    {`{"displayName":"ci","scopes":["tenants:read"]}`, http.StatusUnprocessableEntity},
+		"a date that passed":           {`{"displayName":"ci","scopes":["tenants:read"],"expiresAt":"2020-01-01T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"a date too far":               {`{"displayName":"ci","scopes":["tenants:read"],"expiresAt":"` + long + `"}`, http.StatusUnprocessableEntity},
+		"a date that is not one":       {`{"displayName":"ci","scopes":["tenants:read"],"expiresAt":"tomorrow"}`, http.StatusBadRequest},
+		"a hash given by the caller":   {`{"displayName":"ci","scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z","hash":"` + strings.Repeat("a", 64) + `"}`, http.StatusBadRequest},
+		"an owner given by the caller": {`{"displayName":"ci","scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z","owner":"x@y"}`, http.StatusBadRequest},
 	} {
-		if code := call(t, e, "POST", "/v1/tenants/demo/apikeys", "tadmin", tt.body); code != tt.want {
+		if code := call(t, e, "POST", "/v1/apikeys", "admin", tt.body); code != tt.want {
 			t.Errorf("%s: status %d, want %d", name, code, tt.want)
 		}
+	}
+	if len(e.keys.data) != 0 {
+		t.Errorf("%d keys were created by refused requests", len(e.keys.data))
+	}
+}
+
+func TestApiKeyPatch(t *testing.T) {
+	e := newEnv(t)
+	e.keys.data[keyID] = adminsKey(keyID)
+	later := now.Add(time.Hour).Format(time.RFC3339)
+	for name, tt := range map[string]struct {
+		body string
+		want int
+	}{
+		"scopes":             {`{"scopes":["tenants:read","images:write"]}`, http.StatusOK},
+		"a new date":         {`{"expiresAt":"` + later + `"}`, http.StatusOK},
+		"a name":             {`{"displayName":"renamed"}`, http.StatusOK},
+		"nothing":            {`{}`, http.StatusUnprocessableEntity},
+		"no scope left":      {`{"scopes":[]}`, http.StatusUnprocessableEntity},
+		"a date that passed": {`{"expiresAt":"2020-01-01T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"the hash":           {`{"hash":"` + strings.Repeat("a", 64) + `"}`, http.StatusBadRequest},
+		"the owner":          {`{"owner":"x@y"}`, http.StatusBadRequest},
+	} {
+		if code := call(t, e, "PATCH", "/v1/apikeys/"+keyID, "admin", tt.body); code != tt.want {
+			t.Errorf("%s: status %d, want %d", name, code, tt.want)
+		}
+	}
+	if got := e.keys.data[keyID]; !slices.Equal(got.Scopes, []string{"tenants:read", "images:write"}) || got.DisplayName != "renamed" || got.Owner != "admin@example.org" {
+		t.Errorf("key after the patches: %+v", got)
+	}
+	if code := call(t, e, "PATCH", "/v1/apikeys/not-an-id", "admin", `{"displayName":"x"}`); code != http.StatusNotFound {
+		t.Errorf("an id that is not one: %d", code)
+	}
+}
+
+func TestDeleteApiKey(t *testing.T) {
+	e := newEnv(t)
+	e.keys.data[keyID] = adminsKey(keyID)
+	rec := e.do(t, "DELETE", "/v1/apikeys/"+keyID, "admin", "")
+	var got keyBody
+	mustDecode(t, rec, &got)
+	if rec.Code != http.StatusAccepted || got.Phase != status.Deleting || !slices.Equal(e.keys.deleted, []string{keyID}) {
+		t.Errorf("status %d, %+v, deleted %v", rec.Code, got, e.keys.deleted)
+	}
+	if code := call(t, e, "DELETE", "/v1/apikeys/ffffffffffffffff", "admin", ""); code != http.StatusNotFound {
+		t.Errorf("a key that does not exist: %d", code)
+	}
+	// Someone who is no longer an administrator still revokes their own key.
+	e.keys.data["00000000000000e1"] = access.ApiKey{ID: "00000000000000e1", Owner: "exadmin@example.org", DisplayName: "old", Scopes: []string{"tenants:read"}}
+	if code := call(t, e, "DELETE", "/v1/apikeys/00000000000000e1", "exadmin", ""); code != http.StatusAccepted {
+		t.Errorf("revoking one's own key after leaving the group: %d", code)
 	}
 }
 
 func TestAKeyPastItsDateIsShownExpiredBeforeTheCompositionCatchesUp(t *testing.T) {
 	e := newEnv(t)
 	past := now.Add(-time.Minute)
-	e.keys.put("demo", access.ApiKey{Name: "old", Scopes: []string{"tenant:read"}, ExpiresAt: &past})
+	k := adminsKey(keyID)
+	k.ExpiresAt = &past
+	e.keys.data[keyID] = k
 	var got keyBody
-	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/apikeys/old", "tadmin", ""), &got)
+	mustDecode(t, e.do(t, "GET", "/v1/apikeys/"+keyID, "admin", ""), &got)
 	if !got.Expired {
 		t.Errorf("%+v: the date has passed, the composition has not noticed yet", got)
 	}
@@ -426,11 +516,11 @@ func TestAccessRoutesWhenTheClusterIsDown(t *testing.T) {
 	for _, c := range []struct{ method, path, body string }{
 		{"GET", "/v1/tenants/demo/memberships", ""},
 		{"POST", "/v1/tenants/demo/memberships", `{"subject":{"kind":"User","name":"x@y"},"role":"viewer"}`},
-		{"GET", "/v1/tenants/demo/apikeys", ""},
-		{"POST", "/v1/tenants/demo/apikeys", `{"name":"ci","scopes":["tenant:read"]}`},
-		{"DELETE", "/v1/tenants/demo/apikeys/ci", ""},
+		{"GET", "/v1/apikeys", ""},
+		{"POST", "/v1/apikeys", `{"displayName":"ci","scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z"}`},
+		{"DELETE", "/v1/apikeys/" + keyID, ""},
 	} {
-		if code := call(t, e, c.method, c.path, "tadmin", c.body); code != http.StatusServiceUnavailable {
+		if code := call(t, e, c.method, c.path, "admin", c.body); code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s: status %d, want 503", c.method, c.path, code)
 		}
 	}

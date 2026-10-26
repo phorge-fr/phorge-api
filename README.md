@@ -34,8 +34,8 @@ Configuration is read from the environment and the process refuses to start, lis
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you can see (the platform administrators see all of them) |
 | `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create, resize and delete a tenant: platform administrators only |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with `images:read` or a role, write with `operator` or `images:write` |
-| `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, or a key with `memberships:read` and `memberships:write` |
-| `GET`, `POST /v1/tenants/{t}/apikeys`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/apikeys/{name}` | The API keys of the tenant: same rights |
+| `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant (a key of one, with `memberships:read` and `memberships:write`) |
+| `GET`, `POST /v1/apikeys`, `GET`, `PATCH`, `DELETE /v1/apikeys/{id}` | Your own API keys, with a token of Authentik (a key cannot manage keys). Creating and changing: platform administrators for now |
 | `GET`, `POST /v1/tenants/{t}/instances`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/instances/{name}` | The virtual machines: read with `instances:read` or a role, write with `user` or `instances:write` |
 | `/healthz`, `/readyz` (503 while shutting down), `/metrics` | Probes and metrics |
 
@@ -44,7 +44,7 @@ Configuration is read from the environment and the process refuses to start, lis
 `Authorization: Bearer <credential>`, the credential is either:
 
 - an access token of Authentik (signature against the JWKS of `OIDC_ISSUER`, issuer, audience, expiry, and a verified `email` claim, which is the user);
-- an API key `phk_<tenant>_<name>_<secret>`, looked up as the `ApiKey` object `<name>` of the namespace `t-<tenant>`. `spec.hash` is the SHA-256 in hex of the secret part as written. A key past its `expiresAt`, marked `status.expired` or being deleted is refused.
+- a personal API key `phk_<id>_<secret>`, looked up as the `ApiKey` object `<id>` of the namespace `phorge-keys`. `spec.hash` is the SHA-256 in hex of the secret part as written. A key past its `expiresAt`, marked `status.expired`, being deleted or without an owner is refused. A key is **its owner**: the identity is `user:<owner>`, limited to the scopes of the key.
 
 Whatever is wrong with a credential, the answer is the same `401`; the reason is only logged. When Authentik or the Kubernetes API cannot be reached the answer is `503`, not `401`.
 
@@ -60,17 +60,17 @@ curl -s https://auth.phorge.fr/application/o/device/ -d client_id=<OIDC_AUDIENCE
 
 ## Authorization
 
-Authentication tells who calls, OpenFGA decides what they may do (`internal/authz`). Every decision is a `Check` in the `phorge-api` store on the object `tenant:<name>`, for the subject of the identity (`user:<email>` or `apikey:<tenant>.<name>`):
+Authentication tells who calls, OpenFGA decides what they may do (`internal/authz`). Every decision is a `Check` in the `phorge-api` store on the object `tenant:<name>`, for the subject of the identity (`user:<email>`, which is also the owner of a key):
 
 | Action | Relation | Scope of a key |
 |---|---|---|
-| read the tenant | `can_read_tenant` | `tenant:read` |
+| read the tenant | `can_read_tenant` | `tenants:read` |
 | read instances, images | `can_read_instances`, `can_read_images` | `instances:read`, `images:read` |
 | write instances | `can_write_instances` | `instances:write` |
 | write images | `can_write_images` | `images:write` |
 | read, write memberships and keys | `can_read_memberships`, `can_write_memberships` | `memberships:read`, `memberships:write` |
 
-A user gets those through a role (`admin` over `operator` over `user` over `viewer`), a key only through its scopes, which are relations of their own (`instances:write` does not give `instances:read`). `Authorizer.Require(action, ...)` is the middleware of a route: `404` when the caller cannot read the tenant (a tenant that is not yours is not shown to exist), `403` when it can but may not do this, `503` when OpenFGA cannot answer. A decision that cannot be taken is never an "allowed". `Authorizer.Missing` is what keeps a key within its creator, `Authorizer.IsPlatformAdmin` the people who create tenants: the members of the Authentik group `PLATFORM_ADMIN_GROUP` (the model has no relation for it); `GET /v1/whoami` says whether the caller is one. Members are added in Authentik, the group itself is created by the blueprint in Hangar.
+A user gets those through a role (`admin` over `operator` over `user` over `viewer`). A key does what its owner may **and** what its scopes name: the scope is checked first (`instances:write` does not give `instances:read`), then OpenFGA is asked about the owner. `Authorizer.Require(action, ...)` is the middleware of a route: `404` when the caller cannot read the tenant (a tenant that is not yours is not shown to exist), `403` when it can but may not do this, `503` when OpenFGA cannot answer. A decision that cannot be taken is never an "allowed". `Authorizer.PlatformAdmin` tells who creates, resizes and deletes tenants: the members of the Authentik group `PLATFORM_ADMIN_GROUP` (the model has no relation for it). A token carries its groups; a key does not, so the API asks Authentik whether its owner is a member of that group (`internal/authentik`, `AUTHENTIK_URL` and `AUTHENTIK_TOKEN`: the token of a service account that may read that one group and nothing else, the members remembered for a minute; if the group cannot be read, that is an error, never "nobody is in it"): a key stops being an administrator's within a minute of its owner leaving the group. The scopes `tenants:read` and `tenants:write` gate what a platform administrator's key does on tenants. `GET /v1/whoami` says whether the caller may write tenants. Members are added in Authentik, the group itself is created by the blueprint in Hangar.
 
 OpenFGA is reached with `OPENFGA_URL`, `OPENFGA_API_KEY` and `OPENFGA_STORE_ID`, and `CA_FILE` for the internal CA of `openfga.core.phorge` (the verification is never turned off).
 
@@ -120,16 +120,15 @@ go test -run TestImageAndInstance -timeout 40m ./internal/api
 
 ## Memberships and API keys
 
-Both are objects of the tenant's namespace, and both are read and written only by the admins of the tenant (the relations `can_read_memberships` and `can_write_memberships`), a platform administrator, or a key with the scopes `memberships:read` and `memberships:write`.
-
-- **A membership gives a user a role** (`admin`, `operator`, `user`, `viewer`). It cannot be edited, because a role is an OpenFGA tuple that cannot be changed in place: to change a role, delete the membership and create another. There is one per user and tenant: its name is derived from the email, so a second one is a `409`. The owner of a tenant already is admin through the tenant and a membership for it is refused (`409`, `owner_is_admin`): to hand a tenant over, give someone else the `admin` role. Only users are supported, a group is refused (nothing writes the tuples a group needs).
+- **A membership gives a user a role** on a tenant (`admin`, `operator`, `user`, `viewer`). Memberships are objects of the tenant's namespace, read and written only by the admins of the tenant (the relations `can_read_memberships` and `can_write_memberships`) or a platform administrator. A membership cannot be edited, because a role is an OpenFGA tuple that cannot be changed in place: to change a role, delete the membership and create another. There is one per user and tenant: its name is derived from the email, so a second one is a `409`. The owner of a tenant already is admin through the tenant and a membership for it is refused (`409`, `owner_is_admin`): to hand a tenant over, give someone else the `admin` role. Only users are supported, a group is refused (nothing writes the tuples a group needs).
 - **Deleting a membership is not an instant revocation**: the object goes at once, its tuples within about a minute (measured on the cluster in the test below).
-- **An API key** is `phk_<tenant>_<name>_<secret>`. The answer to its creation holds the key, **once**; only the SHA-256 of the secret is stored (`spec.hash`), so no read ever shows it again. The secret is 32 random bytes in hex.
-- **A key never exceeds its creator.** You can only give a key the scopes you hold yourself on the tenant, a key can only create keys with a subset of its own scopes, and adding a scope with a patch is giving it (taking one away is always allowed). A platform administrator holds everything on every tenant that exists.
-- **A key stops at its `expiresAt` to the second**: the authentication checks the date itself and does not wait for the composition to remove the tuples, which takes up to a minute. A key that is being deleted stops at once too. The list shows `expired` as soon as the date has passed.
+- **An API key is personal**: it belongs to the user who created it, not to a tenant, and acts as them within its scopes (`tenants:read`, `tenants:write`, `instances:read|write`, `images:read|write`, `memberships:read|write`). It is `phk_<id>_<secret>`: the id locates the object with one get, the secret is 32 random bytes in hex. The answer to its creation holds the key, **once**; only the SHA-256 of the secret is stored (`spec.hash`), so no read ever shows it again.
+- **Only a person manages keys**, signed in with Authentik: a key cannot create, read or delete keys. For now only the platform administrators create and change them; anyone lists and revokes their own (a key can always be revoked). Someone else's key answers `404`.
+- **A key never exceeds its owner**, because the owner is what is asked at every request. A key expires: `expiresAt` is required, at most 366 days ahead.
+- **A key stops at its `expiresAt` to the second**: the authentication checks the date itself and does not wait for the composition. A key that is being deleted stops at once too. The list shows `expired` as soon as the date has passed.
 - A key cannot be rotated: delete it and create another.
 
-The test of all this on the real cluster (a viewer, a user, a revoked member, a key within its scopes, a key that stops at its date and at its deletion) takes about five minutes:
+The test of all this on the real cluster (a viewer, a user, a revoked member, a platform administrator's key within its scopes, a key that stops at its date and at its deletion) takes about five minutes:
 
 ```bash
 go test -run TestMembershipsAndKeys -timeout 30m ./internal/api

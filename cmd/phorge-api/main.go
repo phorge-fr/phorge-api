@@ -13,6 +13,7 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/api"
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/authentik"
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/fga"
@@ -38,6 +39,12 @@ func main() {
 		os.Exit(2)
 	}
 
+	// The groups of the owner of an API key come from Authentik: a key does not carry them.
+	var directory authz.Directory
+	if cfg.AuthentikURL != "" {
+		directory = authentik.New(cfg.AuthentikURL, cfg.AuthentikToken, nil)
+	}
+
 	kubeConn := kube.NewConnection(cfg.KubeContext)
 	srvAPI := server.New(log)
 	api.Register(srvAPI, api.Deps{
@@ -46,7 +53,7 @@ func main() {
 			Keys:  auth.NewKeyVerifier(kube.NewKeys(kubeConn)),
 			Log:   log,
 		},
-		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdminGroup),
+		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdminGroup, directory),
 		Tenants:     kube.NewTenants(kubeConn),
 		Images:      kube.NewImages(kubeConn),
 		Instances:   kube.NewInstances(kubeConn),

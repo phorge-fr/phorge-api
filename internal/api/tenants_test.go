@@ -112,6 +112,13 @@ func (c *checker) ListObjects(_ context.Context, user, _, _ string) ([]string, e
 	return c.objects[user], c.err
 }
 
+// directory is the Authentik of these tests: the members of each group, by email. The keys carry no group of their own.
+type directory map[string][]string
+
+func (d directory) Member(_ context.Context, email, group string) (bool, error) {
+	return slices.Contains(d[group], email), nil
+}
+
 type tokens map[string]auth.Identity
 
 func (t tokens) Verify(_ context.Context, token string) (auth.Identity, error) {
@@ -144,7 +151,6 @@ func newEnv(t *testing.T) *env {
 		grants: map[string]bool{
 			"user:alice@example.org can_read_tenant tenant:demo":  true,
 			"user:viewer@example.org can_read_tenant tenant:demo": true,
-			"apikey:demo.ci can_read_tenant tenant:demo":          true,
 
 			// What the roles of the model give, written out (the model itself is tested against OpenFGA in authz).
 			"user:viewer@example.org can_read_images tenant:demo":    true,
@@ -161,8 +167,6 @@ func newEnv(t *testing.T) *env {
 			"user:operator@example.org can_read_instances tenant:demo":  true,
 			"user:operator@example.org can_write_instances tenant:demo": true,
 
-			"apikey:demo.ci can_read_images tenant:demo": true,
-
 			// An admin of the tenant holds everything the model gives.
 			"user:tadmin@example.org can_read_tenant tenant:demo":       true,
 			"user:tadmin@example.org can_read_images tenant:demo":       true,
@@ -171,18 +175,12 @@ func newEnv(t *testing.T) *env {
 			"user:tadmin@example.org can_write_instances tenant:demo":   true,
 			"user:tadmin@example.org can_read_memberships tenant:demo":  true,
 			"user:tadmin@example.org can_write_memberships tenant:demo": true,
-
-			// A key that manages the memberships and keys, and reads the instances: no more than that.
-			"apikey:demo.mgr can_read_tenant tenant:demo":       true,
-			"apikey:demo.mgr can_read_instances tenant:demo":    true,
-			"apikey:demo.mgr can_read_memberships tenant:demo":  true,
-			"apikey:demo.mgr can_write_memberships tenant:demo": true,
 		},
 		objects: map[string][]string{
-			"user:alice@example.org":  {"tenant:demo"},
-			"user:viewer@example.org": {"tenant:demo"},
-			// A key that OpenFGA lets see two tenants: it belongs to one.
-			"apikey:demo.ci": {"tenant:demo", "tenant:other"},
+			"user:alice@example.org":    {"tenant:demo"},
+			"user:viewer@example.org":   {"tenant:demo"},
+			"user:operator@example.org": {"tenant:demo"},
+			"user:tadmin@example.org":   {"tenant:demo"},
 		},
 	}
 	users := tokens{
@@ -194,20 +192,35 @@ func newEnv(t *testing.T) *env {
 		"tadmin":   {Kind: auth.KindUser, Subject: "user:tadmin@example.org", Email: "tadmin@example.org"},
 		"mallory":  {Kind: auth.KindUser, Subject: "user:mallory@example.org", Email: "mallory@example.org", Groups: []string{"staff"}},
 		"almostit": {Kind: auth.KindUser, Subject: "user:almost@example.org", Email: "almost@example.org", Groups: []string{adminGroup + "-ro"}},
+		// A second administrator, and one who left the group.
+		"admin2":  {Kind: auth.KindUser, Subject: "user:admin2@example.org", Email: "admin2@example.org", Groups: []string{adminGroup}},
+		"exadmin": {Kind: auth.KindUser, Subject: "user:exadmin@example.org", Email: "exadmin@example.org"},
+	}
+	// A key is its owner within its scopes: OpenFGA is asked about the owner, the scopes cut what the owner may do.
+	keyOf := func(owner string, scopes ...string) auth.Identity {
+		return auth.Identity{Kind: auth.KindAPIKey, Subject: "user:" + owner + "@example.org", Email: owner + "@example.org", Name: "0123456789abcdef", Scopes: scopes}
 	}
 	keys := tokens{
-		"phk_demo_ci": {Kind: auth.KindAPIKey, Subject: "apikey:demo.ci", Tenant: "demo", Name: "ci", Scopes: []string{"tenant:read"}, Groups: []string{adminGroup}},
-		"phk_demo_mgr": {Kind: auth.KindAPIKey, Subject: "apikey:demo.mgr", Tenant: "demo", Name: "mgr",
-			Scopes: []string{"tenant:read", "instances:read", "memberships:read", "memberships:write"}},
+		// An operator's key that reads the tenant and the images.
+		"phk_ci": keyOf("operator", "tenants:read", "images:read"),
+		// A tenant admin's key that manages the memberships, and reads the instances: no more than that.
+		"phk_mgr": keyOf("tadmin", "tenants:read", "instances:read", "memberships:read", "memberships:write"),
+		// An operator's key without tenants:read: it sees nothing.
+		"phk_blind": keyOf("operator", "instances:read"),
+		// Keys of a platform administrator (a group of Authentik, not of the key): one that reads, one that writes tenants.
+		"phk_admin_read":  keyOf("admin", "tenants:read"),
+		"phk_admin_write": keyOf("admin", "tenants:read", "tenants:write", "instances:write"),
+		// A key of someone who left the group, with every scope: it is only worth what they are worth now.
+		"phk_gone": keyOf("gone", authz.Scopes()...),
 	}
 	images := &imageStore{data: map[string]map[string]compute.Image{}}
 	instances := &instanceStore{data: map[string]map[string]compute.Instance{}}
 	memberships := &membershipStore{data: map[string]map[string]access.Membership{}}
-	apikeys := &keyStore{data: map[string]map[string]access.ApiKey{}, hashes: map[string]string{}}
+	apikeys := &keyStore{data: map[string]access.ApiKey{}, hashes: map[string]string{}}
 	s := server.New(log)
 	Register(s, Deps{
 		Auth:        &auth.Authenticator{Users: users, Keys: keys, Log: log},
-		Authz:       authz.New(fga, adminGroup),
+		Authz:       authz.New(fga, adminGroup, directory{adminGroup: {"admin@example.org"}, "staff": {"gone@example.org"}}),
 		Tenants:     st,
 		Images:      images,
 		Instances:   instances,
@@ -257,7 +270,10 @@ func TestListShowsWhatTheCallerMaySee(t *testing.T) {
 		{"viewer", []string{"demo"}},
 		{"mallory", []string{}},
 		{"almostit", []string{}},
-		{"phk_demo_ci", []string{"demo"}}, // not "other", although OpenFGA listed it
+		{"phk_ci", []string{"demo"}},
+		{"phk_blind", []string{}},                     // an owner who sees a tenant, a key without tenants:read that does not
+		{"phk_admin_read", []string{"demo", "other"}}, // an administrator's key sees them all
+		{"phk_gone", []string{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.token, func(t *testing.T) {
@@ -294,8 +310,11 @@ func TestGet(t *testing.T) {
 	}{
 		{"a member", "alice", "/v1/tenants/demo", http.StatusOK},
 		{"a viewer", "viewer", "/v1/tenants/demo", http.StatusOK},
-		{"the key of that tenant", "phk_demo_ci", "/v1/tenants/demo", http.StatusOK},
-		{"the key of that tenant on another", "phk_demo_ci", "/v1/tenants/other", http.StatusNotFound},
+		{"a key of an operator, with tenants:read", "phk_ci", "/v1/tenants/demo", http.StatusOK},
+		{"the same key on a tenant its owner has no role on", "phk_ci", "/v1/tenants/other", http.StatusNotFound},
+		{"a key without tenants:read, whatever its owner may", "phk_blind", "/v1/tenants/demo", http.StatusNotFound},
+		{"an administrator's key, on a tenant it has no role on", "phk_admin_read", "/v1/tenants/other", http.StatusOK},
+		{"the key of someone who left the group", "phk_gone", "/v1/tenants/other", http.StatusNotFound},
 		{"a platform administrator, with no role on it", "admin", "/v1/tenants/other", http.StatusOK},
 		{"a stranger", "mallory", "/v1/tenants/demo", http.StatusNotFound},
 		{"a group that looks like the administrators", "almostit", "/v1/tenants/demo", http.StatusNotFound},
@@ -348,7 +367,7 @@ func TestCreate(t *testing.T) {
 func TestCreateIsForPlatformAdministratorsOnly(t *testing.T) {
 	e := newEnv(t)
 	const body = `{"name":"newone","owner":"a@b"}`
-	for _, token := range []string{"alice", "viewer", "mallory", "almostit", "phk_demo_ci"} {
+	for _, token := range []string{"alice", "viewer", "mallory", "almostit", "phk_ci", "phk_admin_read", "phk_gone"} {
 		rec := e.do(t, http.MethodPost, "/v1/tenants", token, body)
 		if rec.Code != http.StatusForbidden {
 			t.Errorf("%s: status %d, want 403", token, rec.Code)
@@ -422,15 +441,16 @@ func TestPatch(t *testing.T) {
 		token, path, body string
 		want              int
 	}{
-		"the owner cannot be changed":  {"admin", "/v1/tenants/demo", `{"owner":"mallory@example.org"}`, http.StatusBadRequest},
-		"nor the name":                 {"admin", "/v1/tenants/demo", `{"name":"x"}`, http.StatusBadRequest},
-		"an empty patch":               {"admin", "/v1/tenants/demo", `{}`, http.StatusUnprocessableEntity},
-		"an unknown plan":              {"admin", "/v1/tenants/demo", `{"plan":"huge"}`, http.StatusUnprocessableEntity},
-		"a tenant that does not exist": {"admin", "/v1/tenants/ghost", `{"plan":"large"}`, http.StatusNotFound},
-		"a member who sees the tenant": {"alice", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
-		"a stranger does not see it":   {"mallory", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusNotFound},
-		"a key":                        {"phk_demo_ci", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
-		"nobody":                       {"", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusUnauthorized},
+		"the owner cannot be changed":                  {"admin", "/v1/tenants/demo", `{"owner":"mallory@example.org"}`, http.StatusBadRequest},
+		"nor the name":                                 {"admin", "/v1/tenants/demo", `{"name":"x"}`, http.StatusBadRequest},
+		"an empty patch":                               {"admin", "/v1/tenants/demo", `{}`, http.StatusUnprocessableEntity},
+		"an unknown plan":                              {"admin", "/v1/tenants/demo", `{"plan":"huge"}`, http.StatusUnprocessableEntity},
+		"a tenant that does not exist":                 {"admin", "/v1/tenants/ghost", `{"plan":"large"}`, http.StatusNotFound},
+		"a member who sees the tenant":                 {"alice", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
+		"a stranger does not see it":                   {"mallory", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusNotFound},
+		"a key":                                        {"phk_ci", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
+		"an administrator's key without tenants:write": {"phk_admin_read", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
+		"nobody": {"", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusUnauthorized},
 	} {
 		before := len(e.store.patched)
 		if rec := e.do(t, http.MethodPatch, tt.path, tt.token, tt.body); rec.Code != tt.want {
@@ -461,12 +481,14 @@ func TestDelete(t *testing.T) {
 func TestDeleteIsForPlatformAdministratorsOnly(t *testing.T) {
 	e := newEnv(t)
 	for token, want := range map[string]int{
-		"alice":       http.StatusForbidden, // owner of demo: it destroys the VMs, an administrator of the platform decides
-		"viewer":      http.StatusForbidden,
-		"phk_demo_ci": http.StatusForbidden,
-		"mallory":     http.StatusNotFound,
-		"almostit":    http.StatusNotFound,
-		"":            http.StatusUnauthorized,
+		"alice":          http.StatusForbidden, // owner of demo: it destroys the VMs, an administrator of the platform decides
+		"viewer":         http.StatusForbidden,
+		"phk_ci":         http.StatusForbidden,
+		"phk_admin_read": http.StatusForbidden, // it reads tenants, it does not delete them
+		"phk_gone":       http.StatusNotFound,
+		"mallory":        http.StatusNotFound,
+		"almostit":       http.StatusNotFound,
+		"":               http.StatusUnauthorized,
 	} {
 		if rec := e.do(t, http.MethodDelete, "/v1/tenants/demo", token, ""); rec.Code != want {
 			t.Errorf("%q: status %d, want %d", token, rec.Code, want)
@@ -506,5 +528,30 @@ func TestWhenTheBackendsAreDownItIs503(t *testing.T) {
 	}
 	if rec := e.do(t, http.MethodGet, "/v1/tenants", "admin", ""); rec.Code != http.StatusOK {
 		t.Errorf("an administrator, without OpenFGA: %d", rec.Code)
+	}
+}
+
+func TestAnAdministratorsKeyWithTheWriteScopeManagesTenants(t *testing.T) {
+	e := newEnv(t)
+	rec := e.do(t, http.MethodPost, "/v1/tenants", "phk_admin_write", `{"name":"newone","owner":"carol@example.org","plan":"small"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(e.store.created) != 1 || e.store.created[0].CreatedBy != "user:admin@example.org" {
+		t.Errorf("created: %+v: the key is its owner, who is recorded", e.store.created)
+	}
+	if rec := e.do(t, http.MethodPatch, "/v1/tenants/demo", "phk_admin_write", `{"plan":"large"}`); rec.Code != http.StatusOK {
+		t.Errorf("patch: status %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do(t, http.MethodDelete, "/v1/tenants/demo", "phk_admin_write", ""); rec.Code != http.StatusAccepted {
+		t.Errorf("delete: status %d: %s", rec.Code, rec.Body.String())
+	}
+	// The scope tenants:write is about tenants: not about what is in them.
+	if rec := e.do(t, http.MethodGet, "/v1/tenants/demo/images", "phk_admin_write", ""); rec.Code != http.StatusForbidden {
+		t.Errorf("images without images:read: status %d", rec.Code)
+	}
+	// instances:write is in its scopes, and the administrator may do it on any tenant.
+	if rec := e.do(t, http.MethodGet, "/v1/tenants/other/instances", "phk_admin_write", ""); rec.Code != http.StatusForbidden {
+		t.Errorf("instances:read is not one of its scopes: status %d", rec.Code)
 	}
 }

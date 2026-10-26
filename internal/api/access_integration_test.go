@@ -21,8 +21,9 @@ import (
 )
 
 // TestMembershipsAndKeysOnTheRealCluster checks, on the real control cluster and OpenFGA store, that what a role or a scope
-// grants is what the routes then allow: a member sees only what the role allows, a key authenticated against its real
-// object works within its scopes, stops at its date and when it is deleted. It takes about five minutes and is skipped unless
+// grants is what the routes then allow: a member sees only what the role allows, a key of a platform administrator
+// authenticated against its real object works within its scopes, stops at its date and when it is deleted. Authentik is
+// played by a fake directory: it says that the administrator is one. It takes about five minutes and is skipped unless
 // the cluster and the store are given, see TestTenantLifecycleOnTheRealCluster for how.
 //
 //	go test -run TestMembershipsAndKeys -timeout 30m ./internal/api
@@ -51,7 +52,7 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 	Register(s, Deps{
 		// The keys are verified against their real objects, with their real hash: this is what a client would meet.
 		Auth:        &auth.Authenticator{Users: users, Keys: auth.NewKeyVerifier(kube.NewKeys(conn)), Log: log},
-		Authz:       authz.New(fga.New(url, storeID, key, nil), adminGroup),
+		Authz:       authz.New(fga.New(url, storeID, key, nil), adminGroup, directory{adminGroup: {admin.Email}}),
 		Tenants:     tenantStore,
 		Images:      kube.NewImages(conn),
 		Instances:   kube.NewInstances(conn),
@@ -105,7 +106,6 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 		{"POST", base + "/instances", `{"name":"web","image":"nope"}`, http.StatusForbidden},
 		{"POST", base + "/images", `{"name":"x","source":{"name":"alpine/3.22"}}`, http.StatusForbidden},
 		{"GET", base + "/memberships", "", http.StatusForbidden},
-		{"POST", base + "/apikeys", `{"name":"k","scopes":["tenant:read"]}`, http.StatusForbidden},
 		{"PATCH", base, `{"plan":"large"}`, http.StatusForbidden},
 		{"DELETE", base, "", http.StatusForbidden},
 	} {
@@ -152,24 +152,44 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 	waitFor(t, 4*time.Minute, "bob to lose the tenant", func() bool { return call(t, e, "GET", base, "bob", "") == http.StatusNotFound })
 	t.Logf("bob revoked after %s", time.Since(revoked).Round(time.Second))
 
-	// ---- A key: its scopes, its date, its deletion ----
-	rec = e.do(t, "POST", base+"/apikeys", "owner", `{"name":"ci","scopes":["tenant:read","instances:read"]}`)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("create the key: %d %s", rec.Code, rec.Body.String())
+	// ---- A key: its owner, its scopes, its date, its deletion ----
+	// The keys are not in the tenant: its deletion does not remove them.
+	var keyIDs []string
+	t.Cleanup(func() {
+		store := kube.NewApiKeys(conn)
+		for _, id := range keyIDs {
+			_ = store.Delete(context.Background(), id)
+		}
+	})
+	newKey := func(body string) keyBody {
+		rec := e.do(t, "POST", "/v1/apikeys", "admin", body)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("create the key: %d %s", rec.Code, rec.Body.String())
+		}
+		var k keyBody
+		mustDecode(t, rec, &k)
+		keyIDs = append(keyIDs, k.ID)
+		return k
 	}
-	var created keyBody
-	mustDecode(t, rec, &created)
+	in30d := time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	created := newKey(`{"displayName":"ci","scopes":["tenants:read","instances:read"],"expiresAt":"` + in30d + `"}`)
 	ci := created.Key
-	waitFor(t, 3*time.Minute, "the key to read the tenant", func() bool { return call(t, e, "GET", base, ci, "") == http.StatusOK })
+	// Someone who is not an administrator cannot create one; the owner of the tenant is not.
+	if code := call(t, e, "POST", "/v1/apikeys", "owner", `{"displayName":"k","scopes":["tenants:read"],"expiresAt":"`+in30d+`"}`); code != http.StatusForbidden {
+		t.Errorf("a key created by someone who is not a platform administrator: %d", code)
+	}
+	waitFor(t, 2*time.Minute, "the key to read the tenant", func() bool { return call(t, e, "GET", base, ci, "") == http.StatusOK })
 	for _, c := range []struct {
 		method, path, body string
 		want               int
 	}{
+		{"GET", "/v1/tenants", "", http.StatusOK},
 		{"GET", base + "/instances", "", http.StatusOK},
 		{"GET", base + "/images", "", http.StatusForbidden},
 		{"POST", base + "/instances", `{"name":"web","image":"nope"}`, http.StatusForbidden},
 		{"GET", base + "/memberships", "", http.StatusForbidden},
-		{"POST", base + "/apikeys", `{"name":"k","scopes":["tenant:read"]}`, http.StatusForbidden},
+		{"POST", "/v1/tenants", `{"name":"` + tenant + `-x","owner":"` + email("owner") + `"}`, http.StatusForbidden},
+		{"GET", "/v1/apikeys", "", http.StatusForbidden},
 		{"GET", "/v1/whoami", "", http.StatusOK},
 	} {
 		if code := call(t, e, c.method, c.path, ci, c.body); code != c.want {
@@ -182,31 +202,26 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 		t.Errorf("a wrong secret: %d", code)
 	}
 
-	// Taking a scope away takes effect within seconds.
-	if code := call(t, e, "PATCH", base+"/apikeys/ci", "owner", `{"scopes":["tenant:read"]}`); code != http.StatusOK {
+	// Taking a scope away takes effect at once: the scopes are read at every request.
+	if code := call(t, e, "PATCH", "/v1/apikeys/"+created.ID, "admin", `{"scopes":["tenants:read"]}`); code != http.StatusOK {
 		t.Fatalf("patch the scopes: %d", code)
 	}
-	waitFor(t, 2*time.Minute, "the scope to be taken away", func() bool {
+	waitFor(t, 30*time.Second, "the scope to be taken away", func() bool {
 		return call(t, e, "GET", base+"/instances", ci, "") == http.StatusForbidden
 	})
 
-	// A key that manages keys gives no more than it holds.
-	rec = e.do(t, "POST", base+"/apikeys", "owner", `{"name":"mgr","scopes":["tenant:read","memberships:read","memberships:write"]}`)
-	var mgr keyBody
-	mustDecode(t, rec, &mgr)
-	waitFor(t, 3*time.Minute, "the manager key to work", func() bool { return call(t, e, "GET", base+"/apikeys", mgr.Key, "") == http.StatusOK })
-	if code := call(t, e, "POST", base+"/apikeys", mgr.Key, `{"name":"child","scopes":["tenant:read"]}`); code != http.StatusAccepted {
-		t.Errorf("a key giving a subset of its scopes: %d", code)
+	// A key can write tenants only with the scope that says so.
+	writer := newKey(`{"displayName":"writer","scopes":["tenants:read","tenants:write"],"expiresAt":"` + in30d + `"}`)
+	if code := call(t, e, "PATCH", base, writer.Key, `{"displayName":"set by a key"}`); code != http.StatusOK {
+		t.Errorf("a key with tenants:write changing a tenant: %d", code)
 	}
-	if code := call(t, e, "POST", base+"/apikeys", mgr.Key, `{"name":"greedy","scopes":["instances:write"]}`); code != http.StatusForbidden {
-		t.Errorf("a key giving a scope it does not hold: %d", code)
+	if code := call(t, e, "PATCH", base, ci, `{"displayName":"no"}`); code != http.StatusForbidden {
+		t.Errorf("a key without tenants:write changing a tenant: %d", code)
 	}
 
 	// A key stops at its date, to the second: the API checks the date, it does not wait for the composition.
 	expires := time.Now().Add(45 * time.Second).UTC()
-	rec = e.do(t, "POST", base+"/apikeys", "owner", `{"name":"short","scopes":["tenant:read"],"expiresAt":"`+expires.Format(time.RFC3339)+`"}`)
-	var short keyBody
-	mustDecode(t, rec, &short)
+	short := newKey(`{"displayName":"short","scopes":["tenants:read"],"expiresAt":"` + expires.Format(time.RFC3339) + `"}`)
 	waitFor(t, 40*time.Second, "the short key to work", func() bool { return call(t, e, "GET", base, short.Key, "") == http.StatusOK })
 	time.Sleep(time.Until(expires.Add(time.Second)))
 	if code := call(t, e, "GET", base, short.Key, ""); code != http.StatusUnauthorized {
@@ -214,19 +229,19 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 	}
 
 	// A key stops at once when it is deleted.
-	if code := call(t, e, "DELETE", base+"/apikeys/ci", "owner", ""); code != http.StatusAccepted {
+	if code := call(t, e, "DELETE", "/v1/apikeys/"+created.ID, "admin", ""); code != http.StatusAccepted {
 		t.Fatalf("delete the key: %d", code)
 	}
 	if code := call(t, e, "GET", base, ci, ""); code != http.StatusUnauthorized {
-		t.Errorf("a key that is being deleted: %d, want 401 at once, not after its tuples are gone", code)
+		t.Errorf("a key that is being deleted: %d, want 401 at once", code)
 	}
 	var listed struct{ Items []keyBody }
-	mustDecode(t, e.do(t, "GET", base+"/apikeys", "owner", ""), &listed)
+	mustDecode(t, e.do(t, "GET", "/v1/apikeys", "admin", ""), &listed)
 	for _, k := range listed.Items {
 		if k.Key != "" {
-			t.Errorf("the list shows the key of %s", k.Name)
+			t.Errorf("the list shows the key of %s", k.ID)
 		}
-		if k.Name == "short" && !k.Expired {
+		if k.ID == short.ID && !k.Expired {
 			t.Errorf("the short key is not shown as expired: %+v", k)
 		}
 	}

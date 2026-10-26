@@ -29,8 +29,8 @@ type base struct {
 }
 
 // guard lets a request through when the caller may do action on the tenant of the path, and answers otherwise (see
-// authz.Authorizer.Require). The platform administrators may do anything on a tenant, as they may delete it, but only on a
-// tenant that exists. A name that is not a tenant slug is never looked at further.
+// authz.Authorizer.Require). The platform administrators may do anything on a tenant, as they may delete it (a key of one,
+// what its scopes say), but only on a tenant that exists. A name that is not a tenant slug is never looked at further.
 func (b *base) guard(action authz.Action, next http.Handler) http.Handler {
 	require := b.authz.Require(action, b.log, next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,31 @@ func (b *base) guard(action authz.Action, next http.Handler) http.Handler {
 			return
 		}
 		id, _ := auth.FromContext(r.Context())
-		if !b.authz.IsPlatformAdmin(id) {
+		// A platform administrator acts on every tenant, within the scopes when it is a key.
+		may, err := b.authz.AdminMay(r.Context(), id, action)
+		if err != nil {
+			b.unavailable(w, "authorization", err)
+			return
+		}
+		if !may {
+			// The key of an administrator that lacks the scope for this still reads every tenant: it is told what is missing
+			// (403) rather than that the tenant does not exist.
+			if id.Kind == auth.KindAPIKey {
+				sees, err := b.authz.AdminMay(r.Context(), id, authz.ReadTenant)
+				if err != nil {
+					b.unavailable(w, "authorization", err)
+					return
+				}
+				if sees {
+					if _, err := b.tenants.Get(r.Context(), tenant); err != nil {
+						b.storeError(w, err, "tenant")
+						return
+					}
+					b.log.Info("authorization refused", "subject", id.Subject, "key", id.Name, "action", string(action), "tenant", tenant)
+					httperr.Write(w, http.StatusForbidden, "forbidden", "this API key does not have the scope for this")
+					return
+				}
+			}
 			require.ServeHTTP(w, r)
 			return
 		}

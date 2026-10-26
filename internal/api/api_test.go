@@ -26,12 +26,16 @@ type verifier struct {
 
 func (v verifier) Verify(context.Context, string) (auth.Identity, error) { return v.id, v.err }
 
-func newServer(users, keys auth.Verifier) *server.Server {
+func newServer(users, keys auth.Verifier) *server.Server { return newServerWith(users, keys, nil) }
+
+// newServerWith is newServer with an Authentik that knows the groups of some users, for the keys.
+func newServerWith(users, keys auth.Verifier, dir authz.Directory) *server.Server {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := server.New(log)
 	Register(s, Deps{
 		Auth:  &auth.Authenticator{Users: users, Keys: keys, Log: log},
-		Authz: authz.New(nil, "phorge-platform-admins"), // nothing here asks OpenFGA
+		Authz: authz.New(nil, "phorge-platform-admins", dir), // nothing here asks OpenFGA
+		Log:   log,
 	})
 	return s
 }
@@ -125,8 +129,8 @@ func TestEveryV1RouteRefusesAnonymousCallers(t *testing.T) {
 func TestWhoami(t *testing.T) {
 	s := newServer(
 		verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}},
-		// A key is never a platform administrator, whatever it carries.
-		verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "apikey:demo.ci", Tenant: "demo", Name: "ci", Scopes: []string{"tenant:read"}, Groups: []string{"phorge-platform-admins"}}},
+		// A key does not carry groups, and what it claims for itself means nothing: without Authentik it is nobody's administrator.
+		verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "user:alice@example.org", Email: "alice@example.org", Name: "0123456789abcdef", Scopes: []string{"tenants:read"}, Groups: []string{"phorge-platform-admins"}}},
 	)
 
 	rec := get(s.Handler(), "/v1/whoami", "Bearer a.jwt.token")
@@ -137,9 +141,36 @@ func TestWhoami(t *testing.T) {
 		t.Errorf("user: %s", got)
 	}
 
-	rec = get(s.Handler(), "/v1/whoami", "Bearer phk_demo_ci_"+strings.Repeat("a", 64))
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"apikey","subject":"apikey:demo.ci","tenant":"demo","name":"ci","scopes":["tenant:read"],"platformAdmin":false}`; got != want {
+	rec = get(s.Handler(), "/v1/whoami", "Bearer phk_0123456789abcdef_"+strings.Repeat("a", 64))
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"apikey","subject":"user:alice@example.org","email":"alice@example.org","name":"0123456789abcdef","scopes":["tenants:read"],"platformAdmin":false}`; got != want {
 		t.Errorf("key: %s", got)
+	}
+}
+
+type fixedDirectory map[string][]string
+
+func (d fixedDirectory) Member(_ context.Context, email, group string) (bool, error) {
+	return slices.Contains(d[group], email), nil
+}
+
+func TestWhoamiForTheKeyOfAnAdministrator(t *testing.T) {
+	key := func(scopes ...string) verifier {
+		return verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "user:alice@example.org", Email: "alice@example.org", Name: "0123456789abcdef", Scopes: scopes}}
+	}
+	dir := fixedDirectory{"phorge-platform-admins": {"alice@example.org"}}
+	for name, tt := range map[string]struct {
+		key  verifier
+		want bool
+	}{
+		"with tenants:write": {key("tenants:read", "tenants:write"), true},
+		"without it":         {key("tenants:read"), false},
+	} {
+		s := newServerWith(verifier{}, tt.key, dir)
+		var got identityBody
+		mustDecode(t, get(s.Handler(), "/v1/whoami", "Bearer phk_0123456789abcdef_"+strings.Repeat("a", 64)), &got)
+		if got.PlatformAdmin != tt.want {
+			t.Errorf("%s: platformAdmin = %v, want %v", name, got.PlatformAdmin, tt.want)
+		}
 	}
 }
 
