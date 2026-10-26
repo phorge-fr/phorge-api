@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/phorge-fr/phorge-api/compare/v0.1.1...v0.2.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* personal API keys that act as their owner
+
+### Features
+
+* personal API keys that act as their owner ([5a6584b](https://github.com/phorge-fr/phorge-api/commit/5a6584b7b17dfd569f6b9dfb0982e60a5052d47d))
+
 ## [0.1.1](https://github.com/phorge-fr/phorge-api/compare/v0.1.0...v0.1.1) (2026-10-26)
 
 
