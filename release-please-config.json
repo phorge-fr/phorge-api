@@ -8,9 +8,8 @@
         ".": {
             "extra-files": [
                 {
-                    "type": "yaml",
-                    "path": "internal/openapi/openapi.yaml",
-                    "jsonpath": "$.info.version"
+                    "type": "generic",
+                    "path": "internal/openapi/openapi.yaml"
                 }
             ]
         }
