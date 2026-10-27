@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/phorge-fr/phorge-api/compare/v0.2.0...v0.3.0) (2026-10-27)
+
+
+### Features
+
+* **instances:** say what a VM is doing while it changes state ([76495c5](https://github.com/phorge-fr/phorge-api/commit/76495c5f571a8bff8c6938d333c3dab144753d11))
+* **instances:** say what a VM is doing while it changes state ([15bc7f6](https://github.com/phorge-fr/phorge-api/commit/15bc7f6d1d1d9e909ec70c56f7dca22b4cd1cf8f))
+
+
+### Bug Fixes
+
+* **instances:** date a transition from the request, not from Crossplane ([b5c68f1](https://github.com/phorge-fr/phorge-api/commit/b5c68f1d22c5f27deae8c7fc36b6347b2360412f))
+* **instances:** date a transition from the request, not from Crossplane ([e77b493](https://github.com/phorge-fr/phorge-api/commit/e77b4934de1f190e874b2b71b9c90381e256160e))
+* **instances:** refuse to stop a VM that is still booting ([832989b](https://github.com/phorge-fr/phorge-api/commit/832989b0ff04ecb0c5bc4313f5af6f5174f8e404))
+* **instances:** refuse to stop a VM that is still booting ([4f6e563](https://github.com/phorge-fr/phorge-api/commit/4f6e56331b4a4cb5a9d55013cd28f80d6c258624))
+
 ## [0.2.0](https://github.com/phorge-fr/phorge-api/compare/v0.1.1...v0.2.0) (2026-10-26)
 
 

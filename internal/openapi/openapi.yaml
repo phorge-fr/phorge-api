@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
     title: Phorge API
-    version: 0.2.0  # x-release-please-version
+    version: 0.3.0  # x-release-please-version
     description: |
         Manage tenants, images, instances, memberships and API keys of the Phorge cloud.
 
