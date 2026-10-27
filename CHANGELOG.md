@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/phorge-fr/phorge-api/compare/v0.3.0...v0.4.0) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** no value that decides the behaviour is written in the code
+
+### Bug Fixes
+
+* **config:** no value that decides the behaviour is written in the code ([6fdabc4](https://github.com/phorge-fr/phorge-api/commit/6fdabc40bae5c2dea24325e5e375eb65353ad8b0))
+
 ## [0.3.0](https://github.com/phorge-fr/phorge-api/compare/v0.2.0...v0.3.0) (2026-10-27)
 
 
