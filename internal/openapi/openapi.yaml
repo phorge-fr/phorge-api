@@ -1053,7 +1053,7 @@ components:
                 transitionSince:
                     type: string
                     format: date-time
-                    description: When the operation that changes the VM began. Absent when it is not known.
+                    description: When the change was asked for (the creation, or the last patch of `running`).
                 ipv4:
                     type: string
                     description: The address on the network of the tenant.

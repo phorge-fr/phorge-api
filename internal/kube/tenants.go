@@ -24,9 +24,10 @@ const TenantNamespace = "phorge-system"
 // CreatedByAnnotation records who created a tenant through the API.
 const CreatedByAnnotation = "phorge.fr/created-by"
 
-// StartedAtAnnotation records, on an Instance, when the API last started it (RFC 3339). The API uses it to refuse a stop while
-// the VM is still booting, see compute.SettleTime.
-const StartedAtAnnotation = "phorge.fr/started-at"
+// RunningChangedAtAnnotation records, on an Instance, when the API last changed running (RFC 3339). It is the time of the request,
+// which neither Incus nor Crossplane report: the API refuses a stop while the VM is still booting (compute.SettleTime) and
+// says how long a start or a stop has lasted.
+const RunningChangedAtAnnotation = "phorge.fr/running-changed-at"
 
 // Tenants reads and writes the Tenant objects. It implements tenants.Store.
 type Tenants struct {

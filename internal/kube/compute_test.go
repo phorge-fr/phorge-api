@@ -175,49 +175,36 @@ func TestInstanceOfReadsTheStatus(t *testing.T) {
 	}
 }
 
-func TestAStartIsRecordedOnTheObject(t *testing.T) {
+func TestAChangeOfRunningIsRecordedOnTheObject(t *testing.T) {
 	client := newClient()
 	s := NewInstances(Static(client))
 	ctx := t.Context()
 	if _, err := client.Resource(instancesGVR).Namespace("t-demo").Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "phorge.fr/v1alpha1", "kind": "Instance",
 		"metadata": map[string]any{"name": "web", "namespace": "t-demo"},
-		"spec":     map[string]any{"imageRef": map[string]any{"name": "debian"}, "running": false},
+		"spec":     map[string]any{"imageRef": map[string]any{"name": "debian"}, "running": true},
 	}}, metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	yes, no := true, false
 	got, err := s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &no})
-	if err != nil || !got.StartedAt.IsZero() {
-		t.Fatalf("a stop records no start: %+v, %v", got.StartedAt, err)
+	if err != nil || !got.RunningChangedAt.IsZero() {
+		t.Fatalf("a patch that is not marked records nothing: %v, %v", got.RunningChangedAt, err)
 	}
 	before := time.Now().Add(-time.Second)
-	got, err = s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &yes, MarkStart: true})
-	if err != nil || !got.Running || got.StartedAt.Before(before) || time.Since(got.StartedAt) > time.Minute {
-		t.Errorf("a start must record its time: %+v, %v", got, err)
+	got, err = s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &yes, MarkChange: true})
+	if err != nil || got.RunningChangedAt.Before(before) || time.Since(got.RunningChangedAt) > time.Minute {
+		t.Errorf("a marked change must record its time: %v, %v", got.RunningChangedAt, err)
 	}
-	// A start that is not marked (the VM already ran) leaves the date as it was.
-	prev := got.StartedAt
+	prev := got.RunningChangedAt
 	got, err = s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &yes})
-	if err != nil || !got.StartedAt.Equal(prev) {
-		t.Errorf("an unmarked start changed the date: %v -> %v, %v", prev, got.StartedAt, err)
+	if err != nil || !got.RunningChangedAt.Equal(prev) {
+		t.Errorf("an unmarked patch changed the date: %v -> %v, %v", prev, got.RunningChangedAt, err)
 	}
-}
-
-func TestTheStartOfAnOperationIsRead(t *testing.T) {
-	obj := &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "web"},
-		"spec":     map[string]any{"running": false},
-		"status":   map[string]any{"state": "Running", "operationSince": "2026-10-27T00:00:53Z"},
-	}}
-	in := instanceOf(obj)
-	if !in.OperationSince.Equal(time.Date(2026, 10, 27, 0, 0, 53, 0, time.UTC)) || in.Transition() != "stopping" {
-		t.Errorf("%+v", in)
-	}
-	for _, bad := range []any{"", "tomorrow", int64(3), nil} {
-		obj.Object["status"] = map[string]any{"operationSince": bad}
-		if got := instanceOf(obj).OperationSince; !got.IsZero() {
-			t.Errorf("%v was read as %v: a date that cannot be read is no date", bad, got)
+	for _, bad := range []string{"", "tomorrow"} {
+		obj := &unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": "web", "annotations": map[string]any{RunningChangedAtAnnotation: bad}}}}
+		if at := instanceOf(obj).RunningChangedAt; !at.IsZero() {
+			t.Errorf("%q was read as %v: a date that cannot be read is no date", bad, at)
 		}
 	}
 }

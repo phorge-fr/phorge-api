@@ -62,8 +62,9 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 	problems := in.Status.Problems
 	transition := in.Transition()
 	var since *time.Time
-	if transition != "" && !in.OperationSince.IsZero() {
-		since = &in.OperationSince
+	if transition != "" && !in.Since().IsZero() {
+		at := in.Since()
+		since = &at
 	}
 	// A transition that lasts too long is a problem, whatever the object says: its Ready condition stays true while Incus waits
 	// for a guest that does not answer. A real problem reported by Incus or Crossplane is never replaced.
@@ -180,9 +181,10 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 					"listen yet. Try again in about "+wait.String())
 				return
 			}
-		} else if !current.Running {
-			req.MarkStart = true
 		}
+		// The time of the request is recorded when it changes running, in either direction. A patch that changes nothing does not
+		// move it: repeating a start must not postpone a stop for ever.
+		req.MarkChange = *req.Running != current.Running
 	}
 	in, err := i.store.Patch(r.Context(), tenant, name, req)
 	if err != nil {
