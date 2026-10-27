@@ -1042,6 +1042,18 @@ components:
                     type: string
                     description: What Incus reports, once the VM exists.
                     example: Running
+                transition:
+                    type: string
+                    enum:
+                        - starting
+                        - stopping
+                    description: |
+                        What the VM is doing while its `state` is not the one `running` asks for. Absent when it is where it
+                        should be. A transition that lasts more than ten minutes is also reported in `problems`.
+                transitionSince:
+                    type: string
+                    format: date-time
+                    description: When the operation that changes the VM began. Absent when it is not known.
                 ipv4:
                     type: string
                     description: The address on the network of the tenant.

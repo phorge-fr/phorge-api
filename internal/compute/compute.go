@@ -160,7 +160,45 @@ type Instance struct {
 	// StartedAt is the last time the API asked for the VM to run (a patch of running from false to true). Zero when it never did
 	// since the creation.
 	StartedAt time.Time
-	Status    status.Object
+	// OperationSince is when the operation that is changing the VM began (status.operationSince, from the Incus provider),
+	// zero when none is running or when it is not known.
+	OperationSince time.Time
+	Status         status.Object
+}
+
+// The two transitions of a VM: what it is doing to reach the state that was asked for.
+const (
+	Starting = "starting"
+	Stopping = "stopping"
+)
+
+// StuckAfter is how long a transition may last before the API says it is stuck. Starting or stopping a VM takes seconds to a
+// minute or two: ten minutes is something wrong.
+const StuckAfter = 10 * time.Minute
+
+// Transition says what the VM is doing when its state is not the one that was asked for: "starting" when it should run and
+// Incus does not report it running, "stopping" in the opposite case, empty otherwise. Only the two states a VM rests in are
+// compared: Frozen, Error or an empty state (the VM does not exist yet) are shown as they are, they are not a transition.
+func (in Instance) Transition() string {
+	switch {
+	case in.Running && in.State == "Stopped":
+		return Starting
+	case !in.Running && in.State == "Running":
+		return Stopping
+	}
+	return ""
+}
+
+// StuckFor returns how long the current transition has lasted when that is longer than StuckAfter, and zero otherwise (also
+// when the start of the operation is not known).
+func (in Instance) StuckFor(now time.Time) time.Duration {
+	if in.Transition() == "" || in.OperationSince.IsZero() {
+		return 0
+	}
+	if d := now.Sub(in.OperationSince); d > StuckAfter {
+		return d
+	}
+	return 0
 }
 
 // SettleTime is how long a VM that was just created or started is left alone. A stop sent while the guest is still booting

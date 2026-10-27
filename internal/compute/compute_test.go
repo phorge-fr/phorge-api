@@ -186,3 +186,41 @@ func TestAnInstanceThatWasJustStartedIsStarting(t *testing.T) {
 		}
 	}
 }
+
+func TestTransition(t *testing.T) {
+	for name, tt := range map[string]struct {
+		in   Instance
+		want string
+	}{
+		"running as asked":             {Instance{Running: true, State: "Running"}, ""},
+		"stopped as asked":             {Instance{Running: false, State: "Stopped"}, ""},
+		"asked to run, still stopped":  {Instance{Running: true, State: "Stopped"}, Starting},
+		"asked to stop, still running": {Instance{Running: false, State: "Running"}, Stopping},
+		"not created yet":              {Instance{Running: true, State: ""}, ""},
+		"frozen is not a transition":   {Instance{Running: true, State: "Frozen"}, ""},
+		"an error is not a transition": {Instance{Running: false, State: "Error"}, ""},
+	} {
+		if got := tt.in.Transition(); got != tt.want {
+			t.Errorf("%s: %q, want %q", name, got, tt.want)
+		}
+	}
+}
+
+func TestStuckFor(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	stopping := func(since time.Time) Instance {
+		return Instance{Running: false, State: "Running", OperationSince: since}
+	}
+	if got := stopping(now.Add(-StuckAfter + time.Second)).StuckFor(now); got != 0 {
+		t.Errorf("just under the limit: %v", got)
+	}
+	if got := stopping(now.Add(-12 * time.Minute)).StuckFor(now); got != 12*time.Minute {
+		t.Errorf("12 minutes: %v", got)
+	}
+	if got := stopping(time.Time{}).StuckFor(now); got != 0 {
+		t.Errorf("an unknown start is never stuck: %v", got)
+	}
+	if got := (Instance{Running: true, State: "Running", OperationSince: now.Add(-time.Hour)}).StuckFor(now); got != 0 {
+		t.Errorf("not in transition: %v", got)
+	}
+}
