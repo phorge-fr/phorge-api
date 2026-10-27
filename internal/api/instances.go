@@ -148,13 +148,32 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		i.storeError(w, err, "instance")
 		return
 	}
-	in, err := i.store.Patch(r.Context(), r.PathValue("t"), name, req)
+	tenant := r.PathValue("t")
+	if req.Running != nil {
+		current, err := i.store.Get(r.Context(), tenant, name)
+		if err != nil {
+			i.storeError(w, err, "instance")
+			return
+		}
+		if !*req.Running {
+			// A stop sent while the guest boots is lost and the stop then hangs, see compute.SettleTime.
+			if until := current.StartingUntil(); i.now().Before(until) {
+				wait := until.Sub(i.now()).Round(time.Second)
+				httperr.Write(w, http.StatusConflict, "starting", "the instance is still starting: stopping it now would hang, as its system does not "+
+					"listen yet. Try again in about "+wait.String())
+				return
+			}
+		} else if !current.Running {
+			req.MarkStart = true
+		}
+	}
+	in, err := i.store.Patch(r.Context(), tenant, name, req)
 	if err != nil {
 		i.storeError(w, err, "instance")
 		return
 	}
 	id, _ := auth.FromContext(r.Context())
-	i.log.Info("instance changed", "tenant", r.PathValue("t"), "instance", name, "by", id.Subject)
+	i.log.Info("instance changed", "tenant", tenant, "instance", name, "by", id.Subject)
 	writeJSON(w, http.StatusOK, i.body(in))
 }
 

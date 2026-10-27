@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -236,7 +237,11 @@ func (s *Instances) Patch(ctx context.Context, tenant, name string, req compute.
 	if req.SSHPublicKeys != nil {
 		spec["sshPublicKeys"] = *req.SSHPublicKeys
 	}
-	patch, err := json.Marshal(map[string]any{"spec": spec})
+	doc := map[string]any{"spec": spec}
+	if req.MarkStart {
+		doc["metadata"] = map[string]any{"annotations": map[string]any{StartedAtAnnotation: time.Now().UTC().Format(time.RFC3339)}}
+	}
+	patch, err := json.Marshal(doc)
 	if err != nil {
 		return compute.Instance{}, err
 	}
@@ -281,8 +286,18 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 		IPv4:          ipv4,
 		CreatedAt:     obj.GetCreationTimestamp().Time,
 		CreatedBy:     obj.GetAnnotations()[CreatedByAnnotation],
+		StartedAt:     startedAtOf(obj),
 		Status:        status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
 	}
+}
+
+// startedAtOf reads the annotation the API writes when it starts a VM. A date that cannot be read is no date.
+func startedAtOf(obj *unstructured.Unstructured) time.Time {
+	at, err := time.Parse(time.RFC3339, obj.GetAnnotations()[StartedAtAnnotation])
+	if err != nil {
+		return time.Time{}
+	}
+	return at
 }
 
 // intOf reads a number of the spec: the API server decodes whole numbers as int64, the fake clients of the tests may not.

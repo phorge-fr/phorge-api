@@ -157,7 +157,28 @@ type Instance struct {
 	IPv4      string
 	CreatedAt time.Time
 	CreatedBy string
+	// StartedAt is the last time the API asked for the VM to run (a patch of running from false to true). Zero when it never did
+	// since the creation.
+	StartedAt time.Time
 	Status    status.Object
+}
+
+// SettleTime is how long a VM that was just created or started is left alone. A stop sent while the guest is still booting
+// is an ACPI power button pressed before anyone listens: it is lost, and Incus then waits for a shutdown that never comes
+// (the provider stops gracefully, and its operations last up to an hour). The boot of the images we use takes about a minute.
+const SettleTime = 2 * time.Minute
+
+// StartingUntil is when the VM is settled: SettleTime after the later of its creation and its last start. Zero for a VM that
+// is not meant to run, which can be stopped (again) at any time.
+func (in Instance) StartingUntil() time.Time {
+	if !in.Running {
+		return time.Time{}
+	}
+	since := in.CreatedAt
+	if in.StartedAt.After(since) {
+		since = in.StartedAt
+	}
+	return since.Add(SettleTime)
 }
 
 // CreateInstance is what creating an instance asks for. What is not given is left to the defaults of the XRD.
@@ -179,6 +200,9 @@ type CreateInstance struct {
 // PatchInstance is what can change on a running instance without recreating it (Incus applies cpu, memory, disk and the
 // keys live, and start and stop keep the same VM). The image, nesting and secure boot cannot: delete and create.
 type PatchInstance struct {
+	// MarkStart records that this patch starts the VM, so that it is not stopped before it has booted. Set by the route, never
+	// by the caller.
+	MarkStart     bool      `json:"-"`
 	Running       *bool     `json:"running"`
 	CPU           *int      `json:"cpu"`
 	MemoryMiB     *int      `json:"memoryMiB"`
