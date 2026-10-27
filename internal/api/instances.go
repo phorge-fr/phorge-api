@@ -20,8 +20,9 @@ import (
 // instanceRoutes are the routes of the virtual machines of a tenant.
 type instanceRoutes struct {
 	base
-	store  compute.InstanceStore
-	images compute.ImageStore
+	store    compute.InstanceStore
+	images   compute.ImageStore
+	settings Settings
 }
 
 func (i *instanceRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -68,7 +69,7 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 	}
 	// A transition that lasts too long is a problem, whatever the object says: its Ready condition stays true while Incus waits
 	// for a guest that does not answer. A real problem reported by Incus or Crossplane is never replaced.
-	if stuck := in.StuckFor(i.now()); stuck > 0 && problems == "" {
+	if stuck := in.StuckFor(i.now(), i.settings.InstanceStuckAfter); stuck > 0 && problems == "" {
 		problems = fmt.Sprintf("the instance has been %s for %s, which is too long: the system inside may not answer the request"+
 			" (it was still booting, or it is stuck)", transition, stuck.Round(time.Minute))
 	}
@@ -174,11 +175,10 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !*req.Running {
-			// A stop sent while the guest boots is lost and the stop then hangs, see compute.SettleTime.
-			if until := current.StartingUntil(); i.now().Before(until) {
-				wait := until.Sub(i.now()).Round(time.Second)
+			// A stop sent while the guest boots is lost and the stop then hangs, see compute.Instance.StopRefusedFor.
+			if wait := current.StopRefusedFor(i.now(), i.settings.InstanceBootGrace); wait > 0 {
 				httperr.Write(w, http.StatusConflict, "starting", "the instance is still starting: stopping it now would hang, as its system does not "+
-					"listen yet. Try again in about "+wait.String())
+					"listen yet. Try again in about "+wait.Round(time.Second).String())
 				return
 			}
 		}

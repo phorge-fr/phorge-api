@@ -19,10 +19,6 @@ import (
 	"time"
 )
 
-// CacheTTL is how long the members of a group are remembered. It is also how long a user removed from a group keeps what the
-// group gave to their API keys.
-const CacheTTL = time.Minute
-
 // maxBody bounds what is read from Authentik.
 const maxBody = 4 << 20
 
@@ -43,14 +39,12 @@ type entry struct {
 	until   time.Time
 }
 
-// New returns a Directory for the Authentik at baseURL (https://auth.phorge.fr), authenticated with token. client is the
-// HTTP client, one with a timeout when nil.
-func New(baseURL, token string, client *http.Client) *Directory {
-	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
-	}
+// New returns a Directory for the Authentik at baseURL, authenticated with token. It remembers the members of a group for ttl,
+// which is also how long a user removed from it keeps what it gave to their keys. client is the HTTP client, whose timeout
+// bounds a request.
+func New(baseURL, token string, client *http.Client, ttl time.Duration) *Directory {
 	return &Directory{
-		base: strings.TrimRight(baseURL, "/"), token: token, http: client, ttl: CacheTTL, now: time.Now,
+		base: strings.TrimRight(baseURL, "/"), token: token, http: client, ttl: ttl, now: time.Now,
 		cache: map[string]entry{},
 	}
 }
@@ -92,7 +86,7 @@ type groupsAnswer struct {
 }
 
 func (d *Directory) fetch(ctx context.Context, group string) (map[string]bool, error) {
-	u := d.base + "/api/v3/core/groups/?" + url.Values{"name": {group}, "include_users": {"true"}, "page_size": {"5"}}.Encode()
+	u := d.base + "/api/v3/core/groups/?" + url.Values{"name": {group}, "include_users": {"true"}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err

@@ -42,7 +42,7 @@ func main() {
 	// The groups of the owner of an API key come from Authentik: a key does not carry them.
 	var directory authz.Directory
 	if cfg.AuthentikURL != "" {
-		directory = authentik.New(cfg.AuthentikURL, cfg.AuthentikToken, nil)
+		directory = authentik.New(cfg.AuthentikURL, cfg.AuthentikToken, &http.Client{Timeout: cfg.AuthentikTimeout}, cfg.AuthentikCacheTTL)
 	}
 
 	kubeConn := kube.NewConnection(cfg.KubeContext)
@@ -60,6 +60,10 @@ func main() {
 		Memberships: kube.NewMemberships(kubeConn),
 		Keys:        kube.NewApiKeys(kubeConn),
 		Log:         log,
+		Settings: api.Settings{
+			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
+			KeyMaxLifetime: cfg.APIKeyMaxLifetime, KeyCreation: cfg.APIKeyCreation,
+		},
 	})
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

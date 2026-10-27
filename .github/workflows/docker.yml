@@ -51,6 +51,10 @@ jobs:
                     -e OPENFGA_URL=https://openfga.example.org \
                     -e OPENFGA_API_KEY=ci-key \
                     -e OPENFGA_STORE_ID=ci-store \
+                    -e INSTANCE_BOOT_GRACE=60s \
+                    -e INSTANCE_STUCK_AFTER=10m \
+                    -e API_KEY_MAX_LIFETIME=8784h \
+                    -e API_KEY_CREATION=platform-admins \
                     phorge-api:ci
                   for _ in $(seq 1 20); do
                     curl -fsS http://127.0.0.1:8080/healthz && break

@@ -433,7 +433,7 @@ paths:
             operationId: updateInstance
             summary: Start, stop or resize a virtual machine
             description: |
-                `running` starts and stops the same VM. A VM created or started less than two minutes ago cannot be stopped yet (`409`, code `starting`): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. The CPU, the memory, the disk and the SSH keys are applied live. The image,
+                `running` starts and stops the same VM. A VM that was created or started a moment ago cannot be stopped yet (`409`, code `starting`, with the time left): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. How long the API waits is a setting of the deployment. The CPU, the memory, the disk and the SSH keys are applied live. The image,
                 nesting and secure boot cannot change: delete the instance and create another.
             security:
                 - bearerAuth: []
@@ -650,7 +650,7 @@ paths:
                 `Authorization: Bearer <key>`.
 
                 The key acts as you, within the scopes you give it: it can never do more than you can. It expires at
-                `expiresAt`, at most 366 days ahead; the API checks the date itself, to the second. It stops at once when it
+                `expiresAt`, within the maximum lifetime that the deployment sets (and required when it sets one); the API checks the date itself, to the second. It stops at once when it
                 is deleted, and when its owner is no longer a platform administrator it stops being worth one (within a minute).
 
                 For now only the platform administrators may create keys, and only a person signed in with Authentik: a key
@@ -1049,7 +1049,7 @@ components:
                         - stopping
                     description: |
                         What the VM is doing while its `state` is not the one `running` asks for. Absent when it is where it
-                        should be. A transition that lasts more than ten minutes is also reported in `problems`.
+                        should be. A transition that lasts longer than the deployment allows is also reported in `problems`.
                 transitionSince:
                     type: string
                     format: date-time
@@ -1310,7 +1310,7 @@ components:
                 expiresAt:
                     type: string
                     format: date-time
-                    description: In the future, at most 366 days ahead.
+                    description: In the future, and within the maximum lifetime of a key when the deployment sets one, which also makes it required.
         ApiKeyPatch:
             type: object
             additionalProperties: false

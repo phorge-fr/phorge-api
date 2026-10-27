@@ -127,9 +127,6 @@ type MembershipStore interface {
 // MaxDisplayName is the limit of the XRD.
 const MaxDisplayName = 100
 
-// MaxLifetime is the longest a key may live: a key is a password, and one that never expires is one nobody remembers.
-const MaxLifetime = 366 * 24 * time.Hour
-
 // ValidKeyName reports whether s is the id of a key.
 func ValidKeyName(s string) bool { return auth.ValidKeyID(s) }
 
@@ -179,32 +176,34 @@ func checkScopes(p *problems, scopes []string) {
 	}
 }
 
-func checkExpiry(p *problems, at *time.Time, now time.Time) {
+// checkExpiry checks a date of expiry: in the future and, when a maximum lifetime is configured (max > 0), within it.
+func checkExpiry(p *problems, at *time.Time, now time.Time, max time.Duration) {
 	switch {
 	case at == nil:
 	case !at.After(now):
 		p.add("expiresAt must be in the future")
-	case at.After(now.Add(MaxLifetime)):
-		p.add("expiresAt must be within %d days", int(MaxLifetime.Hours()/24))
+	case max > 0 && at.After(now.Add(max)):
+		p.add("expiresAt must be within %s", max)
 	}
 }
 
-// Validate checks the request. now is the time the expiry is compared with.
-func (r CreateKey) Validate(now time.Time) error {
+// Validate checks the request. now is the time the expiry is compared with; with a maximum lifetime (max > 0) an expiry is
+// required and capped, with none (0) it is optional.
+func (r CreateKey) Validate(now time.Time, max time.Duration) error {
 	var p problems
 	if n := utf8.RuneCountInString(r.DisplayName); n == 0 || n > MaxDisplayName {
 		p.add("displayName is required, at most %d characters", MaxDisplayName)
 	}
 	checkScopes(&p, r.Scopes)
-	if r.ExpiresAt == nil {
-		p.add("expiresAt is required: a key expires, within %d days", int(MaxLifetime.Hours()/24))
+	if r.ExpiresAt == nil && max > 0 {
+		p.add("expiresAt is required: a key expires, within %s", max)
 	}
-	checkExpiry(&p, r.ExpiresAt, now)
+	checkExpiry(&p, r.ExpiresAt, now, max)
 	return p.err()
 }
 
-// Validate checks the patch.
-func (r PatchKey) Validate(now time.Time) error {
+// Validate checks the patch, with the same maximum lifetime.
+func (r PatchKey) Validate(now time.Time, max time.Duration) error {
 	var p problems
 	if r.Scopes == nil && r.ExpiresAt == nil && r.DisplayName == nil {
 		p.add("nothing to change: give scopes, expiresAt or displayName")
@@ -217,7 +216,7 @@ func (r PatchKey) Validate(now time.Time) error {
 			p.add("displayName must be 1 to %d characters", MaxDisplayName)
 		}
 	}
-	checkExpiry(&p, r.ExpiresAt, now)
+	checkExpiry(&p, r.ExpiresAt, now, max)
 	return p.err()
 }
 

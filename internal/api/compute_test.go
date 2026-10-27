@@ -512,11 +512,11 @@ func TestAnInstanceCannotBeStoppedWhileItBoots(t *testing.T) {
 	patch := func(body string) *httptest.ResponseRecorder {
 		return e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", body)
 	}
-	// Created 30 seconds ago: the stop would be lost and hang.
-	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-30 * time.Second)})
+	// Created 30 seconds ago and without an address: its system does not listen yet, the stop would be lost and hang.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, State: "Running", CreatedAt: now.Add(-30 * time.Second)})
 	rec := patch(`{"running":false}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"starting"`) || !strings.Contains(rec.Body.String(), "1m30s") {
-		t.Errorf("a stop 30 s after the creation: %d %s, want 409 starting with the time left", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"starting"`) || !strings.Contains(rec.Body.String(), "2m30s") {
+		t.Errorf("a stop 30 s after the creation: %d %s, want 409 starting with the time left (the grace is %s)", rec.Code, rec.Body.String(), testSettings.InstanceBootGrace)
 	}
 	if len(e.instances.patched) != 0 {
 		t.Errorf("the refused stop was sent to the cluster: %+v", e.instances.patched)
@@ -525,12 +525,17 @@ func TestAnInstanceCannotBeStoppedWhileItBoots(t *testing.T) {
 	if rec := patch(`{"cpu":2}`); rec.Code != http.StatusOK {
 		t.Errorf("a resize during the boot: %d", rec.Code)
 	}
-	// Two minutes later it is settled.
-	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-compute.SettleTime)})
-	if rec := patch(`{"running":false}`); rec.Code != http.StatusOK {
-		t.Errorf("a stop two minutes after the creation: %d %s", rec.Code, rec.Body.String())
+	// The address is no signal: it is there before the system listens, so a VM that has one is still left alone.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, State: "Running", IPv4: "10.0.0.2", CreatedAt: now.Add(-5 * time.Second)})
+	if rec := patch(`{"running":false}`); rec.Code != http.StatusConflict {
+		t.Errorf("a stop of a VM that has an address, 5 s after its creation: %d, want 409", rec.Code)
 	}
-	// Stopping what is already stopped is always fine, and so is starting it.
+	// Once the grace of the deployment has passed the stop is accepted.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, State: "Running", CreatedAt: now.Add(-testSettings.InstanceBootGrace)})
+	if rec := patch(`{"running":false}`); rec.Code != http.StatusOK {
+		t.Errorf("a stop after the grace: %d %s", rec.Code, rec.Body.String())
+	}
+	// Stopping what is already stopped is always fine.
 	if rec := patch(`{"running":false}`); rec.Code != http.StatusOK {
 		t.Errorf("stopping a stopped instance: %d", rec.Code)
 	}

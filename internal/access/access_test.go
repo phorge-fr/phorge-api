@@ -63,17 +63,18 @@ func TestMembershipNameIsOnePerUser(t *testing.T) {
 }
 
 func TestCreateKey(t *testing.T) {
+	const max = 30 * 24 * time.Hour
 	later := now.Add(time.Hour)
 	good := CreateKey{DisplayName: "CI", Scopes: []string{"tenants:read", "instances:write"}, ExpiresAt: &later}
-	if err := good.Validate(now); err != nil {
+	if err := good.Validate(now, max); err != nil {
 		t.Fatal(err)
 	}
-	lastDay := now.Add(MaxLifetime)
-	if err := (CreateKey{DisplayName: "a", Scopes: []string{"tenants:write"}, ExpiresAt: &lastDay}).Validate(now); err != nil {
+	lastDay := now.Add(max)
+	if err := (CreateKey{DisplayName: "a", Scopes: []string{"tenants:write"}, ExpiresAt: &lastDay}).Validate(now, max); err != nil {
 		t.Errorf("the longest lifetime: %v", err)
 	}
 
-	past, tooFar := now.Add(-time.Second), now.Add(MaxLifetime+time.Second)
+	past, tooFar := now.Add(-time.Second), now.Add(max+time.Second)
 	for name, req := range map[string]CreateKey{
 		"no display name":             {Scopes: []string{"tenants:read"}, ExpiresAt: &later},
 		"a display name too long":     {DisplayName: strings.Repeat("a", 101), Scopes: []string{"tenants:read"}, ExpiresAt: &later},
@@ -82,27 +83,40 @@ func TestCreateKey(t *testing.T) {
 		"a scope that does not exist": {DisplayName: "ci", Scopes: []string{"tenants:delete"}, ExpiresAt: &later},
 		"the old scope name":          {DisplayName: "ci", Scopes: []string{"tenant:read"}, ExpiresAt: &later},
 		"a scope twice":               {DisplayName: "ci", Scopes: []string{"tenants:read", "tenants:read"}, ExpiresAt: &later},
-		"no expiry":                   {DisplayName: "ci", Scopes: []string{"tenants:read"}},
+		"no expiry, one is required":  {DisplayName: "ci", Scopes: []string{"tenants:read"}},
 		"an expiry that passed":       {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &past},
 		"an expiry now":               {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &now},
 		"an expiry too far":           {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &tooFar},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var invalid *InvalidError
-			if err := req.Validate(now); !errors.As(err, &invalid) {
+			if err := req.Validate(now, max); !errors.As(err, &invalid) {
 				t.Errorf("accepted: %v", err)
 			}
 		})
 	}
+
+	// With no maximum (0) a key may be permanent, and a date is only checked to be in the future.
+	if err := (CreateKey{DisplayName: "perm", Scopes: []string{"tenants:read"}}).Validate(now, 0); err != nil {
+		t.Errorf("no maximum, no expiry: %v", err)
+	}
+	far := now.Add(100 * 365 * 24 * time.Hour)
+	if err := (CreateKey{DisplayName: "perm", Scopes: []string{"tenants:read"}, ExpiresAt: &far}).Validate(now, 0); err != nil {
+		t.Errorf("no maximum, a far date: %v", err)
+	}
+	if err := (CreateKey{DisplayName: "perm", Scopes: []string{"tenants:read"}, ExpiresAt: &past}).Validate(now, 0); err == nil {
+		t.Error("no maximum, a date that passed was accepted")
+	}
 }
 
 func TestPatchKey(t *testing.T) {
-	later, past, tooFar := now.Add(time.Hour), now.Add(-time.Hour), now.Add(MaxLifetime+time.Hour)
+	const max = 30 * 24 * time.Hour
+	later, past, tooFar := now.Add(time.Hour), now.Add(-time.Hour), now.Add(max+time.Hour)
 	scopes, none, bad := []string{"images:read"}, []string{}, []string{"nope"}
 	for name, ok := range map[string]PatchKey{
 		"scopes": {Scopes: &scopes}, "a date": {ExpiresAt: &later}, "a name": {DisplayName: ptr("CI")},
 	} {
-		if err := ok.Validate(now); err != nil {
+		if err := ok.Validate(now, max); err != nil {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -110,9 +124,12 @@ func TestPatchKey(t *testing.T) {
 		"nothing": {}, "no scope left": {Scopes: &none}, "an unknown scope": {Scopes: &bad}, "a date that passed": {ExpiresAt: &past},
 		"a date too far": {ExpiresAt: &tooFar}, "an empty name": {DisplayName: ptr("")},
 	} {
-		if err := req.Validate(now); err == nil {
+		if err := req.Validate(now, max); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+	if err := (PatchKey{ExpiresAt: &tooFar}).Validate(now, 0); err != nil {
+		t.Errorf("no maximum: a far date is fine: %v", err)
 	}
 }
 

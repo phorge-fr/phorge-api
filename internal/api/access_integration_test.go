@@ -50,6 +50,7 @@ func TestMembershipsAndKeysOnTheRealCluster(t *testing.T) {
 	users := tokens{"admin": admin, "owner": user("owner"), "bob": user("bob")}
 	s := server.New(log)
 	Register(s, Deps{
+		Settings: testSettings,
 		// The keys are verified against their real objects, with their real hash: this is what a client would meet.
 		Auth:        &auth.Authenticator{Users: users, Keys: auth.NewKeyVerifier(kube.NewKeys(conn)), Log: log},
 		Authz:       authz.New(fga.New(url, storeID, key, nil), adminGroup, directory{adminGroup: {admin.Email}}),

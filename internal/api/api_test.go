@@ -33,9 +33,10 @@ func newServerWith(users, keys auth.Verifier, dir authz.Directory) *server.Serve
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := server.New(log)
 	Register(s, Deps{
-		Auth:  &auth.Authenticator{Users: users, Keys: keys, Log: log},
-		Authz: authz.New(nil, "phorge-platform-admins", dir), // nothing here asks OpenFGA
-		Log:   log,
+		Settings: testSettings,
+		Auth:     &auth.Authenticator{Users: users, Keys: keys, Log: log},
+		Authz:    authz.New(nil, "phorge-platform-admins", dir), // nothing here asks OpenFGA
+		Log:      log,
 	})
 	return s
 }
