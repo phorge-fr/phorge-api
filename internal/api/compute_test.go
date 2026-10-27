@@ -559,3 +559,34 @@ func TestAStartIsRememberedAndTheStopThatFollowsWaits(t *testing.T) {
 		t.Errorf("a stop 10 s after a start: %d, want 409", rec.Code)
 	}
 }
+
+func TestAnInstanceShowsWhatItIsDoing(t *testing.T) {
+	e := newEnv(t)
+	get := func(in compute.Instance) instanceBody {
+		in.Name, in.Image = "web", "debian"
+		e.instances.put("demo", in)
+		var got instanceBody
+		mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/instances/web", "user", ""), &got)
+		return got
+	}
+	if got := get(compute.Instance{Running: true, State: "Running"}); got.Transition != "" || got.TransitionSince != nil || got.Problems != "" {
+		t.Errorf("a VM where it should be: %+v", got)
+	}
+	got := get(compute.Instance{Running: false, State: "Running", OperationSince: now.Add(-30 * time.Second)})
+	if got.Transition != "stopping" || got.TransitionSince == nil || !got.TransitionSince.Equal(now.Add(-30*time.Second)) || got.Problems != "" {
+		t.Errorf("a stop in progress: %+v", got)
+	}
+	if got := get(compute.Instance{Running: true, State: "Stopped"}); got.Transition != "starting" || got.TransitionSince != nil {
+		t.Errorf("a start whose beginning is not known: %+v", got)
+	}
+	// Past ten minutes it is a problem, in words.
+	got = get(compute.Instance{Running: false, State: "Running", OperationSince: now.Add(-12 * time.Minute)})
+	if got.Transition != "stopping" || !strings.Contains(got.Problems, "stopping for 12m0s") {
+		t.Errorf("a stop stuck for 12 minutes: %+v", got)
+	}
+	// What Incus or Crossplane reports is never replaced.
+	got = get(compute.Instance{Running: false, State: "Running", OperationSince: now.Add(-12 * time.Minute), Status: status.Object{Problems: "Instance is busy"}})
+	if got.Problems != "Instance is busy" {
+		t.Errorf("a reported problem was replaced: %q", got.Problems)
+	}
+}

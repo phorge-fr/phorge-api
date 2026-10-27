@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -33,21 +34,24 @@ func (i *instanceRoutes) register(s *server.Server, authn func(http.Handler) htt
 }
 
 type instanceBody struct {
-	Name          string       `json:"name"`
-	Image         string       `json:"image"`
-	CPU           int          `json:"cpu"`
-	MemoryMiB     int          `json:"memoryMiB"`
-	DiskGiB       int          `json:"diskGiB"`
-	Running       bool         `json:"running"`
-	Nesting       bool         `json:"nesting"`
-	SecureBoot    bool         `json:"secureBoot"`
-	SSHPublicKeys []string     `json:"sshPublicKeys"`
-	State         string       `json:"state,omitempty"`
-	IPv4          string       `json:"ipv4,omitempty"`
-	Phase         status.Phase `json:"phase"`
-	Problems      string       `json:"problems,omitempty"`
-	CreatedAt     time.Time    `json:"createdAt"`
-	CreatedBy     string       `json:"createdBy,omitempty"`
+	Name          string   `json:"name"`
+	Image         string   `json:"image"`
+	CPU           int      `json:"cpu"`
+	MemoryMiB     int      `json:"memoryMiB"`
+	DiskGiB       int      `json:"diskGiB"`
+	Running       bool     `json:"running"`
+	Nesting       bool     `json:"nesting"`
+	SecureBoot    bool     `json:"secureBoot"`
+	SSHPublicKeys []string `json:"sshPublicKeys"`
+	State         string   `json:"state,omitempty"`
+	// Transition is what the VM is doing while its state is not the one that was asked for: "starting" or "stopping".
+	Transition      string       `json:"transition,omitempty"`
+	TransitionSince *time.Time   `json:"transitionSince,omitempty"`
+	IPv4            string       `json:"ipv4,omitempty"`
+	Phase           status.Phase `json:"phase"`
+	Problems        string       `json:"problems,omitempty"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	CreatedBy       string       `json:"createdBy,omitempty"`
 }
 
 func (i *instanceRoutes) body(in compute.Instance) instanceBody {
@@ -55,10 +59,23 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 	if keys == nil {
 		keys = []string{}
 	}
+	problems := in.Status.Problems
+	transition := in.Transition()
+	var since *time.Time
+	if transition != "" && !in.OperationSince.IsZero() {
+		since = &in.OperationSince
+	}
+	// A transition that lasts too long is a problem, whatever the object says: its Ready condition stays true while Incus waits
+	// for a guest that does not answer. A real problem reported by Incus or Crossplane is never replaced.
+	if stuck := in.StuckFor(i.now()); stuck > 0 && problems == "" {
+		problems = fmt.Sprintf("the instance has been %s for %s, which is too long: the system inside may not answer the request"+
+			" (it was still booting, or it is stuck)", transition, stuck.Round(time.Minute))
+	}
 	return instanceBody{
 		Name: in.Name, Image: in.Image, CPU: in.CPU, MemoryMiB: in.MemoryMiB, DiskGiB: in.DiskGiB, Running: in.Running,
 		Nesting: in.Nesting, SecureBoot: in.SecureBoot, SSHPublicKeys: keys, State: in.State, IPv4: in.IPv4,
-		Phase: in.Status.At(i.now()), Problems: in.Status.Problems, CreatedAt: in.CreatedAt, CreatedBy: in.CreatedBy,
+		Transition: transition, TransitionSince: since,
+		Phase: in.Status.At(i.now()), Problems: problems, CreatedAt: in.CreatedAt, CreatedBy: in.CreatedBy,
 	}
 }
 

@@ -203,3 +203,21 @@ func TestAStartIsRecordedOnTheObject(t *testing.T) {
 		t.Errorf("an unmarked start changed the date: %v -> %v, %v", prev, got.StartedAt, err)
 	}
 }
+
+func TestTheStartOfAnOperationIsRead(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "web"},
+		"spec":     map[string]any{"running": false},
+		"status":   map[string]any{"state": "Running", "operationSince": "2026-10-27T00:00:53Z"},
+	}}
+	in := instanceOf(obj)
+	if !in.OperationSince.Equal(time.Date(2026, 10, 27, 0, 0, 53, 0, time.UTC)) || in.Transition() != "stopping" {
+		t.Errorf("%+v", in)
+	}
+	for _, bad := range []any{"", "tomorrow", int64(3), nil} {
+		obj.Object["status"] = map[string]any{"operationSince": bad}
+		if got := instanceOf(obj).OperationSince; !got.IsZero() {
+			t.Errorf("%v was read as %v: a date that cannot be read is no date", bad, got)
+		}
+	}
+}
