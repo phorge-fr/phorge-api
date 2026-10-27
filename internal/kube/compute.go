@@ -238,8 +238,8 @@ func (s *Instances) Patch(ctx context.Context, tenant, name string, req compute.
 		spec["sshPublicKeys"] = *req.SSHPublicKeys
 	}
 	doc := map[string]any{"spec": spec}
-	if req.MarkStart {
-		doc["metadata"] = map[string]any{"annotations": map[string]any{StartedAtAnnotation: time.Now().UTC().Format(time.RFC3339)}}
+	if req.MarkChange {
+		doc["metadata"] = map[string]any{"annotations": map[string]any{RunningChangedAtAnnotation: time.Now().UTC().Format(time.RFC3339)}}
 	}
 	patch, err := json.Marshal(doc)
 	if err != nil {
@@ -273,38 +273,27 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 
 	ready, since := readyOf(obj)
 	return compute.Instance{
-		Name:           obj.GetName(),
-		Image:          image,
-		CPU:            intOf(obj, "cpu"),
-		MemoryMiB:      intOf(obj, "memoryMiB"),
-		DiskGiB:        intOf(obj, "diskGiB"),
-		Running:        running,
-		Nesting:        nesting,
-		SecureBoot:     secureBoot,
-		SSHPublicKeys:  keys,
-		State:          state,
-		IPv4:           ipv4,
-		CreatedAt:      obj.GetCreationTimestamp().Time,
-		CreatedBy:      obj.GetAnnotations()[CreatedByAnnotation],
-		StartedAt:      startedAtOf(obj),
-		OperationSince: timeOf(obj, "status", "operationSince"),
-		Status:         status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Name:             obj.GetName(),
+		Image:            image,
+		CPU:              intOf(obj, "cpu"),
+		MemoryMiB:        intOf(obj, "memoryMiB"),
+		DiskGiB:          intOf(obj, "diskGiB"),
+		Running:          running,
+		Nesting:          nesting,
+		SecureBoot:       secureBoot,
+		SSHPublicKeys:    keys,
+		State:            state,
+		IPv4:             ipv4,
+		CreatedAt:        obj.GetCreationTimestamp().Time,
+		CreatedBy:        obj.GetAnnotations()[CreatedByAnnotation],
+		RunningChangedAt: timeOfAnnotation(obj, RunningChangedAtAnnotation),
+		Status:           status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
 	}
 }
 
-// startedAtOf reads the annotation the API writes when it starts a VM. A date that cannot be read is no date.
-func startedAtOf(obj *unstructured.Unstructured) time.Time {
-	at, err := time.Parse(time.RFC3339, obj.GetAnnotations()[StartedAtAnnotation])
-	if err != nil {
-		return time.Time{}
-	}
-	return at
-}
-
-// timeOf reads a date of the object, zero when it is absent or cannot be read.
-func timeOf(obj *unstructured.Unstructured, fields ...string) time.Time {
-	v, _, _ := unstructured.NestedString(obj.Object, fields...)
-	at, err := time.Parse(time.RFC3339, v)
+// timeOfAnnotation reads a date written in an annotation, zero when it is absent or cannot be read.
+func timeOfAnnotation(obj *unstructured.Unstructured, key string) time.Time {
+	at, err := time.Parse(time.RFC3339, obj.GetAnnotations()[key])
 	if err != nil {
 		return time.Time{}
 	}

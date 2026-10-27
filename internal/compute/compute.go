@@ -157,13 +157,11 @@ type Instance struct {
 	IPv4      string
 	CreatedAt time.Time
 	CreatedBy string
-	// StartedAt is the last time the API asked for the VM to run (a patch of running from false to true). Zero when it never did
-	// since the creation.
-	StartedAt time.Time
-	// OperationSince is when the operation that is changing the VM began (status.operationSince, from the Incus provider),
-	// zero when none is running or when it is not known.
-	OperationSince time.Time
-	Status         status.Object
+	// RunningChangedAt is the last time the API changed running, in either direction (the annotation it writes with the patch).
+	// Zero when it never did since the creation: the time of the request is the one thing Incus and Crossplane cannot tell, they
+	// report a state, not when it was asked for.
+	RunningChangedAt time.Time
+	Status           status.Object
 }
 
 // The two transitions of a VM: what it is doing to reach the state that was asked for.
@@ -189,13 +187,20 @@ func (in Instance) Transition() string {
 	return ""
 }
 
-// StuckFor returns how long the current transition has lasted when that is longer than StuckAfter, and zero otherwise (also
-// when the start of the operation is not known).
+// Since is when the VM was last asked to be what it is meant to be: the later of its creation and the last change of running.
+func (in Instance) Since() time.Time {
+	if in.RunningChangedAt.After(in.CreatedAt) {
+		return in.RunningChangedAt
+	}
+	return in.CreatedAt
+}
+
+// StuckFor returns how long the current transition has lasted when that is longer than StuckAfter, and zero otherwise.
 func (in Instance) StuckFor(now time.Time) time.Duration {
-	if in.Transition() == "" || in.OperationSince.IsZero() {
+	if in.Transition() == "" || in.Since().IsZero() {
 		return 0
 	}
-	if d := now.Sub(in.OperationSince); d > StuckAfter {
+	if d := now.Sub(in.Since()); d > StuckAfter {
 		return d
 	}
 	return 0
@@ -206,17 +211,13 @@ func (in Instance) StuckFor(now time.Time) time.Duration {
 // (the provider stops gracefully, and its operations last up to an hour). The boot of the images we use takes about a minute.
 const SettleTime = 2 * time.Minute
 
-// StartingUntil is when the VM is settled: SettleTime after the later of its creation and its last start. Zero for a VM that
-// is not meant to run, which can be stopped (again) at any time.
+// StartingUntil is when the VM is settled: SettleTime after the later of its creation and the last change of running. Zero for
+// a VM that is not meant to run, which can be stopped (again) at any time.
 func (in Instance) StartingUntil() time.Time {
 	if !in.Running {
 		return time.Time{}
 	}
-	since := in.CreatedAt
-	if in.StartedAt.After(since) {
-		since = in.StartedAt
-	}
-	return since.Add(SettleTime)
+	return in.Since().Add(SettleTime)
 }
 
 // CreateInstance is what creating an instance asks for. What is not given is left to the defaults of the XRD.
@@ -238,9 +239,9 @@ type CreateInstance struct {
 // PatchInstance is what can change on a running instance without recreating it (Incus applies cpu, memory, disk and the
 // keys live, and start and stop keep the same VM). The image, nesting and secure boot cannot: delete and create.
 type PatchInstance struct {
-	// MarkStart records that this patch starts the VM, so that it is not stopped before it has booted. Set by the route, never
-	// by the caller.
-	MarkStart     bool      `json:"-"`
+	// MarkChange records that this patch changes running, with the time of the request: it is what tells a VM that is still
+	// booting from one that is stuck, and how long a transition has lasted. Set by the route, never by the caller.
+	MarkChange    bool      `json:"-"`
 	Running       *bool     `json:"running"`
 	CPU           *int      `json:"cpu"`
 	MemoryMiB     *int      `json:"memoryMiB"`

@@ -170,16 +170,16 @@ func TestPatchInstance(t *testing.T) {
 	}
 }
 
-func TestAnInstanceThatWasJustStartedIsStarting(t *testing.T) {
+func TestAnInstanceThatWasJustChangedIsStarting(t *testing.T) {
 	t0 := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	for name, tt := range map[string]struct {
 		in   Instance
 		want time.Time
 	}{
-		"just created":                               {Instance{Running: true, CreatedAt: t0}, t0.Add(SettleTime)},
-		"started after its creation":                 {Instance{Running: true, CreatedAt: t0.Add(-time.Hour), StartedAt: t0}, t0.Add(SettleTime)},
-		"a start older than its creation is ignored": {Instance{Running: true, CreatedAt: t0, StartedAt: t0.Add(-time.Hour)}, t0.Add(SettleTime)},
-		"not meant to run":                           {Instance{Running: false, CreatedAt: t0, StartedAt: t0}, time.Time{}},
+		"just created":                     {Instance{Running: true, CreatedAt: t0}, t0.Add(SettleTime)},
+		"started after its creation":       {Instance{Running: true, CreatedAt: t0.Add(-time.Hour), RunningChangedAt: t0}, t0.Add(SettleTime)},
+		"a change older than the creation": {Instance{Running: true, CreatedAt: t0, RunningChangedAt: t0.Add(-time.Hour)}, t0.Add(SettleTime)},
+		"not meant to run":                 {Instance{Running: false, CreatedAt: t0, RunningChangedAt: t0}, time.Time{}},
 	} {
 		if got := tt.in.StartingUntil(); !got.Equal(tt.want) {
 			t.Errorf("%s: %v, want %v", name, got, tt.want)
@@ -209,7 +209,7 @@ func TestTransition(t *testing.T) {
 func TestStuckFor(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	stopping := func(since time.Time) Instance {
-		return Instance{Running: false, State: "Running", OperationSince: since}
+		return Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: since}
 	}
 	if got := stopping(now.Add(-StuckAfter + time.Second)).StuckFor(now); got != 0 {
 		t.Errorf("just under the limit: %v", got)
@@ -217,10 +217,10 @@ func TestStuckFor(t *testing.T) {
 	if got := stopping(now.Add(-12 * time.Minute)).StuckFor(now); got != 12*time.Minute {
 		t.Errorf("12 minutes: %v", got)
 	}
-	if got := stopping(time.Time{}).StuckFor(now); got != 0 {
-		t.Errorf("an unknown start is never stuck: %v", got)
-	}
-	if got := (Instance{Running: true, State: "Running", OperationSince: now.Add(-time.Hour)}).StuckFor(now); got != 0 {
+	if got := (Instance{Running: true, State: "Running", CreatedAt: now.Add(-time.Hour), RunningChangedAt: now.Add(-time.Hour)}).StuckFor(now); got != 0 {
 		t.Errorf("not in transition: %v", got)
+	}
+	if got := (Instance{Running: false, State: "Running"}).StuckFor(now); got != 0 {
+		t.Errorf("a VM without any date is never stuck: %v", got)
 	}
 }

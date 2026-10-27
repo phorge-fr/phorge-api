@@ -536,25 +536,33 @@ func TestAnInstanceCannotBeStoppedWhileItBoots(t *testing.T) {
 	}
 }
 
-func TestAStartIsRememberedAndTheStopThatFollowsWaits(t *testing.T) {
+func TestAChangeOfRunningIsRememberedAndTheStopThatFollowsWaits(t *testing.T) {
 	e := newEnv(t)
+	patch := func(body string) compute.PatchInstance {
+		t.Helper()
+		if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", body); rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+		return e.instances.patched[len(e.instances.patched)-1]
+	}
 	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: false, CreatedAt: now.Add(-24 * time.Hour)})
-	if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", `{"running":true}`); rec.Code != http.StatusOK {
-		t.Fatalf("start: %d", rec.Code)
+	if !patch(`{"running":true}`).MarkChange {
+		t.Error("a start from a stopped VM must be recorded (MarkChange)")
 	}
-	if last := e.instances.patched[len(e.instances.patched)-1]; !last.MarkStart {
-		t.Error("a start from a stopped VM must be recorded (MarkStart)")
-	}
-	// Starting what already runs does not restart the clock.
-	e.instances.patched = nil
-	if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", `{"running":true}`); rec.Code != http.StatusOK {
-		t.Fatalf("start again: %d", rec.Code)
-	}
-	if last := e.instances.patched[len(e.instances.patched)-1]; last.MarkStart {
+	// Starting what already runs changes nothing and does not restart the clock.
+	if patch(`{"running":true}`).MarkChange {
 		t.Error("a start of a VM that already runs must not be recorded: it would postpone the stop for ever")
 	}
-	// The fake store does not keep StartedAt: put the state the real one would hold after the start.
-	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-24 * time.Hour), StartedAt: now.Add(-10 * time.Second)})
+	if patch(`{"cpu":2}`).MarkChange {
+		t.Error("a patch that does not touch running must not be recorded")
+	}
+	// A stop is a change too, and it is what the transition is dated from.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-24 * time.Hour)})
+	if !patch(`{"running":false}`).MarkChange {
+		t.Error("a stop of a running VM must be recorded (MarkChange)")
+	}
+	// The fake store does not keep the date: put the state the real one would hold after a start 10 s ago.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: now.Add(-10 * time.Second)})
 	if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", `{"running":false}`); rec.Code != http.StatusConflict {
 		t.Errorf("a stop 10 s after a start: %d, want 409", rec.Code)
 	}
@@ -572,20 +580,20 @@ func TestAnInstanceShowsWhatItIsDoing(t *testing.T) {
 	if got := get(compute.Instance{Running: true, State: "Running"}); got.Transition != "" || got.TransitionSince != nil || got.Problems != "" {
 		t.Errorf("a VM where it should be: %+v", got)
 	}
-	got := get(compute.Instance{Running: false, State: "Running", OperationSince: now.Add(-30 * time.Second)})
+	got := get(compute.Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: now.Add(-30 * time.Second)})
 	if got.Transition != "stopping" || got.TransitionSince == nil || !got.TransitionSince.Equal(now.Add(-30*time.Second)) || got.Problems != "" {
 		t.Errorf("a stop in progress: %+v", got)
 	}
-	if got := get(compute.Instance{Running: true, State: "Stopped"}); got.Transition != "starting" || got.TransitionSince != nil {
-		t.Errorf("a start whose beginning is not known: %+v", got)
+	if got := get(compute.Instance{Running: true, State: "Stopped", CreatedAt: now.Add(-time.Hour), RunningChangedAt: now.Add(-20 * time.Second)}); got.Transition != "starting" || got.TransitionSince == nil || !got.TransitionSince.Equal(now.Add(-20*time.Second)) {
+		t.Errorf("a start asked 20 s ago: %+v", got)
 	}
 	// Past ten minutes it is a problem, in words.
-	got = get(compute.Instance{Running: false, State: "Running", OperationSince: now.Add(-12 * time.Minute)})
+	got = get(compute.Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: now.Add(-12 * time.Minute)})
 	if got.Transition != "stopping" || !strings.Contains(got.Problems, "stopping for 12m0s") {
 		t.Errorf("a stop stuck for 12 minutes: %+v", got)
 	}
 	// What Incus or Crossplane reports is never replaced.
-	got = get(compute.Instance{Running: false, State: "Running", OperationSince: now.Add(-12 * time.Minute), Status: status.Object{Problems: "Instance is busy"}})
+	got = get(compute.Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: now.Add(-12 * time.Minute), Status: status.Object{Problems: "Instance is busy"}})
 	if got.Problems != "Instance is busy" {
 		t.Errorf("a reported problem was replaced: %q", got.Problems)
 	}
