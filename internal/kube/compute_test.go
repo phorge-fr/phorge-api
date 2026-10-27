@@ -3,6 +3,7 @@ package kube
 import (
 	"errors"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -171,5 +172,34 @@ func TestInstanceOfReadsTheStatus(t *testing.T) {
 	}
 	if bare := instanceOf(&unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": "x"}}}); bare.CPU != 0 || bare.Name != "x" {
 		t.Errorf("an object with no spec must not panic nor invent anything: %+v", bare)
+	}
+}
+
+func TestAStartIsRecordedOnTheObject(t *testing.T) {
+	client := newClient()
+	s := NewInstances(Static(client))
+	ctx := t.Context()
+	if _, err := client.Resource(instancesGVR).Namespace("t-demo").Create(ctx, &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "phorge.fr/v1alpha1", "kind": "Instance",
+		"metadata": map[string]any{"name": "web", "namespace": "t-demo"},
+		"spec":     map[string]any{"imageRef": map[string]any{"name": "debian"}, "running": false},
+	}}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	yes, no := true, false
+	got, err := s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &no})
+	if err != nil || !got.StartedAt.IsZero() {
+		t.Fatalf("a stop records no start: %+v, %v", got.StartedAt, err)
+	}
+	before := time.Now().Add(-time.Second)
+	got, err = s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &yes, MarkStart: true})
+	if err != nil || !got.Running || got.StartedAt.Before(before) || time.Since(got.StartedAt) > time.Minute {
+		t.Errorf("a start must record its time: %+v, %v", got, err)
+	}
+	// A start that is not marked (the VM already ran) leaves the date as it was.
+	prev := got.StartedAt
+	got, err = s.Patch(ctx, "demo", "web", compute.PatchInstance{Running: &yes})
+	if err != nil || !got.StartedAt.Equal(prev) {
+		t.Errorf("an unmarked start changed the date: %v -> %v, %v", prev, got.StartedAt, err)
 	}
 }

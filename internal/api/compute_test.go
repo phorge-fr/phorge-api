@@ -506,3 +506,56 @@ func TestBadNamesInThePathAreNotFound(t *testing.T) {
 		}
 	}
 }
+
+func TestAnInstanceCannotBeStoppedWhileItBoots(t *testing.T) {
+	e := newEnv(t)
+	patch := func(body string) *httptest.ResponseRecorder {
+		return e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", body)
+	}
+	// Created 30 seconds ago: the stop would be lost and hang.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-30 * time.Second)})
+	rec := patch(`{"running":false}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"starting"`) || !strings.Contains(rec.Body.String(), "1m30s") {
+		t.Errorf("a stop 30 s after the creation: %d %s, want 409 starting with the time left", rec.Code, rec.Body.String())
+	}
+	if len(e.instances.patched) != 0 {
+		t.Errorf("the refused stop was sent to the cluster: %+v", e.instances.patched)
+	}
+	// A resize is not a stop.
+	if rec := patch(`{"cpu":2}`); rec.Code != http.StatusOK {
+		t.Errorf("a resize during the boot: %d", rec.Code)
+	}
+	// Two minutes later it is settled.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-compute.SettleTime)})
+	if rec := patch(`{"running":false}`); rec.Code != http.StatusOK {
+		t.Errorf("a stop two minutes after the creation: %d %s", rec.Code, rec.Body.String())
+	}
+	// Stopping what is already stopped is always fine, and so is starting it.
+	if rec := patch(`{"running":false}`); rec.Code != http.StatusOK {
+		t.Errorf("stopping a stopped instance: %d", rec.Code)
+	}
+}
+
+func TestAStartIsRememberedAndTheStopThatFollowsWaits(t *testing.T) {
+	e := newEnv(t)
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: false, CreatedAt: now.Add(-24 * time.Hour)})
+	if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", `{"running":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("start: %d", rec.Code)
+	}
+	if last := e.instances.patched[len(e.instances.patched)-1]; !last.MarkStart {
+		t.Error("a start from a stopped VM must be recorded (MarkStart)")
+	}
+	// Starting what already runs does not restart the clock.
+	e.instances.patched = nil
+	if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", `{"running":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("start again: %d", rec.Code)
+	}
+	if last := e.instances.patched[len(e.instances.patched)-1]; last.MarkStart {
+		t.Error("a start of a VM that already runs must not be recorded: it would postpone the stop for ever")
+	}
+	// The fake store does not keep StartedAt: put the state the real one would hold after the start.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, CreatedAt: now.Add(-24 * time.Hour), StartedAt: now.Add(-10 * time.Second)})
+	if rec := e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", `{"running":false}`); rec.Code != http.StatusConflict {
+		t.Errorf("a stop 10 s after a start: %d, want 409", rec.Code)
+	}
+}

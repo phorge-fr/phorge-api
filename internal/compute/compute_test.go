@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 const goodKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
@@ -165,6 +166,23 @@ func TestPatchInstance(t *testing.T) {
 	} {
 		if err := req.Validate(); err == nil {
 			t.Errorf("%s was accepted", name)
+		}
+	}
+}
+
+func TestAnInstanceThatWasJustStartedIsStarting(t *testing.T) {
+	t0 := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	for name, tt := range map[string]struct {
+		in   Instance
+		want time.Time
+	}{
+		"just created":                               {Instance{Running: true, CreatedAt: t0}, t0.Add(SettleTime)},
+		"started after its creation":                 {Instance{Running: true, CreatedAt: t0.Add(-time.Hour), StartedAt: t0}, t0.Add(SettleTime)},
+		"a start older than its creation is ignored": {Instance{Running: true, CreatedAt: t0, StartedAt: t0.Add(-time.Hour)}, t0.Add(SettleTime)},
+		"not meant to run":                           {Instance{Running: false, CreatedAt: t0, StartedAt: t0}, time.Time{}},
+	} {
+		if got := tt.in.StartingUntil(); !got.Equal(tt.want) {
+			t.Errorf("%s: %v, want %v", name, got, tt.want)
 		}
 	}
 }

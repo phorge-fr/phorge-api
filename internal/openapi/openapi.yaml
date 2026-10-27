@@ -433,7 +433,7 @@ paths:
             operationId: updateInstance
             summary: Start, stop or resize a virtual machine
             description: |
-                `running` starts and stops the same VM. The CPU, the memory, the disk and the SSH keys are applied live. The image,
+                `running` starts and stops the same VM. A VM created or started less than two minutes ago cannot be stopped yet (`409`, code `starting`): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. The CPU, the memory, the disk and the SSH keys are applied live. The image,
                 nesting and secure boot cannot change: delete the instance and create another.
             security:
                 - bearerAuth: []
@@ -459,6 +459,8 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "404":
                     $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
                 "503":
