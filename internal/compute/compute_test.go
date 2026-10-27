@@ -170,20 +170,31 @@ func TestPatchInstance(t *testing.T) {
 	}
 }
 
-func TestAnInstanceThatWasJustChangedIsStarting(t *testing.T) {
+func TestAStopIsRefusedDuringTheGraceAfterTheRequestThatMadeTheVMRun(t *testing.T) {
 	t0 := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	for name, tt := range map[string]struct {
-		in   Instance
-		want time.Time
-	}{
-		"just created":                     {Instance{Running: true, CreatedAt: t0}, t0.Add(SettleTime)},
-		"started after its creation":       {Instance{Running: true, CreatedAt: t0.Add(-time.Hour), RunningChangedAt: t0}, t0.Add(SettleTime)},
-		"a change older than the creation": {Instance{Running: true, CreatedAt: t0, RunningChangedAt: t0.Add(-time.Hour)}, t0.Add(SettleTime)},
-		"not meant to run":                 {Instance{Running: false, CreatedAt: t0, RunningChangedAt: t0}, time.Time{}},
-	} {
-		if got := tt.in.StartingUntil(); !got.Equal(tt.want) {
-			t.Errorf("%s: %v, want %v", name, got, tt.want)
-		}
+	const grace = 3 * time.Minute
+	started := Instance{Running: true, State: "Running", CreatedAt: t0.Add(-time.Hour), RunningChangedAt: t0}
+	if got := started.StopRefusedFor(t0.Add(30*time.Second), grace); got != 2*time.Minute+30*time.Second {
+		t.Errorf("30 s after the start: %v, want the 2m30s that are left", got)
+	}
+	if got := started.StopRefusedFor(t0.Add(grace), grace); got != 0 {
+		t.Errorf("at the end of the grace: %v", got)
+	}
+	// The address does not matter: it is there before the system listens.
+	withAddress := started
+	withAddress.IPv4 = "10.0.0.2"
+	if got := withAddress.StopRefusedFor(t0.Add(time.Second), grace); got == 0 {
+		t.Error("a VM with an address one second after its start was allowed to stop")
+	}
+	// A VM created running and never changed since is counted from its creation.
+	if got := (Instance{Running: true, CreatedAt: t0}).StopRefusedFor(t0.Add(time.Minute), grace); got != 2*time.Minute {
+		t.Errorf("counted from the creation: %v", got)
+	}
+	if got := (Instance{Running: false, State: "Running", CreatedAt: t0}).StopRefusedFor(t0, grace); got != 0 {
+		t.Errorf("stopping what is not meant to run is always accepted: %v", got)
+	}
+	if got := started.StopRefusedFor(t0, 0); got != 0 {
+		t.Errorf("a grace of 0 never refuses: %v", got)
 	}
 }
 
@@ -208,19 +219,23 @@ func TestTransition(t *testing.T) {
 
 func TestStuckFor(t *testing.T) {
 	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	const after = 10 * time.Minute
 	stopping := func(since time.Time) Instance {
 		return Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: since}
 	}
-	if got := stopping(now.Add(-StuckAfter + time.Second)).StuckFor(now); got != 0 {
+	if got := stopping(now.Add(-after+time.Second)).StuckFor(now, after); got != 0 {
 		t.Errorf("just under the limit: %v", got)
 	}
-	if got := stopping(now.Add(-12 * time.Minute)).StuckFor(now); got != 12*time.Minute {
+	if got := stopping(now.Add(-12*time.Minute)).StuckFor(now, after); got != 12*time.Minute {
 		t.Errorf("12 minutes: %v", got)
 	}
-	if got := (Instance{Running: true, State: "Running", CreatedAt: now.Add(-time.Hour), RunningChangedAt: now.Add(-time.Hour)}).StuckFor(now); got != 0 {
+	if got := stopping(now.Add(-12*time.Minute)).StuckFor(now, time.Hour); got != 0 {
+		t.Errorf("the limit is the one given: %v", got)
+	}
+	if got := (Instance{Running: true, State: "Running", CreatedAt: now.Add(-time.Hour), RunningChangedAt: now.Add(-time.Hour)}).StuckFor(now, after); got != 0 {
 		t.Errorf("not in transition: %v", got)
 	}
-	if got := (Instance{Running: false, State: "Running"}).StuckFor(now); got != 0 {
+	if got := (Instance{Running: false, State: "Running"}).StuckFor(now, after); got != 0 {
 		t.Errorf("a VM without any date is never stuck: %v", got)
 	}
 }

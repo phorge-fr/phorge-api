@@ -16,6 +16,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/compute"
+	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
@@ -130,6 +131,14 @@ func (t tokens) Verify(_ context.Context, token string) (auth.Identity, error) {
 
 const adminGroup = "phorge-platform-admins"
 
+// testSettings are the values these tests run with, as a deployment would write them: the API itself has none.
+var testSettings = Settings{
+	InstanceBootGrace:  3 * time.Minute,
+	InstanceStuckAfter: 10 * time.Minute,
+	KeyMaxLifetime:     366 * 24 * time.Hour,
+	KeyCreation:        config.KeyCreationPlatformAdmins,
+}
+
 type env struct {
 	srv         *server.Server
 	store       *store
@@ -140,7 +149,10 @@ type env struct {
 	keys        *keyStore
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, testSettings) }
+
+// newEnvWith is newEnv with the settings a deployment would give.
+func newEnvWith(t *testing.T, settings Settings) *env {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st := &store{tenants: map[string]tenants.Tenant{
@@ -219,6 +231,7 @@ func newEnv(t *testing.T) *env {
 	apikeys := &keyStore{data: map[string]access.ApiKey{}, hashes: map[string]string{}}
 	s := server.New(log)
 	Register(s, Deps{
+		Settings:    settings,
 		Auth:        &auth.Authenticator{Users: users, Keys: keys, Log: log},
 		Authz:       authz.New(fga, adminGroup, directory{adminGroup: {"admin@example.org"}, "staff": {"gone@example.org"}}),
 		Tenants:     st,

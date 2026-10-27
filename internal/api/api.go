@@ -16,6 +16,19 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
+// Settings are the values that decide how the API behaves. They come from the environment (internal/config): none has a value
+// here.
+type Settings struct {
+	// InstanceBootGrace is how long after a creation or a start a stop is refused, 0 never refuses.
+	InstanceBootGrace time.Duration
+	// InstanceStuckAfter is how long a transition lasts before it is reported in problems.
+	InstanceStuckAfter time.Duration
+	// KeyMaxLifetime caps the life of an API key and makes its expiry required, 0 leaves both free.
+	KeyMaxLifetime time.Duration
+	// KeyCreation is who creates and changes API keys: config.KeyCreationPlatformAdmins or config.KeyCreationUsers.
+	KeyCreation string
+}
+
 // Deps is what the routes need.
 type Deps struct {
 	Auth    *auth.Authenticator
@@ -27,6 +40,7 @@ type Deps struct {
 	Memberships access.MembershipStore
 	Keys        access.KeyStore
 	Log         *slog.Logger
+	Settings    Settings
 	// Now is the clock, time.Now when nil.
 	Now func() time.Time
 }
@@ -43,9 +57,9 @@ func Register(s *server.Server, d Deps) {
 	b := base{authz: d.Authz, tenants: d.Tenants, log: d.Log, now: now}
 	(&tenantRoutes{base: b, store: d.Tenants}).register(s, d.Auth.Middleware)
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances}).register(s, d.Auth.Middleware)
-	(&instanceRoutes{base: b, store: d.Instances, images: d.Images}).register(s, d.Auth.Middleware)
+	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, settings: d.Settings}).register(s, d.Auth.Middleware)
 	(&membershipRoutes{base: b, store: d.Memberships}).register(s, d.Auth.Middleware)
-	(&keyRoutes{base: b, store: d.Keys}).register(s, d.Auth.Middleware)
+	(&keyRoutes{base: b, store: d.Keys, settings: d.Settings}).register(s, d.Auth.Middleware)
 
 	s.Handle("GET /openapi.yaml", openapi.SpecHandler())
 	s.Handle("GET /docs", openapi.UIHandler())

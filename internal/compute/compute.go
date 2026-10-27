@@ -170,10 +170,6 @@ const (
 	Stopping = "stopping"
 )
 
-// StuckAfter is how long a transition may last before the API says it is stuck. Starting or stopping a VM takes seconds to a
-// minute or two: ten minutes is something wrong.
-const StuckAfter = 10 * time.Minute
-
 // Transition says what the VM is doing when its state is not the one that was asked for: "starting" when it should run and
 // Incus does not report it running, "stopping" in the opposite case, empty otherwise. Only the two states a VM rests in are
 // compared: Frozen, Error or an empty state (the VM does not exist yet) are shown as they are, they are not a transition.
@@ -195,29 +191,31 @@ func (in Instance) Since() time.Time {
 	return in.CreatedAt
 }
 
-// StuckFor returns how long the current transition has lasted when that is longer than StuckAfter, and zero otherwise.
-func (in Instance) StuckFor(now time.Time) time.Duration {
+// StuckFor returns how long the current transition has lasted when that is longer than after, and zero otherwise.
+func (in Instance) StuckFor(now time.Time, after time.Duration) time.Duration {
 	if in.Transition() == "" || in.Since().IsZero() {
 		return 0
 	}
-	if d := now.Sub(in.Since()); d > StuckAfter {
+	if d := now.Sub(in.Since()); d > after {
 		return d
 	}
 	return 0
 }
 
-// SettleTime is how long a VM that was just created or started is left alone. A stop sent while the guest is still booting
-// is an ACPI power button pressed before anyone listens: it is lost, and Incus then waits for a shutdown that never comes
-// (the provider stops gracefully, and its operations last up to an hour). The boot of the images we use takes about a minute.
-const SettleTime = 2 * time.Minute
-
-// StartingUntil is when the VM is settled: SettleTime after the later of its creation and the last change of running. Zero for
-// a VM that is not meant to run, which can be stopped (again) at any time.
-func (in Instance) StartingUntil() time.Time {
+// StopRefusedFor returns how much longer a stop is refused, zero when it is accepted. A VM that was just created or started is
+// left alone for the grace period: a stop sent while the guest boots is an ACPI power button pressed before anything listens
+// (systemd-logind starts a few seconds after the kernel), it is lost, and Incus then waits for a shutdown that never comes (the
+// provider stops gracefully, and its operations last up to an hour). Nothing the provider reports says that the system inside is
+// up: the address of the VM and its interfaces are there before the agent and before logind (measured), so the grace is a time,
+// set by the deployment (INSTANCE_BOOT_GRACE), counted from the request that made the VM run.
+func (in Instance) StopRefusedFor(now time.Time, grace time.Duration) time.Duration {
 	if !in.Running {
-		return time.Time{}
+		return 0
 	}
-	return in.Since().Add(SettleTime)
+	if left := in.Since().Add(grace).Sub(now); left > 0 {
+		return left
+	}
+	return 0
 }
 
 // CreateInstance is what creating an instance asks for. What is not given is left to the defaults of the XRD.

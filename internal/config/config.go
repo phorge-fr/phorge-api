@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // Config is the whole configuration. It never contains anything that is not meant to be logged except OpenFGAAPIKey and
@@ -37,7 +38,30 @@ type Config struct {
 	// and nothing else. Without them, a key is never a platform administrator's.
 	AuthentikURL   string
 	AuthentikToken string
+	// AuthentikCacheTTL is how long the members of the group are remembered, which is also how long a user removed from it keeps
+	// what it gave to their API keys. AuthentikTimeout bounds one request to Authentik. Required with AuthentikURL.
+	AuthentikCacheTTL time.Duration
+	AuthentikTimeout  time.Duration
+
+	// InstanceBootGrace is how long after a creation or a start the API refuses to stop a VM: a stop sent while the guest boots
+	// is lost and then hangs. Nothing reported by Incus or Crossplane says when the system inside listens, so it is a time.
+	InstanceBootGrace time.Duration
+	// InstanceStuckAfter is how long a start or a stop may last before the API reports it in problems.
+	InstanceStuckAfter time.Duration
+
+	// APIKeyMaxLifetime is the longest an API key may live. When it is positive an expiry is required and capped to it; 0 lets a
+	// key be permanent and its expiry optional.
+	APIKeyMaxLifetime time.Duration
+	// APIKeyCreation says who may create and change API keys: KeyCreationPlatformAdmins or KeyCreationUsers (any person signed in
+	// with Authentik: a key never exceeds its owner, so this only decides who gets one). Anyone lists and revokes their own.
+	APIKeyCreation string
 }
+
+// The values of API_KEY_CREATION.
+const (
+	KeyCreationPlatformAdmins = "platform-admins"
+	KeyCreationUsers          = "users"
+)
 
 // Environment variables.
 const (
@@ -52,6 +76,13 @@ const (
 	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
 	EnvAuthentikURL       = "AUTHENTIK_URL"
 	EnvAuthentikToken     = "AUTHENTIK_TOKEN" //nolint:gosec // the name of a variable, not a credential
+
+	EnvAuthentikCacheTTL  = "AUTHENTIK_CACHE_TTL"
+	EnvAuthentikTimeout   = "AUTHENTIK_TIMEOUT"
+	EnvInstanceBootGrace  = "INSTANCE_BOOT_GRACE"
+	EnvInstanceStuckAfter = "INSTANCE_STUCK_AFTER"
+	EnvAPIKeyMaxLifetime  = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
+	EnvAPIKeyCreation     = "API_KEY_CREATION"     //nolint:gosec // the name of a variable, not a credential
 )
 
 const defaultListenAddr = ":8080"
@@ -104,6 +135,37 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			}
 		}
 	}
+	// Nothing below has a default: a value that decides how the API behaves is written in the deployment, where it is seen.
+	duration := func(key string, min time.Duration, dst *time.Duration) {
+		raw := get(key)
+		if raw == "" {
+			errs = append(errs, fmt.Errorf("%s is required (a duration such as 5m)", key))
+			return
+		}
+		d, err := time.ParseDuration(raw)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %w", key, err))
+		case d < min:
+			errs = append(errs, fmt.Errorf("%s must be at least %s, not %s", key, min, raw))
+		default:
+			*dst = d
+		}
+	}
+	duration(EnvInstanceBootGrace, 0, &c.InstanceBootGrace)
+	duration(EnvInstanceStuckAfter, time.Second, &c.InstanceStuckAfter)
+	duration(EnvAPIKeyMaxLifetime, 0, &c.APIKeyMaxLifetime)
+	if c.AuthentikURL != "" {
+		duration(EnvAuthentikCacheTTL, time.Second, &c.AuthentikCacheTTL)
+		duration(EnvAuthentikTimeout, time.Second, &c.AuthentikTimeout)
+	}
+	switch c.APIKeyCreation = get(EnvAPIKeyCreation); c.APIKeyCreation {
+	case KeyCreationPlatformAdmins, KeyCreationUsers:
+	case "":
+		errs = append(errs, fmt.Errorf("%s is required: %s or %s", EnvAPIKeyCreation, KeyCreationPlatformAdmins, KeyCreationUsers))
+	default:
+		errs = append(errs, fmt.Errorf("%s must be %s or %s, not %q", EnvAPIKeyCreation, KeyCreationPlatformAdmins, KeyCreationUsers, c.APIKeyCreation))
+	}
 	if (c.AuthentikURL == "") != (c.AuthentikToken == "") {
 		errs = append(errs, fmt.Errorf("%s and %s go together", EnvAuthentikURL, EnvAuthentikToken))
 	}
@@ -125,6 +187,12 @@ func (c Config) LogValue() slog.Value {
 		slog.String("kube_context", c.KubeContext),
 		slog.String("platform_admin_group", c.PlatformAdminGroup),
 		slog.String("authentik_url", c.AuthentikURL),
+		slog.Duration("authentik_cache_ttl", c.AuthentikCacheTTL),
+		slog.Duration("authentik_timeout", c.AuthentikTimeout),
+		slog.Duration("instance_boot_grace", c.InstanceBootGrace),
+		slog.Duration("instance_stuck_after", c.InstanceStuckAfter),
+		slog.Duration("api_key_max_lifetime", c.APIKeyMaxLifetime),
+		slog.String("api_key_creation", c.APIKeyCreation),
 	)
 }
 

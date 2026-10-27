@@ -8,6 +8,7 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
@@ -19,7 +20,8 @@ import (
 // your own stays open to anyone, so that a key can always be revoked.
 type keyRoutes struct {
 	base
-	store access.KeyStore
+	store    access.KeyStore
+	settings Settings
 }
 
 func (k *keyRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -44,9 +46,14 @@ func (k *keyRoutes) person(next http.Handler) http.Handler {
 	})
 }
 
-// admin lets through the platform administrators.
+// admin lets through who may create and change keys: the platform administrators, or any person when the deployment says so
+// (API_KEY_CREATION). A key never exceeds its owner, so opening this only decides who gets one.
 func (k *keyRoutes) admin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if k.settings.KeyCreation == config.KeyCreationUsers {
+			next.ServeHTTP(w, r)
+			return
+		}
 		id, _ := auth.FromContext(r.Context())
 		ok, err := k.authz.PlatformAdmin(r.Context(), id)
 		if err != nil {
@@ -55,7 +62,7 @@ func (k *keyRoutes) admin(next http.Handler) http.Handler {
 		}
 		if !ok {
 			k.log.Info("authorization refused", "subject", id.Subject, "route", r.Pattern)
-			httperr.Write(w, http.StatusForbidden, "forbidden", "for now only the platform administrators may create and change API keys")
+			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may create and change API keys on this platform")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -137,7 +144,7 @@ func (k *keyRoutes) create(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := req.Validate(k.now()); err != nil {
+	if err := req.Validate(k.now(), k.settings.KeyMaxLifetime); err != nil {
 		k.storeError(w, err, "API key")
 		return
 	}
@@ -167,7 +174,7 @@ func (k *keyRoutes) patch(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := req.Validate(k.now()); err != nil {
+	if err := req.Validate(k.now(), k.settings.KeyMaxLifetime); err != nil {
 		k.storeError(w, err, "API key")
 		return
 	}

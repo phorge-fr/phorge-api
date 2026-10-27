@@ -26,7 +26,7 @@ func serve(t *testing.T, status int, body string) (*Directory, *atomic.Int32, *h
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
-	return New(srv.URL+"/", "s3cret", srv.Client()), &calls, &last
+	return New(srv.URL+"/", "s3cret", srv.Client(), time.Minute), &calls, &last
 }
 
 const group = "phorge-platform-admins"
@@ -70,7 +70,7 @@ func TestTheAnswerIsRememberedForAMinute(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Errorf("%d requests, want 1: the answer is kept", calls.Load())
 	}
-	now = now.Add(CacheTTL + time.Second)
+	now = now.Add(d.ttl + time.Second)
 	if _, err := d.Member(t.Context(), "alice@example.org", group); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestAnErrorIsNotRemembered(t *testing.T) {
 		_, _ = w.Write([]byte(`{"results":[` + admins + `]}`))
 	}))
 	defer srv.Close()
-	d := New(srv.URL, "t", srv.Client())
+	d := New(srv.URL, "t", srv.Client(), time.Minute)
 	if _, err := d.Member(t.Context(), "alice@example.org", group); err == nil {
 		t.Fatal("no error")
 	}

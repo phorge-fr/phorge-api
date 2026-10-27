@@ -15,6 +15,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
+	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
 )
@@ -376,9 +377,10 @@ func TestACreatedKeyActsAsItsOwnerWithinItsScopes(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := server.New(log)
 	Register(s, Deps{
-		Auth:    &auth.Authenticator{Users: tokens{}, Keys: auth.NewKeyVerifier(keyReader{e.keys}), Log: log},
-		Authz:   authz.New(e.fga, adminGroup, directory{adminGroup: {"admin@example.org"}}),
-		Tenants: e.store, Images: e.images, Instances: e.instances, Memberships: e.memberships, Keys: e.keys,
+		Settings: testSettings,
+		Auth:     &auth.Authenticator{Users: tokens{}, Keys: auth.NewKeyVerifier(keyReader{e.keys}), Log: log},
+		Authz:    authz.New(e.fga, adminGroup, directory{adminGroup: {"admin@example.org"}}),
+		Tenants:  e.store, Images: e.images, Instances: e.instances, Memberships: e.memberships, Keys: e.keys,
 		Log: log, Now: func() time.Time { return now },
 	})
 	do := func(method, path, token, body string) int {
@@ -523,5 +525,42 @@ func TestAccessRoutesWhenTheClusterIsDown(t *testing.T) {
 		if code := call(t, e, c.method, c.path, "admin", c.body); code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s: status %d, want 503", c.method, c.path, code)
 		}
+	}
+}
+
+func TestWhoMayCreateKeysIsADeploymentSetting(t *testing.T) {
+	body := `{"displayName":"mine","scopes":["tenants:read"],"expiresAt":"2026-12-31T00:00:00Z"}`
+	// As deployed for these tests: the platform administrators only.
+	e := newEnv(t)
+	if code := call(t, e, "POST", "/v1/apikeys", "alice", body); code != http.StatusForbidden {
+		t.Errorf("a person who is not an administrator: %d, want 403", code)
+	}
+	// Opened by the deployment: any person signed in creates theirs. A key never exceeds its owner, so what it can do is unchanged.
+	open := testSettings
+	open.KeyCreation = config.KeyCreationUsers
+	e = newEnvWith(t, open)
+	if code := call(t, e, "POST", "/v1/apikeys", "alice", body); code != http.StatusAccepted {
+		t.Errorf("a person, with the creation opened: %d, want 202", code)
+	}
+	// And a key still cannot create one.
+	if code := call(t, e, "POST", "/v1/apikeys", "phk_ci", body); code != http.StatusForbidden {
+		t.Errorf("a key, with the creation opened: %d, want 403", code)
+	}
+}
+
+func TestTheKeyLifetimeIsADeploymentSetting(t *testing.T) {
+	far := now.Add(5 * 365 * 24 * time.Hour).Format(time.RFC3339)
+	body := `{"displayName":"long","scopes":["tenants:read"],"expiresAt":"` + far + `"}`
+	if code := call(t, newEnv(t), "POST", "/v1/apikeys", "admin", body); code != http.StatusUnprocessableEntity {
+		t.Errorf("five years with a maximum of %s: %d, want 422", testSettings.KeyMaxLifetime, code)
+	}
+	none := testSettings
+	none.KeyMaxLifetime = 0
+	e := newEnvWith(t, none)
+	if code := call(t, e, "POST", "/v1/apikeys", "admin", body); code != http.StatusAccepted {
+		t.Errorf("five years with no maximum: %d, want 202", code)
+	}
+	if code := call(t, e, "POST", "/v1/apikeys", "admin", `{"displayName":"forever","scopes":["tenants:read"]}`); code != http.StatusAccepted {
+		t.Errorf("no expiry with no maximum: %d, want 202", code)
 	}
 }

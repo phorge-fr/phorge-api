@@ -17,6 +17,11 @@ func valid() map[string]string {
 		EnvOpenFGAURL:     "https://openfga.core.phorge",
 		EnvOpenFGAAPIKey:  "s3cr3t-key",
 		EnvOpenFGAStoreID: "01M50R0P12MY8JHNKP3ATYSJC2",
+		// What decides how the API behaves has no default: a deployment writes it.
+		EnvInstanceBootGrace:  "5m",
+		EnvInstanceStuckAfter: "10m",
+		EnvAPIKeyMaxLifetime:  "8784h",
+		EnvAPIKeyCreation:     KeyCreationPlatformAdmins,
 	}
 }
 
@@ -75,10 +80,7 @@ func TestKeyIsNeverPrinted(t *testing.T) {
 }
 
 func TestAuthentikURLAndTokenGoTogether(t *testing.T) {
-	base := map[string]string{
-		EnvIssuer: "https://auth.example.org/application/o/phorge/", EnvAudience: "id", EnvOpenFGAURL: "https://fga.example.org",
-		EnvOpenFGAAPIKey: "k", EnvOpenFGAStoreID: "s",
-	}
+	base := valid()
 	load := func(extra map[string]string) (Config, error) {
 		return Load(func(k string) (string, bool) {
 			if v, ok := extra[k]; ok {
@@ -91,22 +93,66 @@ func TestAuthentikURLAndTokenGoTogether(t *testing.T) {
 	if _, err := load(nil); err != nil {
 		t.Errorf("without Authentik: %v", err)
 	}
-	c, err := load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok"})
-	if err != nil || c.AuthentikURL != "https://auth.example.org" || c.AuthentikToken != "tok" {
+	c, err := load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok", EnvAuthentikCacheTTL: "1m", EnvAuthentikTimeout: "10s"})
+	if err != nil || c.AuthentikURL != "https://auth.example.org" || c.AuthentikToken != "tok" || c.AuthentikCacheTTL.String() != "1m0s" || c.AuthentikTimeout.String() != "10s" {
 		t.Errorf("both: %+v, %v", c, err)
 	}
 	for name, extra := range map[string]map[string]string{
 		"a url without a token": {EnvAuthentikURL: "https://auth.example.org"},
 		"a token without a url": {EnvAuthentikToken: "tok"},
-		"a url that is not one": {EnvAuthentikURL: "auth", EnvAuthentikToken: "tok"},
+		"a url that is not one": {EnvAuthentikURL: "auth", EnvAuthentikToken: "tok", EnvAuthentikCacheTTL: "1m", EnvAuthentikTimeout: "10s"},
+		"no cache duration":     {EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok", EnvAuthentikTimeout: "10s"},
+		"no timeout":            {EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok", EnvAuthentikCacheTTL: "1m"},
 	} {
 		if _, err := load(extra); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
 	// The token is never logged.
-	c, _ = load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok-secret-value"})
+	c, _ = load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok-secret-value", EnvAuthentikCacheTTL: "1m", EnvAuthentikTimeout: "10s"})
 	if strings.Contains(c.String(), "tok-secret-value") {
 		t.Errorf("the token is in %s", c.String())
+	}
+}
+
+func TestTheBehaviourSettingsHaveNoDefault(t *testing.T) {
+	for _, key := range []string{EnvInstanceBootGrace, EnvInstanceStuckAfter, EnvAPIKeyMaxLifetime, EnvAPIKeyCreation} {
+		m := valid()
+		delete(m, key)
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key+" is required") {
+			t.Errorf("without %s: %v, want it to be named as required", key, err)
+		}
+	}
+	c, err := Load(env(valid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.InstanceBootGrace.String() != "5m0s" || c.InstanceStuckAfter.String() != "10m0s" || c.APIKeyMaxLifetime.Hours() != 8784 || c.APIKeyCreation != KeyCreationPlatformAdmins {
+		t.Errorf("%+v", c)
+	}
+}
+
+func TestTheDurationsAreChecked(t *testing.T) {
+	for name, tt := range map[string]struct{ key, value string }{
+		"not a duration":             {EnvInstanceStuckAfter, "soon"},
+		"a number with no unit":      {EnvInstanceBootGrace, "300"},
+		"a negative lifetime":        {EnvAPIKeyMaxLifetime, "-1h"},
+		"a creation that is not one": {EnvAPIKeyCreation, "everybody"},
+	} {
+		m := valid()
+		m[tt.key] = tt.value
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), tt.key) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// 0 is a value for the grace (never refuse) and for the lifetime (no maximum).
+	m := valid()
+	m[EnvAPIKeyMaxLifetime] = "0"
+	if c, err := Load(env(m)); err != nil || c.APIKeyMaxLifetime != 0 {
+		t.Errorf("a lifetime of 0: %+v, %v", c, err)
+	}
+	m[EnvAPIKeyCreation] = KeyCreationUsers
+	if c, err := Load(env(m)); err != nil || c.APIKeyCreation != KeyCreationUsers {
+		t.Errorf("creation by users: %+v, %v", c, err)
 	}
 }
