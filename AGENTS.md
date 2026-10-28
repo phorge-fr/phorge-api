@@ -11,11 +11,11 @@ The Phorge API: a Go REST API that manages tenants and their VMs by creating, re
 The contract and the plan are in Hangar. Read both pages in full:
 
 ```bash
-gh api repos/phorge-fr/Hangar/contents/docs/phorge-api.md -H 'Accept: application/vnd.github.raw'
-gh api repos/phorge-fr/Hangar/contents/docs/phorge-api-implementation.md -H 'Accept: application/vnd.github.raw'
+gh api repos/phorge-fr/Hangar/contents/docs/reference/phorge-api-kinds.md -H 'Accept: application/vnd.github.raw'
+gh api repos/phorge-fr/Hangar/contents/docs/explanation/phorge-api-implementation-plan.md -H 'Accept: application/vnd.github.raw'
 ```
 
-`phorge-api.md` describes the five kinds. `phorge-api-implementation.md` is the plan: how to reach the platform from your machine, how authentication and authorization work, what the platform does (and which behaviours to build around), the order of work, and the rules. The XRDs in `overlays/control/controllers/crossplane/` of Hangar are the source of truth for field names and limits; if a page contradicts the cluster, the cluster is right.
+`phorge-api-kinds.md` describes the five kinds. `phorge-api-implementation-plan.md` is the plan: how to reach the platform from your machine, how authentication and authorization work, what the platform does (and which behaviours to build around), the order of work, and the rules. The XRDs in `overlays/control/controllers/crossplane/` of Hangar are the source of truth for field names and limits; if a page contradicts the cluster, the cluster is right.
 
 ## Workflow
 
@@ -38,5 +38,5 @@ The Go version is the one in `go.mod`.
 - Never print, log or commit a secret, a key or a token. Configuration comes from the environment.
 - **Do not change the platform by hand.** An XRD, a composition, the OpenFGA model, RBAC, a firewall rule or an Authentik blueprint is a pull request on Hangar (or Network), never an edit on the cluster: Flux reverts live edits. Use a `git worktree` for the Hangar change if its checkout holds someone else's branch.
 - Test tenants are named `apitest-<run>-*`. Never touch `e2e-*` tenants (the platform suite's), the Incus projects `ct-poc` and `default`, or a tenant you did not create. Clean up what you create: children first, then the tenant, then wait until the Incus project is gone.
-- API keys are personal: `phk_<id>_<secret>`, owned by a user, acting as that user within scopes, expiring within a year; only a person with an Authentik token manages keys, and a key cannot create keys. See Hangar `docs/decisions/0007-tenant-policy.md`.
+- API keys are personal: `phk_<id>_<secret>`, owned by a user, acting as that user within scopes, expiring within a year; only a person with an Authentik token manages keys, and a key cannot create keys. See Hangar `docs/decisions/0007-tenant-policy.md`. This repository's own pages are in [docs/](docs/README.md).
 - When something is missing or ambiguous (public host names, who may create tenants), ask; do not invent.
