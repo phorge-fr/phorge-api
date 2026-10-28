@@ -149,3 +149,15 @@ Releases are cut by [release-please](https://github.com/googleapis/release-pleas
 - `fix:` gives a patch, `feat:` a minor (while the version is below 1.0.0, a breaking change `feat!:` also gives a minor), `chore:`, `docs:`, `test:` and `ci:` give nothing.
 - Hangar pins the image as `<tag>@<digest>`: Renovate opens the pull request there when a release is published.
 - The workflow uses the `RENOVATE_TOKEN` secret, because pull requests and tags created with `GITHUB_TOKEN` start no workflow, so the checks of the release pull request and the image build would never run.
+
+## Contributing
+
+Every change starts from an issue and goes through a pull request; the rules (issue link, label, milestone, assignee, reviewer) are in the organization's [GOVERNANCE](https://github.com/phorge-fr/.github/blob/main/GOVERNANCE.md) and [CONTRIBUTING](https://github.com/phorge-fr/.github/blob/main/CONTRIBUTING.md). Planned work is on the public [Roadmap](https://github.com/orgs/phorge-fr/projects/3). Everyone taking part follows the [Code of Conduct](https://github.com/phorge-fr/.github/blob/main/CODE_OF_CONDUCT.md).
+
+## Security
+
+Report vulnerabilities privately, as described in the [security policy](https://github.com/phorge-fr/.github/blob/main/SECURITY.md). Do not open a public issue for them.
+
+## License
+
+No license has been chosen yet, so the code is not yet open for reuse; the decision is tracked in [phorge-fr/.github#18](https://github.com/phorge-fr/.github/issues/18).
