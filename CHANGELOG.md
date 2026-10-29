@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/phorge-fr/phorge-api/compare/v0.4.0...v0.4.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes monorepo to v0.37.2 ([8248d6c](https://github.com/phorge-fr/phorge-api/commit/8248d6c2caabce2625e58d870a3cd21e54d597a4))
+* **deps:** update kubernetes monorepo to v0.37.2 ([a7a7b0e](https://github.com/phorge-fr/phorge-api/commit/a7a7b0e28eef38ee6e835a2a4a1b0d953ebdc09d))
+
 ## [0.4.0](https://github.com/phorge-fr/phorge-api/compare/v0.3.0...v0.4.0) (2026-10-27)
 
 
