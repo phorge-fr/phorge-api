@@ -5,7 +5,7 @@ go 1.27
 require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/getkin/kin-openapi v0.152.0
-	github.com/go-jose/go-jose/v4 v4.1.6
+	github.com/go-jose/go-jose/v4 v4.1.7
 	github.com/prometheus/client_golang v1.25.0
 	k8s.io/apimachinery v0.37.2
 	k8s.io/client-go v0.37.2
