@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -19,6 +20,10 @@ type Config struct {
 	Issuer string
 	// Audience is the client id of the Phorge application in Authentik.
 	Audience string
+	// KeyPrefix is the start of the user name of the service accounts of Authentik that are API keys, for example
+	// "apikey-". A token with no email whose user name starts with it is a service key, with only the rights OpenFGA
+	// holds for it. Empty: a token with no email is refused.
+	KeyPrefix string
 	// OpenFGAURL is the base URL of OpenFGA, e.g. https://openfga.core.phorge.
 	OpenFGAURL string
 	// OpenFGAAPIKey is the bearer key for OpenFGA.
@@ -68,6 +73,7 @@ const (
 	EnvListenAddr         = "LISTEN_ADDR"
 	EnvIssuer             = "OIDC_ISSUER"
 	EnvAudience           = "OIDC_AUDIENCE"
+	EnvKeyPrefix          = "OIDC_KEY_PREFIX"
 	EnvOpenFGAURL         = "OPENFGA_URL"
 	EnvOpenFGAAPIKey      = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
 	EnvOpenFGAStoreID     = "OPENFGA_STORE_ID"
@@ -87,6 +93,9 @@ const (
 
 const defaultListenAddr = ":8080"
 
+// keyPrefixRe is the shape of OIDC_KEY_PREFIX: what can start the name of a service key.
+var keyPrefixRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+
 // Load reads the configuration through lookup (os.LookupEnv in production). Every problem is reported at once, so that
 // a misconfigured pod says everything that is wrong in a single crash.
 func Load(lookup func(string) (string, bool)) (Config, error) {
@@ -99,6 +108,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		ListenAddr:         get(EnvListenAddr),
 		Issuer:             get(EnvIssuer),
 		Audience:           get(EnvAudience),
+		KeyPrefix:          get(EnvKeyPrefix),
 		OpenFGAURL:         get(EnvOpenFGAURL),
 		OpenFGAAPIKey:      get(EnvOpenFGAAPIKey),
 		OpenFGAStoreID:     get(EnvOpenFGAStoreID),
@@ -134,6 +144,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 				errs = append(errs, fmt.Errorf("%s: %w", u.key, err))
 			}
 		}
+	}
+	if c.KeyPrefix != "" && !keyPrefixRe.MatchString(c.KeyPrefix) {
+		errs = append(errs, fmt.Errorf("%s must be lowercase letters, digits and hyphens (such as apikey-), not %q", EnvKeyPrefix, c.KeyPrefix))
 	}
 	// Nothing below has a default: a value that decides how the API behaves is written in the deployment, where it is seen.
 	duration := func(key string, min time.Duration, dst *time.Duration) {

@@ -1,4 +1,5 @@
-// Package auth tells who is calling: a user with an Authentik token, or an API key that acts as its owner.
+// Package auth tells who is calling: a user with an Authentik token, an API key that acts as its owner, or a service key
+// (a service account of Authentik) that has only the rights OpenFGA holds for it.
 //
 // It only authenticates. What the caller may do is decided by OpenFGA, from Identity.Subject.
 package auth
@@ -20,10 +21,14 @@ var (
 // Kind is the type of caller.
 type Kind string
 
-// The two kinds of caller.
+// The kinds of caller.
 const (
 	KindUser   Kind = "user"
 	KindAPIKey Kind = "apikey"
+	// KindServiceKey is a service account of Authentik that signed in with its own credentials (a token with no email,
+	// OIDCVerifier.AcceptKeys). It has no owner, no scope list and no group: what it may do is what OpenFGA holds for its
+	// subject "apikey:<name>", and nothing else.
+	KindServiceKey Kind = "servicekey"
 )
 
 // Identity is an authenticated caller.

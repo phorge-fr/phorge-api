@@ -161,8 +161,11 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 	}}
 	fga := &checker{
 		grants: map[string]bool{
-			"user:alice@example.org can_read_tenant tenant:demo":  true,
-			"user:viewer@example.org can_read_tenant tenant:demo": true,
+			"user:alice@example.org can_read_tenant tenant:demo": true,
+			// The tuples of a service key: it reads the tenant and writes the instances, nothing else.
+			"apikey:apikey-0123456789abcdef can_read_tenant tenant:demo":     true,
+			"apikey:apikey-0123456789abcdef can_write_instances tenant:demo": true,
+			"user:viewer@example.org can_read_tenant tenant:demo":            true,
 
 			// What the roles of the model give, written out (the model itself is tested against OpenFGA in authz).
 			"user:viewer@example.org can_read_images tenant:demo":    true,
@@ -189,10 +192,11 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 			"user:tadmin@example.org can_write_memberships tenant:demo": true,
 		},
 		objects: map[string][]string{
-			"user:alice@example.org":    {"tenant:demo"},
-			"user:viewer@example.org":   {"tenant:demo"},
-			"user:operator@example.org": {"tenant:demo"},
-			"user:tadmin@example.org":   {"tenant:demo"},
+			"user:alice@example.org":         {"tenant:demo"},
+			"user:viewer@example.org":        {"tenant:demo"},
+			"user:operator@example.org":      {"tenant:demo"},
+			"user:tadmin@example.org":        {"tenant:demo"},
+			"apikey:apikey-0123456789abcdef": {"tenant:demo"},
 		},
 	}
 	users := tokens{
@@ -207,6 +211,8 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 		// A second administrator, and one who left the group.
 		"admin2":  {Kind: auth.KindUser, Subject: "user:admin2@example.org", Email: "admin2@example.org", Groups: []string{adminGroup}},
 		"exadmin": {Kind: auth.KindUser, Subject: "user:exadmin@example.org", Email: "exadmin@example.org"},
+		// A service key: a service account of Authentik, with only the tuples OpenFGA holds for "apikey:<name>".
+		"svc": {Kind: auth.KindServiceKey, Subject: "apikey:apikey-0123456789abcdef", Name: "apikey-0123456789abcdef"},
 	}
 	// A key is its owner within its scopes: OpenFGA is asked about the owner, the scopes cut what the owner may do.
 	keyOf := func(owner string, scopes ...string) auth.Identity {
@@ -566,5 +572,31 @@ func TestAnAdministratorsKeyWithTheWriteScopeManagesTenants(t *testing.T) {
 	// instances:write is in its scopes, and the administrator may do it on any tenant.
 	if rec := e.do(t, http.MethodGet, "/v1/tenants/other/instances", "phk_admin_write", ""); rec.Code != http.StatusForbidden {
 		t.Errorf("instances:read is not one of its scopes: status %d", rec.Code)
+	}
+}
+
+func TestAServiceKeyDoesWhatOpenFGAHoldsForIt(t *testing.T) {
+	e := newEnv(t)
+	for _, tt := range []struct {
+		name, method, path, body string
+		want                     int
+	}{
+		{"reads the tenant it has a tuple on", http.MethodGet, "/v1/tenants/demo", "", http.StatusOK},
+		{"does not see another tenant", http.MethodGet, "/v1/tenants/other", "", http.StatusNotFound},
+		{"is refused what it has no tuple for", http.MethodGet, "/v1/tenants/demo/images", "", http.StatusForbidden},
+		{"lists the tenants it can read", http.MethodGet, "/v1/tenants", "", http.StatusOK},
+		{"cannot create a tenant", http.MethodPost, "/v1/tenants", `{"name":"newone","plan":"small"}`, http.StatusForbidden},
+		{"cannot create a key", http.MethodPost, "/v1/apikeys", `{"displayName":"x","scopes":["tenants:read"]}`, http.StatusForbidden},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if rec := e.do(t, tt.method, tt.path, "svc", tt.body); rec.Code != tt.want {
+				t.Errorf("status %d, want %d (%s)", rec.Code, tt.want, rec.Body.String())
+			}
+		})
+	}
+
+	rec := e.do(t, http.MethodGet, "/v1/whoami", "svc", "")
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false}`; got != want {
+		t.Errorf("whoami: %s", got)
 	}
 }

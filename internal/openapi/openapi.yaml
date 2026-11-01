@@ -1429,9 +1429,13 @@ components:
                     enum:
                         - user
                         - apikey
+                        - servicekey
+                    description: |
+                        `servicekey` is a service account of Authentik that holds an API key: it has no owner and no
+                        email, and only the rights OpenFGA holds for its subject.
                 subject:
                     type: string
-                    description: The user of the authorization checks.
+                    description: The user of the authorization checks. `apikey:<name>` for a service key.
                     example: user:alice@example.org
                 email:
                     type: string
@@ -1439,7 +1443,7 @@ components:
                     example: alice@example.org
                 name:
                     type: string
-                    description: The id of the key. Keys only.
+                    description: The id of the key, or the name of the service key. Keys only.
                     example: 0123456789abcdef
                 platformAdmin:
                     type: boolean
