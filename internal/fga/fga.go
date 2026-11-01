@@ -30,6 +30,7 @@ type Client struct {
 	store string
 	key   string
 	http  *http.Client
+	now   func() time.Time
 }
 
 // New returns a client of the store storeID at baseURL. key is the bearer key and is never part of an error.
@@ -37,7 +38,7 @@ func New(baseURL, storeID, key string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: Timeout}
 	}
-	return &Client{base: baseURL, store: storeID, key: key, http: httpClient}
+	return &Client{base: baseURL, store: storeID, key: key, http: httpClient, now: time.Now}
 }
 
 // HTTPClient returns an HTTP client that trusts the system roots and, when caFile is not empty, the certificates of that
@@ -67,12 +68,22 @@ type tupleKey struct {
 	Object   string `json:"object"`
 }
 
+// evalContext is the context of every question. The tuples of an API key carry a condition on the date (the key stops
+// granting at its expiry), and OpenFGA refuses to evaluate it when current_time is missing: this clock is the only one
+// that matters, so it is the API's and it is sent every time.
+func (c *Client) evalContext() map[string]any {
+	return map[string]any{"current_time": c.now().UTC().Format(time.RFC3339)}
+}
+
 // Check asks whether user has relation on object.
 func (c *Client) Check(ctx context.Context, user, relation, object string) (bool, error) {
 	var out struct {
 		Allowed bool `json:"allowed"`
 	}
-	err := c.post(ctx, "check", map[string]any{"tuple_key": tupleKey{User: user, Relation: relation, Object: object}}, &out)
+	err := c.post(ctx, "check", map[string]any{
+		"tuple_key": tupleKey{User: user, Relation: relation, Object: object},
+		"context":   c.evalContext(),
+	}, &out)
 	return out.Allowed, err
 }
 
@@ -82,7 +93,7 @@ func (c *Client) ListObjects(ctx context.Context, user, relation, objectType str
 	var out struct {
 		Objects []string `json:"objects"`
 	}
-	err := c.post(ctx, "list-objects", map[string]any{"user": user, "relation": relation, "type": objectType}, &out)
+	err := c.post(ctx, "list-objects", map[string]any{"user": user, "relation": relation, "type": objectType, "context": c.evalContext()}, &out)
 	return out.Objects, err
 }
 
