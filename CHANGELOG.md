@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.0](https://github.com/phorge-fr/phorge-api/compare/v0.4.2...v0.5.0) (2026-11-02)
+
+
+### Features
+
+* **apikeys:** create keys as Authentik service accounts ([b61eeb2](https://github.com/phorge-fr/phorge-api/commit/b61eeb207e23a6913fde0a0028365a9a11ad8e25))
+* **apikeys:** create keys as Authentik service accounts ([1a1f0ed](https://github.com/phorge-fr/phorge-api/commit/1a1f0edee31f6d0a6236a1f34d94fea4b1f60e99))
+* **auth:** accept service accounts of Authentik as API keys ([fded19f](https://github.com/phorge-fr/phorge-api/commit/fded19f5dfa8046a17f66490f3ce2e2ca3eb17ab))
+* **fga:** send the current time with every Check so key tuples can expire ([74c7cab](https://github.com/phorge-fr/phorge-api/commit/74c7cab348dec30dde2cc1af05eec7dc8e78a5b4))
+
 ## [0.4.2](https://github.com/phorge-fr/phorge-api/compare/v0.4.1...v0.4.2) (2026-10-31)
 
 
