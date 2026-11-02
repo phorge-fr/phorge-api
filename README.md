@@ -1,6 +1,6 @@
 # phorge-api
 
-The Phorge API: authenticated users and API keys manage tenants, images, instances, memberships and API keys.
+The Phorge API: authenticated users and API keys (service accounts of Authentik) manage tenants, images, instances, memberships and API keys.
 It creates `phorge.fr` objects on the `control` cluster; Crossplane turns them into Incus and OpenFGA objects.
 
 ## Build and run

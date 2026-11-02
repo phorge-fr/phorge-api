@@ -2,10 +2,13 @@ package kube
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -102,8 +105,8 @@ func membershipOf(obj *unstructured.Unstructured) access.Membership {
 	}
 }
 
-// ApiKeys reads and writes the ApiKey objects, for the routes that manage them (the authentication reads them with Keys). They
-// all live in KeysNamespace. It implements access.KeyStore.
+// ApiKeys reads and writes the ApiKey objects and the Secret that holds the key of each, for the routes that manage them.
+// They all live in KeysNamespace. It implements access.KeyStore.
 type ApiKeys struct{ conn *Connection }
 
 // NewApiKeys returns a store that works through conn.
@@ -153,15 +156,20 @@ func (s *ApiKeys) Get(ctx context.Context, id string) (access.ApiKey, error) {
 	return apiKeyOf(obj), nil
 }
 
-// Create writes the object of a key: its hash, never the key.
+// Create writes the object of a key: who owns it and what it may do, never a secret. Crossplane makes the service account
+// and its key, which TakeKey reads.
 func (s *ApiKeys) Create(ctx context.Context, req access.KeyRecord) (access.ApiKey, error) {
 	r, err := s.resource()
 	if err != nil {
 		return access.ApiKey{}, err
 	}
-	spec := map[string]any{"hash": req.Hash, "owner": req.Owner, "scopes": toAny(req.Scopes), "displayName": req.DisplayName}
-	if req.ExpiresAt != nil {
-		spec["expiresAt"] = req.ExpiresAt.UTC().Format(time.RFC3339)
+	grants := make([]any, 0, len(req.Grants))
+	for _, g := range req.Grants {
+		grants = append(grants, map[string]any{"tenant": g.Tenant, "scopes": toAny(g.Scopes)})
+	}
+	spec := map[string]any{
+		"owner": req.Owner, "grants": grants, "displayName": req.DisplayName,
+		"expiresAt": req.ExpiresAt.UTC().Format(time.RFC3339),
 	}
 	obj, err := r.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": apiKeys.GroupVersion().String(),
@@ -178,19 +186,13 @@ func (s *ApiKeys) Create(ctx context.Context, req access.KeyRecord) (access.ApiK
 	return apiKeyOf(obj), nil
 }
 
-// Patch is a JSON merge patch of what was given.
+// Patch is a JSON merge patch of the display name, the only thing that can change.
 func (s *ApiKeys) Patch(ctx context.Context, id string, req access.PatchKey) (access.ApiKey, error) {
 	r, err := s.resource()
 	if err != nil {
 		return access.ApiKey{}, err
 	}
 	spec := map[string]any{}
-	if req.Scopes != nil {
-		spec["scopes"] = *req.Scopes
-	}
-	if req.ExpiresAt != nil {
-		spec["expiresAt"] = req.ExpiresAt.UTC().Format(time.RFC3339)
-	}
 	if req.DisplayName != nil {
 		spec["displayName"] = *req.DisplayName
 	}
@@ -203,6 +205,36 @@ func (s *ApiKeys) Patch(ctx context.Context, id string, req access.PatchKey) (ac
 		return access.ApiKey{}, mapError(err)
 	}
 	return apiKeyOf(obj), nil
+}
+
+// TakeKey reads the key from the Secret <id>-token that Crossplane fills, and deletes the Secret, so that the key is read
+// once. When Crossplane has not written the key yet, or it was already taken (provider-http then recreates the Secret
+// without it), the answer is access.ErrKeyNotIssued.
+func (s *ApiKeys) TakeKey(ctx context.Context, id string) (string, error) {
+	client, err := s.conn.Dynamic()
+	if err != nil {
+		return "", err
+	}
+	secrets := client.Resource(secretsResource).Namespace(KeysNamespace)
+	obj, err := secrets.Get(ctx, id+"-token", metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return "", access.ErrKeyNotIssued
+	}
+	if err != nil {
+		return "", fmt.Errorf("kubernetes: %w", err)
+	}
+	// A Secret holds base64 in data.
+	encoded, _, _ := unstructured.NestedString(obj.Object, "data", "token")
+	key, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(key) == 0 {
+		return "", access.ErrKeyNotIssued
+	}
+	// The key is only shown if it could be removed from the cluster: otherwise it would stay readable there.
+	uid := obj.GetUID()
+	if err := secrets.Delete(ctx, id+"-token", metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil && !apierrors.IsNotFound(err) {
+		return "", fmt.Errorf("kubernetes: %w", err)
+	}
+	return string(key), nil
 }
 
 // Delete deletes a key in the foreground. The key stops working at once: the authentication refuses an object that is being
@@ -219,17 +251,37 @@ func (s *ApiKeys) Delete(ctx context.Context, id string) error {
 func apiKeyOf(obj *unstructured.Unstructured) access.ApiKey {
 	displayName, _, _ := unstructured.NestedString(obj.Object, "spec", "displayName")
 	owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner")
-	scopes, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "scopes")
 	expiresAt, _, _ := unstructured.NestedString(obj.Object, "spec", "expiresAt")
+	identity, _, _ := unstructured.NestedString(obj.Object, "status", "identity")
 	expired, _, _ := unstructured.NestedBool(obj.Object, "status", "expired")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
+
+	var grants []access.Grant
+	raw, _, _ := unstructured.NestedSlice(obj.Object, "spec", "grants")
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		tenant, _ := m["tenant"].(string)
+		var scopes []string
+		if list, ok := m["scopes"].([]any); ok {
+			for _, v := range list {
+				if sc, ok := v.(string); ok {
+					scopes = append(scopes, sc)
+				}
+			}
+		}
+		grants = append(grants, access.Grant{Tenant: tenant, Scopes: scopes})
+	}
 
 	ready, since := readyOf(obj)
 	k := access.ApiKey{
 		ID:          obj.GetName(),
 		Owner:       owner,
 		DisplayName: displayName,
-		Scopes:      scopes,
+		Grants:      grants,
+		Identity:    identity,
 		Expired:     expired,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
 		Status:      status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},

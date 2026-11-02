@@ -227,7 +227,7 @@ func TestOIDCAcceptsAServiceKeyWhenTheDeploymentSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	if id.Kind != KindServiceKey || id.Subject != "apikey:apikey-0123456789abcdef" || id.Name != "apikey-0123456789abcdef" ||
-		id.Email != "" || len(id.Groups) != 0 || len(id.Scopes) != 0 {
+		id.Email != "" || len(id.Groups) != 0 {
 		t.Errorf("unexpected identity: %+v", id)
 	}
 	// The claim may also be missing altogether.

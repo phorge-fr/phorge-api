@@ -57,8 +57,8 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	s := server.New(log)
 	Register(s, Deps{
 		Settings: testSettings,
-		Auth:     &auth.Authenticator{Users: users, Keys: tokens{}, Log: log},
-		Authz:    authz.New(fgaClient, adminGroup, nil),
+		Auth:     &auth.Authenticator{Users: users, Log: log},
+		Authz:    authz.New(fgaClient, adminGroup),
 		Tenants:  store,
 		Log:      log,
 	})

@@ -39,13 +39,15 @@ Set the variables of the previous section, then:
 go test -run TestImageAndInstance -timeout 40m ./internal/api
 ```
 
-## Memberships and API keys (about five minutes)
+## Memberships (about five minutes)
 
 Set the same variables, then:
 
 ```bash
-go test -run TestMembershipsAndKeys -timeout 30m ./internal/api
+go test -run TestMembershipsOnTheRealCluster -timeout 30m ./internal/api
 ```
+
+The API keys are not in it: creating one makes a service account in Authentik that nothing can delete afterwards, so they are tested end to end by the opt-in group of Hangar (`tests/e2e`, `E2E_APIKEYS=1`).
 
 ## Related
 
