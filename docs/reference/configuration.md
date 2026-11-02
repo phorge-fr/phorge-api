@@ -1,7 +1,7 @@
 ---
 type: reference
 audience: operator who deploys or configures the API
-verified: 2026-10-28
+verified: 2026-11-01
 ---
 
 # Configuration
@@ -12,6 +12,7 @@ Configuration is read from the environment and the process refuses to start, lis
 |---|---|---|
 | `OIDC_ISSUER` | yes | Authentik issuer, the JWKS is found from it |
 | `OIDC_AUDIENCE` | yes | Client id of the Phorge application |
+| `OIDC_KEY_PREFIX` | no | Start of the user name of the service accounts of Authentik that are API keys, such as `apikey-` (lowercase letters, digits and hyphens). A token with no email whose user name starts with it is a service key with only the rights OpenFGA holds for `apikey:<name>`. Empty: a token with no email is refused |
 | `OPENFGA_URL` | yes | Base URL of OpenFGA |
 | `OPENFGA_API_KEY` | yes | Bearer key for OpenFGA (never logged) |
 | `OPENFGA_STORE_ID` | yes | Id of the `phorge-api` store |

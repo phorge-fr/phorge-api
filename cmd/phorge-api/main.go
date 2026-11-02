@@ -45,11 +45,14 @@ func main() {
 		directory = authentik.New(cfg.AuthentikURL, cfg.AuthentikToken, &http.Client{Timeout: cfg.AuthentikTimeout}, cfg.AuthentikCacheTTL)
 	}
 
+	users := auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil)
+	users.AcceptKeys(cfg.KeyPrefix)
+
 	kubeConn := kube.NewConnection(cfg.KubeContext)
 	srvAPI := server.New(log)
 	api.Register(srvAPI, api.Deps{
 		Auth: &auth.Authenticator{
-			Users: auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil),
+			Users: users,
 			Keys:  auth.NewKeyVerifier(kube.NewKeys(kubeConn)),
 			Log:   log,
 		},

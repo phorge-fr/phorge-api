@@ -300,3 +300,39 @@ func TestAdminMayRespectsTheScopesOfAKey(t *testing.T) {
 		t.Error("a user in the group may write tenants")
 	}
 }
+
+func TestAServiceKeyHasOnlyWhatOpenFGAHoldsForIt(t *testing.T) {
+	svc := auth.Identity{Kind: auth.KindServiceKey, Subject: "apikey:apikey-0123456789abcdef", Name: "apikey-0123456789abcdef"}
+	f := &fake{grants: grants(
+		"apikey:apikey-0123456789abcdef can_read_tenant tenant:demo",
+		"apikey:apikey-0123456789abcdef can_write_instances tenant:demo",
+	)}
+	a := New(f, "phorge-platform-admins", &members{groups: map[string][]string{"phorge-platform-admins": {"alice@example.org"}}})
+	for _, tt := range []struct {
+		action Action
+		tenant string
+		want   bool
+	}{
+		{ReadTenant, "demo", true},
+		{WriteInstances, "demo", true},
+		// No tuple, no right, whatever the owner of nobody may do: there is no scope table to widen it.
+		{ReadInstances, "demo", false},
+		{WriteImages, "demo", false},
+		{ReadTenant, "other", false},
+		{ReadTenant, "Demo", false},
+	} {
+		got, err := a.Allowed(t.Context(), svc, tt.action, tt.tenant)
+		if err != nil || got != tt.want {
+			t.Errorf("%s on %s: %v, %v, want %v", tt.action, tt.tenant, got, err, tt.want)
+		}
+	}
+	// It is never a platform administrator, even with the group in its claims: it has no groups to believe.
+	withGroup := svc
+	withGroup.Groups = []string{"phorge-platform-admins"}
+	if may, err := a.AdminMay(t.Context(), svc, WriteTenants); err != nil || may {
+		t.Errorf("AdminMay = %v, %v", may, err)
+	}
+	if ok, err := a.PlatformAdmin(t.Context(), withGroup); err != nil || ok {
+		t.Errorf("PlatformAdmin with a group claim = %v, %v: a service key is not an administrator", ok, err)
+	}
+}

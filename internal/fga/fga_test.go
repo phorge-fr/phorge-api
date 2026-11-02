@@ -44,6 +44,33 @@ func TestCheckSendsTheQuestionAndTheKey(t *testing.T) {
 	}
 }
 
+func TestEveryQuestionCarriesTheCurrentTime(t *testing.T) {
+	var got []map[string]any
+	c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, body)
+		_, _ = io.WriteString(w, `{"allowed":true,"objects":[]}`)
+	})
+	c.now = func() time.Time { return time.Date(2026, 11, 2, 9, 30, 0, 0, time.FixedZone("CET", 3600)) }
+
+	if _, err := c.Check(t.Context(), "apikey:k1", "can_read_instances", "tenant:demo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListObjects(t.Context(), "apikey:k1", "can_read_tenant", "tenant"); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("%d calls", len(got))
+	}
+	for _, body := range got {
+		ctxt, _ := body["context"].(map[string]any)
+		if ctxt["current_time"] != "2026-11-02T08:30:00Z" {
+			t.Errorf("context = %v, want the time in UTC", body["context"])
+		}
+	}
+}
+
 func TestCheckDenied(t *testing.T) {
 	c := newClient(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"allowed":false}`) })
 	if ok, err := c.Check(t.Context(), "user:a@b", "can_read_tenant", "tenant:demo"); err != nil || ok {

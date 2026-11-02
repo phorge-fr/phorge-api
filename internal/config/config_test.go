@@ -156,3 +156,21 @@ func TestTheDurationsAreChecked(t *testing.T) {
 		t.Errorf("creation by users: %+v, %v", c, err)
 	}
 }
+
+func TestTheKeyPrefixIsOptionalAndChecked(t *testing.T) {
+	c, err := Load(env(valid()))
+	if err != nil || c.KeyPrefix != "" {
+		t.Fatalf("not set: %q, %v", c.KeyPrefix, err)
+	}
+	m := valid()
+	m[EnvKeyPrefix] = " apikey- "
+	if c, err = Load(env(m)); err != nil || c.KeyPrefix != "apikey-" {
+		t.Errorf("apikey-: %q, %v", c.KeyPrefix, err)
+	}
+	for _, bad := range []string{"API-", "api:key-", "api key", "-apikey", "a#", "*", strings.Repeat("a", 40)} {
+		m[EnvKeyPrefix] = bad
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), EnvKeyPrefix) {
+			t.Errorf("%q: err = %v, want a complaint about %s", bad, err, EnvKeyPrefix)
+		}
+	}
+}

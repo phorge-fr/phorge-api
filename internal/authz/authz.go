@@ -156,6 +156,10 @@ func (a *Authorizer) PlatformAdmin(ctx context.Context, id auth.Identity) (bool,
 	if a.adminGroup == "" {
 		return false, nil
 	}
+	// A service key has no owner and no groups to believe: it is never an administrator.
+	if id.Kind == auth.KindServiceKey {
+		return false, nil
+	}
 	if id.Kind == auth.KindAPIKey {
 		if a.dir == nil || id.Email == "" {
 			return false, nil
