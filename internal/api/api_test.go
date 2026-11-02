@@ -26,16 +26,13 @@ type verifier struct {
 
 func (v verifier) Verify(context.Context, string) (auth.Identity, error) { return v.id, v.err }
 
-func newServer(users, keys auth.Verifier) *server.Server { return newServerWith(users, keys, nil) }
-
-// newServerWith is newServer with an Authentik that knows the groups of some users, for the keys.
-func newServerWith(users, keys auth.Verifier, dir authz.Directory) *server.Server {
+func newServer(users auth.Verifier) *server.Server {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s := server.New(log)
 	Register(s, Deps{
 		Settings: testSettings,
-		Auth:     &auth.Authenticator{Users: users, Keys: keys, Log: log},
-		Authz:    authz.New(nil, "phorge-platform-admins", dir), // nothing here asks OpenFGA
+		Auth:     &auth.Authenticator{Users: users, Log: log},
+		Authz:    authz.New(nil, "phorge-platform-admins"), // nothing here asks OpenFGA
 		Log:      log,
 	})
 	return s
@@ -76,7 +73,7 @@ func TestOpenAPIMatchesTheRoutes(t *testing.T) {
 	}
 
 	var registered []string
-	for _, pattern := range newServer(verifier{}, verifier{}).Routes() {
+	for _, pattern := range newServer(verifier{}).Routes() {
 		// The page of Swagger UI and its script are not part of the API.
 		if pattern == "GET /docs" || pattern == "GET /docs/init.js" {
 			continue
@@ -112,7 +109,7 @@ func TestEveryV1OperationRequiresACredential(t *testing.T) {
 }
 
 func TestEveryV1RouteRefusesAnonymousCallers(t *testing.T) {
-	s := newServer(verifier{err: auth.ErrUnauthenticated}, verifier{err: auth.ErrUnauthenticated})
+	s := newServer(verifier{err: auth.ErrUnauthenticated})
 	for _, pattern := range s.Routes() {
 		method, path, _ := strings.Cut(pattern, " ")
 		if !strings.HasPrefix(path, "/v1/") {
@@ -128,13 +125,7 @@ func TestEveryV1RouteRefusesAnonymousCallers(t *testing.T) {
 }
 
 func TestWhoami(t *testing.T) {
-	s := newServer(
-		verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}},
-		// A key does not carry groups, and what it claims for itself means nothing: without Authentik it is nobody's administrator.
-		verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "user:alice@example.org", Email: "alice@example.org", Name: "0123456789abcdef", Scopes: []string{"tenants:read"}, Groups: []string{"phorge-platform-admins"}}},
-	)
-
-	rec := get(s.Handler(), "/v1/whoami", "Bearer a.jwt.token")
+	rec := get(newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}}).Handler(), "/v1/whoami", "Bearer a.jwt.token")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
@@ -142,48 +133,23 @@ func TestWhoami(t *testing.T) {
 		t.Errorf("user: %s", got)
 	}
 
-	rec = get(s.Handler(), "/v1/whoami", "Bearer phk_0123456789abcdef_"+strings.Repeat("a", 64))
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"apikey","subject":"user:alice@example.org","email":"alice@example.org","name":"0123456789abcdef","scopes":["tenants:read"],"platformAdmin":false}`; got != want {
+	// A key has no email, and what it claims for itself means nothing: it is nobody's administrator.
+	key := verifier{id: auth.Identity{Kind: auth.KindServiceKey, Subject: "apikey:apikey-0123456789abcdef", Name: "apikey-0123456789abcdef", Groups: []string{"phorge-platform-admins"}}}
+	rec = get(newServer(key).Handler(), "/v1/whoami", "Bearer a.jwt.token")
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false}`; got != want {
 		t.Errorf("key: %s", got)
 	}
 }
 
-type fixedDirectory map[string][]string
-
-func (d fixedDirectory) Member(_ context.Context, email, group string) (bool, error) {
-	return slices.Contains(d[group], email), nil
-}
-
-func TestWhoamiForTheKeyOfAnAdministrator(t *testing.T) {
-	key := func(scopes ...string) verifier {
-		return verifier{id: auth.Identity{Kind: auth.KindAPIKey, Subject: "user:alice@example.org", Email: "alice@example.org", Name: "0123456789abcdef", Scopes: scopes}}
-	}
-	dir := fixedDirectory{"phorge-platform-admins": {"alice@example.org"}}
-	for name, tt := range map[string]struct {
-		key  verifier
-		want bool
-	}{
-		"with tenants:write": {key("tenants:read", "tenants:write"), true},
-		"without it":         {key("tenants:read"), false},
-	} {
-		s := newServerWith(verifier{}, tt.key, dir)
-		var got identityBody
-		mustDecode(t, get(s.Handler(), "/v1/whoami", "Bearer phk_0123456789abcdef_"+strings.Repeat("a", 64)), &got)
-		if got.PlatformAdmin != tt.want {
-			t.Errorf("%s: platformAdmin = %v, want %v", name, got.PlatformAdmin, tt.want)
-		}
-	}
-}
-
 func TestWhoamiDoesNotShowTheGroups(t *testing.T) {
-	s := newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"secret-group"}}}, verifier{})
+	s := newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"secret-group"}}})
 	if body := get(s.Handler(), "/v1/whoami", "Bearer a.jwt.token").Body.String(); strings.Contains(body, "secret-group") {
 		t.Errorf("the groups are not part of the answer: %s", body)
 	}
 }
 
 func TestSwaggerUI(t *testing.T) {
-	h := newServer(verifier{}, verifier{}).Handler()
+	h := newServer(verifier{}).Handler()
 
 	rec := get(h, "/openapi.yaml", "")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "yaml") || !strings.HasPrefix(rec.Body.String(), "openapi: 3.") {

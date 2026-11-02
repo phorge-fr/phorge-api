@@ -2,11 +2,10 @@ package access
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/phorge-fr/phorge-api/internal/auth"
 )
 
 var now = time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
@@ -65,28 +64,39 @@ func TestMembershipNameIsOnePerUser(t *testing.T) {
 func TestCreateKey(t *testing.T) {
 	const max = 30 * 24 * time.Hour
 	later := now.Add(time.Hour)
-	good := CreateKey{DisplayName: "CI", Scopes: []string{"tenants:read", "instances:write"}, ExpiresAt: &later}
+	one := []Grant{{Tenant: "demo", Scopes: []string{"tenants:read", "instances:write"}}}
+	good := CreateKey{DisplayName: "CI", Grants: one, ExpiresAt: &later}
 	if err := good.Validate(now, max); err != nil {
 		t.Fatal(err)
 	}
 	lastDay := now.Add(max)
-	if err := (CreateKey{DisplayName: "a", Scopes: []string{"tenants:write"}, ExpiresAt: &lastDay}).Validate(now, max); err != nil {
+	if err := (CreateKey{DisplayName: "a", Grants: one, ExpiresAt: &lastDay}).Validate(now, max); err != nil {
 		t.Errorf("the longest lifetime: %v", err)
+	}
+	two := []Grant{{Tenant: "demo", Scopes: []string{"images:read"}}, {Tenant: "other", Scopes: []string{"memberships:write"}}}
+	if err := (CreateKey{DisplayName: "two", Grants: two, ExpiresAt: &later}).Validate(now, max); err != nil {
+		t.Errorf("two tenants: %v", err)
 	}
 
 	past, tooFar := now.Add(-time.Second), now.Add(max+time.Second)
+	scopes := func(s ...string) []Grant { return []Grant{{Tenant: "demo", Scopes: s}} }
 	for name, req := range map[string]CreateKey{
-		"no display name":             {Scopes: []string{"tenants:read"}, ExpiresAt: &later},
-		"a display name too long":     {DisplayName: strings.Repeat("a", 101), Scopes: []string{"tenants:read"}, ExpiresAt: &later},
-		"no scope":                    {DisplayName: "ci", ExpiresAt: &later},
-		"an empty list":               {DisplayName: "ci", Scopes: []string{}, ExpiresAt: &later},
-		"a scope that does not exist": {DisplayName: "ci", Scopes: []string{"tenants:delete"}, ExpiresAt: &later},
-		"the old scope name":          {DisplayName: "ci", Scopes: []string{"tenant:read"}, ExpiresAt: &later},
-		"a scope twice":               {DisplayName: "ci", Scopes: []string{"tenants:read", "tenants:read"}, ExpiresAt: &later},
-		"no expiry, one is required":  {DisplayName: "ci", Scopes: []string{"tenants:read"}},
-		"an expiry that passed":       {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &past},
-		"an expiry now":               {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &now},
-		"an expiry too far":           {DisplayName: "ci", Scopes: []string{"tenants:read"}, ExpiresAt: &tooFar},
+		"no display name":                      {Grants: one, ExpiresAt: &later},
+		"a display name too long":              {DisplayName: strings.Repeat("a", 101), Grants: one, ExpiresAt: &later},
+		"no grant":                             {DisplayName: "ci", ExpiresAt: &later},
+		"an empty list":                        {DisplayName: "ci", Grants: []Grant{}, ExpiresAt: &later},
+		"no scope":                             {DisplayName: "ci", Grants: scopes(), ExpiresAt: &later},
+		"a scope that does not exist":          {DisplayName: "ci", Grants: scopes("tenants:delete"), ExpiresAt: &later},
+		"tenants:write, which a key never has": {DisplayName: "ci", Grants: scopes("tenants:write"), ExpiresAt: &later},
+		"the old scope name":                   {DisplayName: "ci", Grants: scopes("tenant:read"), ExpiresAt: &later},
+		"a scope twice":                        {DisplayName: "ci", Grants: scopes("tenants:read", "tenants:read"), ExpiresAt: &later},
+		"a tenant that is not a name":          {DisplayName: "ci", Grants: []Grant{{Tenant: "Demo#admin", Scopes: []string{"tenants:read"}}}, ExpiresAt: &later},
+		"a tenant twice":                       {DisplayName: "ci", Grants: []Grant{two[0], two[0]}, ExpiresAt: &later},
+		"too many tenants":                     {DisplayName: "ci", Grants: tooMany(), ExpiresAt: &later},
+		"no expiry: a key expires":             {DisplayName: "ci", Grants: one},
+		"an expiry that passed":                {DisplayName: "ci", Grants: one, ExpiresAt: &past},
+		"an expiry now":                        {DisplayName: "ci", Grants: one, ExpiresAt: &now},
+		"an expiry too far":                    {DisplayName: "ci", Grants: one, ExpiresAt: &tooFar},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var invalid *InvalidError
@@ -96,64 +106,53 @@ func TestCreateKey(t *testing.T) {
 		})
 	}
 
-	// With no maximum (0) a key may be permanent, and a date is only checked to be in the future.
-	if err := (CreateKey{DisplayName: "perm", Scopes: []string{"tenants:read"}}).Validate(now, 0); err != nil {
-		t.Errorf("no maximum, no expiry: %v", err)
-	}
+	// With no maximum (0) a date is only checked to be in the future, and one is always required.
 	far := now.Add(100 * 365 * 24 * time.Hour)
-	if err := (CreateKey{DisplayName: "perm", Scopes: []string{"tenants:read"}, ExpiresAt: &far}).Validate(now, 0); err != nil {
+	if err := (CreateKey{DisplayName: "far", Grants: one, ExpiresAt: &far}).Validate(now, 0); err != nil {
 		t.Errorf("no maximum, a far date: %v", err)
 	}
-	if err := (CreateKey{DisplayName: "perm", Scopes: []string{"tenants:read"}, ExpiresAt: &past}).Validate(now, 0); err == nil {
+	if err := (CreateKey{DisplayName: "perm", Grants: one}).Validate(now, 0); err == nil {
+		t.Error("no maximum, no expiry was accepted: a key always expires")
+	}
+	if err := (CreateKey{DisplayName: "late", Grants: one, ExpiresAt: &past}).Validate(now, 0); err == nil {
 		t.Error("no maximum, a date that passed was accepted")
 	}
 }
 
+func tooMany() []Grant {
+	grants := make([]Grant, MaxGrants+1)
+	for i := range grants {
+		grants[i] = Grant{Tenant: fmt.Sprintf("tenant-%02d", i), Scopes: []string{"tenants:read"}}
+	}
+	return grants
+}
+
 func TestPatchKey(t *testing.T) {
-	const max = 30 * 24 * time.Hour
-	later, past, tooFar := now.Add(time.Hour), now.Add(-time.Hour), now.Add(max+time.Hour)
-	scopes, none, bad := []string{"images:read"}, []string{}, []string{"nope"}
-	for name, ok := range map[string]PatchKey{
-		"scopes": {Scopes: &scopes}, "a date": {ExpiresAt: &later}, "a name": {DisplayName: ptr("CI")},
-	} {
-		if err := ok.Validate(now, max); err != nil {
-			t.Errorf("%s: %v", name, err)
-		}
+	if err := (PatchKey{DisplayName: ptr("CI")}).Validate(); err != nil {
+		t.Errorf("a name: %v", err)
 	}
 	for name, req := range map[string]PatchKey{
-		"nothing": {}, "no scope left": {Scopes: &none}, "an unknown scope": {Scopes: &bad}, "a date that passed": {ExpiresAt: &past},
-		"a date too far": {ExpiresAt: &tooFar}, "an empty name": {DisplayName: ptr("")},
+		"nothing": {}, "an empty name": {DisplayName: ptr("")}, "a name too long": {DisplayName: ptr(strings.Repeat("a", 101))},
 	} {
-		if err := req.Validate(now, max); err == nil {
+		if err := req.Validate(); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
 	}
-	if err := (PatchKey{ExpiresAt: &tooFar}).Validate(now, 0); err != nil {
-		t.Errorf("no maximum: a far date is fine: %v", err)
-	}
 }
 
-func TestNewKeyIsParsedAndHashedByTheAuthentication(t *testing.T) {
-	id, key, hash, err := NewKey()
+func TestNewKeyID(t *testing.T) {
+	id, err := NewKeyID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := auth.ParseKey(key)
-	if err != nil {
-		t.Fatalf("the key does not parse: %v", err)
+	if !ValidKeyName(id) {
+		t.Errorf("%q is not an id of a key: 8 random bytes in hex are expected", id)
 	}
-	if p.ID != id || !ValidKeyName(id) || len(p.Secret) != 64 {
-		t.Errorf("parsed %+v for the id %q: 8 bytes in hex and 32 bytes in hex are expected", p, id)
+	if name := AccountPrefix + id; len(name) > 63 {
+		t.Errorf("the user name %q is too long for a key name", name)
 	}
-	if hash != auth.HashSecret(p.Secret) {
-		t.Error("the stored hash is not the one the authentication computes")
-	}
-	if strings.Contains(hash, p.Secret) {
-		t.Error("the hash holds the secret")
-	}
-	_, other, _, _ := NewKey()
-	if other == key {
-		t.Error("two keys are the same")
+	if other, _ := NewKeyID(); other == id {
+		t.Error("two keys have the same id")
 	}
 }
 

@@ -51,7 +51,7 @@ func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 func TestMiddlewareRefusesWithoutACredential(t *testing.T) {
-	a := &Authenticator{Users: &fakeVerifier{}, Keys: &fakeVerifier{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a := &Authenticator{Users: &fakeVerifier{}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, header := range []string{"", "Basic dXNlcjpwYXNz", "Bearer", "Bearer ", "Token abc", "abc"} {
 		rec, seen := run(t, a, header)
 		if rec.Code != http.StatusUnauthorized || seen != nil {
@@ -64,71 +64,55 @@ func TestMiddlewareRefusesWithoutACredential(t *testing.T) {
 			t.Errorf("%q: code = %q", header, code)
 		}
 	}
-	if len(a.Users.(*fakeVerifier).got)+len(a.Keys.(*fakeVerifier).got) != 0 {
-		t.Error("a verifier was asked about a request that had no bearer token")
+	if len(a.Users.(*fakeVerifier).got) != 0 {
+		t.Error("the verifier was asked about a request that had no bearer token")
 	}
 }
 
-func TestMiddlewarePicksTheVerifierFromThePrefix(t *testing.T) {
+func TestMiddlewareGivesTheRequestTheIdentityOfTheVerifier(t *testing.T) {
 	users := &fakeVerifier{identity: Identity{Kind: KindUser, Subject: "user:alice@example.org"}}
-	keys := &fakeVerifier{identity: Identity{Kind: KindAPIKey, Subject: "user:alice@example.org"}}
-	a := &Authenticator{Users: users, Keys: keys, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	a := &Authenticator{Users: users, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
 	rec, seen := run(t, a, "bearer eyJ.token.sig") // the scheme is not case sensitive
 	if rec.Code != http.StatusOK || seen == nil || seen.Subject != "user:alice@example.org" {
-		t.Errorf("user: status %d, identity %+v", rec.Code, seen)
+		t.Errorf("status %d, identity %+v", rec.Code, seen)
 	}
-	rec, seen = run(t, a, "Bearer phk_0123456789abcdef_"+goodSecret)
-	if rec.Code != http.StatusOK || seen == nil || seen.Subject != "user:alice@example.org" {
-		t.Errorf("key: status %d, identity %+v", rec.Code, seen)
-	}
-	if len(users.got) != 1 || len(keys.got) != 1 {
-		t.Errorf("users asked %d times, keys %d times, want 1 and 1", len(users.got), len(keys.got))
+	if len(users.got) != 1 || users.got[0] != "eyJ.token.sig" {
+		t.Errorf("the verifier was asked %v, want the token once", users.got)
 	}
 }
 
 func TestMiddlewareAnswersTheSameWhateverWasWrong(t *testing.T) {
 	var logs strings.Builder
-	a := &Authenticator{
-		Users: &fakeVerifier{err: errors.New("unauthenticated: token is expired")},
-		Keys:  &fakeVerifier{err: errors.New("unauthenticated: wrong secret for demo.ci")},
-		Log:   slog.New(slog.NewTextHandler(&logs, nil)),
-	}
-	secretKey := "phk_0123456789abcdef_" + goodSecret
 	var bodies []string
-	for _, header := range []string{"Bearer some.jwt.token", "Bearer " + secretKey} {
-		rec, _ := run(t, a, header)
+	for _, reason := range []string{"unauthenticated: token is expired", "unauthenticated: wrong audience for apikey-demo"} {
+		a := &Authenticator{Users: &fakeVerifier{err: errors.New(reason)}, Log: slog.New(slog.NewTextHandler(&logs, nil))}
+		rec, _ := run(t, a, "Bearer some.jwt.token")
 		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("%q: status %d", header, rec.Code)
+			t.Fatalf("%q: status %d", reason, rec.Code)
 		}
 		bodies = append(bodies, rec.Body.String())
 	}
 	if bodies[0] != bodies[1] {
 		t.Errorf("the answers differ, which tells a caller what was wrong:\n%s\n%s", bodies[0], bodies[1])
 	}
-	for _, leak := range []string{"expired", "wrong secret", "demo.ci"} {
+	for _, leak := range []string{"expired", "audience", "apikey-demo"} {
 		if strings.Contains(bodies[0]+bodies[1], leak) {
 			t.Errorf("the body leaks %q", leak)
 		}
 	}
-	if strings.Contains(logs.String(), goodSecret) || strings.Contains(logs.String(), "some.jwt.token") {
+	if strings.Contains(logs.String(), "some.jwt.token") {
 		t.Errorf("a credential is in the logs: %s", logs.String())
 	}
-	if !strings.Contains(logs.String(), "wrong secret") {
+	if !strings.Contains(logs.String(), "wrong audience") {
 		t.Errorf("the reason should be logged: %s", logs.String())
 	}
 }
 
 func TestMiddlewareAnswers503WhenTheBackendIsDown(t *testing.T) {
-	a := &Authenticator{
-		Users: &fakeVerifier{err: ErrUnavailable},
-		Keys:  &fakeVerifier{err: ErrUnavailable},
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	for _, header := range []string{"Bearer some.jwt.token", "Bearer phk_0123456789abcdef_" + goodSecret} {
-		rec, seen := run(t, a, header)
-		if rec.Code != http.StatusServiceUnavailable || seen != nil || errorCode(t, rec) != "unavailable" {
-			t.Errorf("%q: status %d", header, rec.Code)
-		}
+	a := &Authenticator{Users: &fakeVerifier{err: ErrUnavailable}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	rec, seen := run(t, a, "Bearer some.jwt.token")
+	if rec.Code != http.StatusServiceUnavailable || seen != nil || errorCode(t, rec) != "unavailable" {
+		t.Errorf("status %d", rec.Code)
 	}
 }

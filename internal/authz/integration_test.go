@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
@@ -34,22 +35,26 @@ func TestAgainstTheRealModel(t *testing.T) {
 		email := role + "-" + tenant + "@example.org"
 		return auth.Identity{Kind: auth.KindUser, Subject: "user:" + email, Email: email}
 	}
-	// Keys are their owner within their scopes: one of an operator, one of a viewer that was given every scope.
-	keyOf := func(owner auth.Identity, scopes ...string) auth.Identity {
-		return auth.Identity{Kind: auth.KindAPIKey, Subject: owner.Subject, Email: owner.Email, Name: "0123456789abcdef", Scopes: scopes}
+	// A key is checked as itself, with the tuples that expire: one that is valid, one that expired, one with no tuple.
+	keyOf := func(name string) auth.Identity {
+		return auth.Identity{Kind: auth.KindServiceKey, Subject: "apikey:apikey-" + name, Name: "apikey-" + name}
 	}
-	key1 := keyOf(user("operator"), "tenants:read", "instances:write", "memberships:write")
-	greedy := keyOf(user("viewer"), authz.Scopes()...)
+	valid, expired, nothing := keyOf("valid-"+tenant), keyOf("expired-"+tenant), keyOf("nothing-"+tenant)
+	later, earlier := time.Now().Add(time.Hour), time.Now().Add(-time.Hour)
 
 	fgatest.Store{BaseURL: url, StoreID: store, Key: key}.Write(t,
 		fgatest.Tuple{User: user("admin").Subject, Relation: "admin", Object: object},
 		fgatest.Tuple{User: user("operator").Subject, Relation: "operator", Object: object},
 		fgatest.Tuple{User: user("user").Subject, Relation: "user", Object: object},
 		fgatest.Tuple{User: user("viewer").Subject, Relation: "viewer", Object: object},
+		fgatest.Tuple{User: valid.Subject, Relation: "key_tenant_read", Object: object, ExpiresAt: later},
+		fgatest.Tuple{User: valid.Subject, Relation: "key_instances_write", Object: object, ExpiresAt: later},
+		fgatest.Tuple{User: expired.Subject, Relation: "key_tenant_read", Object: object, ExpiresAt: earlier},
+		fgatest.Tuple{User: expired.Subject, Relation: "key_instances_write", Object: object, ExpiresAt: earlier},
 	)
 
 	client := fga.New(url, store, key, nil)
-	a := authz.New(client, "", nil)
+	a := authz.New(client, "")
 
 	all := []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages, authz.WriteImages, authz.ReadMemberships, authz.WriteMemberships}
 	tests := []struct {
@@ -61,9 +66,10 @@ func TestAgainstTheRealModel(t *testing.T) {
 		{"operator", user("operator"), []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages, authz.WriteImages}},
 		{"user", user("user"), []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages}},
 		{"viewer", user("viewer"), []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.ReadImages}},
-		// The scope memberships:write is there, the operator it acts as may not: nothing. instances:read is not a scope of the key.
-		{"key of an operator: tenants:read, instances:write, memberships:write", key1, []authz.Action{authz.ReadTenant, authz.WriteInstances}},
-		{"key of a viewer with every scope", greedy, []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.ReadImages}},
+		// A key has what its tuples say until their date, and nothing else: no role is derived for it.
+		{"key with tenants:read and instances:write", valid, []authz.Action{authz.ReadTenant, authz.WriteInstances}},
+		{"key past its date", expired, nil},
+		{"key with no tuple", nothing, nil},
 		{"stranger", user("stranger"), nil},
 	}
 	for _, tt := range tests {
@@ -85,14 +91,14 @@ func TestAgainstTheRealModel(t *testing.T) {
 		if err != nil || !slices.Equal(seen, []string{tenant}) {
 			t.Errorf("viewer sees %v (err %v), want only %s", seen, err, tenant)
 		}
-		seen, err = a.Tenants(t.Context(), key1)
+		seen, err = a.Tenants(t.Context(), valid)
 		if err != nil || !slices.Equal(seen, []string{tenant}) {
 			t.Errorf("the key sees %v (err %v), want only %s", seen, err, tenant)
 		}
-		// Without tenants:read a key sees nothing, whatever its owner sees.
-		seen, err = a.Tenants(t.Context(), keyOf(user("viewer"), "instances:read"))
+		// Past its date a key sees nothing.
+		seen, err = a.Tenants(t.Context(), expired)
 		if err != nil || len(seen) != 0 {
-			t.Errorf("a key without tenants:read sees %v (err %v)", seen, err)
+			t.Errorf("a key past its date sees %v (err %v)", seen, err)
 		}
 		seen, err = a.Tenants(t.Context(), user("stranger"))
 		if err != nil || len(seen) != 0 {
