@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"encoding/base64"
 	"errors"
 	"slices"
 	"testing"
@@ -164,8 +165,9 @@ func TestTakeKeyReadsTheSecretOnceAndDeletesIt(t *testing.T) {
 	client := newKeysClient()
 	s := NewApiKeys(Static(client))
 	secrets := client.Resource(secretsResource).Namespace(KeysNamespace)
-	// "key-of-the-account" in base64.
-	if _, err := secrets.Create(t.Context(), secretOf("0123456789abcdef-token", map[string]any{"token": "a2V5LW9mLXRoZS1hY2NvdW50"}), metav1.CreateOptions{}); err != nil {
+	// A Secret holds its values in base64.
+	encoded := base64.StdEncoding.EncodeToString([]byte("key-of-the-account"))
+	if _, err := secrets.Create(t.Context(), secretOf("0123456789abcdef-token", map[string]any{"token": encoded}), metav1.CreateOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	key, err := s.TakeKey(t.Context(), "0123456789abcdef")
