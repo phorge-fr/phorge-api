@@ -1,6 +1,6 @@
 // Package access is what the API knows about who may do what: the Membership kind, which gives a person a role on a tenant,
-// and the ApiKey kind, a personal key that acts as its owner within a list of scopes. The objects themselves are read and written by internal/kube,
-// and what they grant is decided by OpenFGA (internal/authz).
+// and the ApiKey kind, a service account of Authentik with scopes on tenants. The objects themselves are read and written by
+// internal/kube, and what they grant is decided by OpenFGA (internal/authz).
 package access
 
 import (
@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -127,18 +128,34 @@ type MembershipStore interface {
 // MaxDisplayName is the limit of the XRD.
 const MaxDisplayName = 100
 
+// MaxGrants is the limit of the XRD on the tenants of a key.
+const MaxGrants = 50
+
+// AccountPrefix starts the user name of the service account of a key: apikey-<id>. The Authentik token of the key carries it as
+// preferred_username, and apikey:apikey-<id> is its subject in OpenFGA (the composition of Hangar names them).
+const AccountPrefix = "apikey-"
+
 // ValidKeyName reports whether s is the id of a key.
 func ValidKeyName(s string) bool { return auth.ValidKeyID(s) }
 
-// ApiKey is an ApiKey object as the API presents it. The key itself is not stored anywhere, only its hash, and is not here.
+// Grant is what a key may do on one tenant.
+type Grant struct {
+	Tenant string   `json:"tenant"`
+	Scopes []string `json:"scopes"`
+}
+
+// ApiKey is an ApiKey object as the API presents it. The key itself is not here: it is shown once, when it is created.
 type ApiKey struct {
-	// ID is the name of the object and the second part of the key.
+	// ID is the name of the object.
 	ID          string
 	Owner       string
 	DisplayName string
-	Scopes      []string
+	Grants      []Grant
 	ExpiresAt   *time.Time
-	// Expired is status.expired, which the composition sets within about a minute of the date.
+	// Identity is the user name of the service account (status.identity), with which the key is exchanged for a token.
+	Identity string
+	// Expired is status.expired, which the composition sets within about a minute of the date: OpenFGA refuses the key at
+	// the date itself.
 	Expired   bool
 	CreatedAt time.Time
 	Status    status.Object
@@ -147,100 +164,83 @@ type ApiKey struct {
 // CreateKey is what creating a key asks for.
 type CreateKey struct {
 	DisplayName string     `json:"displayName"`
-	Scopes      []string   `json:"scopes"`
 	ExpiresAt   *time.Time `json:"expiresAt"`
+	Grants      []Grant    `json:"grants"`
 }
 
-// PatchKey is what can change on a key: what it may do, until when, and how it is called. Never the secret: to rotate a key,
-// delete it and create another.
+// PatchKey is what can change on a key: how it is called. What it may do and until when are fixed: to change them, delete
+// the key and create another.
 type PatchKey struct {
-	Scopes      *[]string  `json:"scopes"`
-	ExpiresAt   *time.Time `json:"expiresAt"`
-	DisplayName *string    `json:"displayName"`
+	DisplayName *string `json:"displayName"`
 }
 
-func checkScopes(p *problems, scopes []string) {
+func checkGrants(p *problems, grants []Grant) {
 	valid := authz.Scopes()
-	if len(scopes) == 0 {
-		p.add("scopes must hold at least one of %v", valid)
+	if len(grants) == 0 || len(grants) > MaxGrants {
+		p.add("grants must hold 1 to %d tenants, each with its scopes", MaxGrants)
 	}
-	seen := map[string]bool{}
-	for _, s := range scopes {
-		if !slices.Contains(valid, s) {
-			p.add("scope %q does not exist, the scopes are %v", s, valid)
+	tenants := map[string]bool{}
+	for _, g := range grants {
+		if !auth.ValidTenantName(g.Tenant) {
+			p.add("grants: %q is not the name of a tenant", g.Tenant)
 		}
-		if seen[s] {
-			p.add("scope %q is given twice", s)
+		if tenants[g.Tenant] {
+			p.add("grants: tenant %q is given twice", g.Tenant)
 		}
-		seen[s] = true
+		tenants[g.Tenant] = true
+		if len(g.Scopes) == 0 {
+			p.add("grants: tenant %q needs at least one of the scopes %v", g.Tenant, valid)
+		}
+		seen := map[string]bool{}
+		for _, sc := range g.Scopes {
+			if !slices.Contains(valid, sc) {
+				p.add("grants: scope %q does not exist, the scopes are %v", sc, valid)
+			}
+			if seen[sc] {
+				p.add("grants: scope %q is given twice for tenant %q", sc, g.Tenant)
+			}
+			seen[sc] = true
+		}
 	}
 }
 
-// checkExpiry checks a date of expiry: in the future and, when a maximum lifetime is configured (max > 0), within it.
-func checkExpiry(p *problems, at *time.Time, now time.Time, max time.Duration) {
-	switch {
-	case at == nil:
-	case !at.After(now):
-		p.add("expiresAt must be in the future")
-	case max > 0 && at.After(now.Add(max)):
-		p.add("expiresAt must be within %s", max)
-	}
-}
-
-// Validate checks the request. now is the time the expiry is compared with; with a maximum lifetime (max > 0) an expiry is
-// required and capped, with none (0) it is optional.
+// Validate checks the request. A key always expires: OpenFGA refuses it from its date, so there is no key without one. The
+// date is in the future and, when a maximum lifetime is configured (max > 0), within it.
 func (r CreateKey) Validate(now time.Time, max time.Duration) error {
 	var p problems
 	if n := utf8.RuneCountInString(r.DisplayName); n == 0 || n > MaxDisplayName {
 		p.add("displayName is required, at most %d characters", MaxDisplayName)
 	}
-	checkScopes(&p, r.Scopes)
-	if r.ExpiresAt == nil && max > 0 {
-		p.add("expiresAt is required: a key expires, within %s", max)
+	checkGrants(&p, r.Grants)
+	switch {
+	case r.ExpiresAt == nil:
+		p.add("expiresAt is required: a key expires")
+	case !r.ExpiresAt.After(now):
+		p.add("expiresAt must be in the future")
+	case max > 0 && r.ExpiresAt.After(now.Add(max)):
+		p.add("expiresAt must be within %s", max)
 	}
-	checkExpiry(&p, r.ExpiresAt, now, max)
 	return p.err()
 }
 
-// Validate checks the patch, with the same maximum lifetime.
-func (r PatchKey) Validate(now time.Time, max time.Duration) error {
+// Validate checks the patch.
+func (r PatchKey) Validate() error {
 	var p problems
-	if r.Scopes == nil && r.ExpiresAt == nil && r.DisplayName == nil {
-		p.add("nothing to change: give scopes, expiresAt or displayName")
+	if r.DisplayName == nil {
+		p.add("nothing to change: give displayName (the grants and the expiry of a key cannot change, create another key)")
+	} else if n := utf8.RuneCountInString(*r.DisplayName); n == 0 || n > MaxDisplayName {
+		p.add("displayName must be 1 to %d characters", MaxDisplayName)
 	}
-	if r.Scopes != nil {
-		checkScopes(&p, *r.Scopes)
-	}
-	if r.DisplayName != nil {
-		if n := utf8.RuneCountInString(*r.DisplayName); n == 0 || n > MaxDisplayName {
-			p.add("displayName must be 1 to %d characters", MaxDisplayName)
-		}
-	}
-	checkExpiry(&p, r.ExpiresAt, now, max)
 	return p.err()
 }
 
-// NewSecret returns the secret of a key: 32 random bytes, in hex.
-func NewSecret() (string, error) { return randomHex(32) }
-
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
+// NewKeyID makes the id of a key: 8 random bytes in hex, the name of its object. The key itself is made by Authentik.
+func NewKeyID() (string, error) {
+	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// NewKey makes the id, the key a caller is given once, and the hash that is stored. Reading the object never reveals the key.
-func NewKey() (id, key, hash string, err error) {
-	if id, err = randomHex(8); err != nil {
-		return "", "", "", err
-	}
-	secret, err := NewSecret()
-	if err != nil {
-		return "", "", "", err
-	}
-	return id, auth.FormatKey(id, secret), auth.HashSecret(secret), nil
 }
 
 // KeyRecord is what is written for a new key.
@@ -248,7 +248,6 @@ type KeyRecord struct {
 	CreateKey
 	ID    string
 	Owner string
-	Hash  string
 }
 
 // OwnerLabel is the value of the label that finds the keys of a user: a label cannot hold an email.
@@ -256,6 +255,10 @@ func OwnerLabel(email string) string {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
 	return hex.EncodeToString(sum[:])[:32]
 }
+
+// ErrKeyNotIssued is what TakeKey answers while the key is not in its Secret yet (Crossplane has not created the account),
+// or when it was already taken.
+var ErrKeyNotIssued = errors.New("the key is not issued")
 
 // KeyStore reads and writes the API keys. They are not in a tenant: they belong to a user, and the routes only show a user
 // their own. Delete is in the foreground.
@@ -266,4 +269,7 @@ type KeyStore interface {
 	Create(ctx context.Context, r KeyRecord) (ApiKey, error)
 	Patch(ctx context.Context, id string, r PatchKey) (ApiKey, error)
 	Delete(ctx context.Context, id string) error
+	// TakeKey reads the key of an ApiKey from its Secret and deletes the Secret, so that it is read once. ErrKeyNotIssued
+	// when it is not there (yet, or any more).
+	TakeKey(ctx context.Context, id string) (string, error)
 }

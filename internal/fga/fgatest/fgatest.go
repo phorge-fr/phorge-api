@@ -14,8 +14,12 @@ import (
 	"time"
 )
 
-// Tuple is a relationship: User has Relation on Object.
-type Tuple struct{ User, Relation, Object string }
+// Tuple is a relationship: User has Relation on Object. A tuple of an API key carries the condition not_expired of the model
+// with its ExpiresAt, which the model requires of every key_* relation.
+type Tuple struct {
+	User, Relation, Object string
+	ExpiresAt              time.Time
+}
 
 // Store is a store of a running OpenFGA.
 type Store struct {
@@ -39,9 +43,13 @@ func (s Store) Write(t *testing.T, tuples ...Tuple) {
 }
 
 func (s Store) send(ctx context.Context, op string, tuples []Tuple) error {
-	keys := make([]map[string]string, len(tuples))
+	keys := make([]map[string]any, len(tuples))
 	for i, tp := range tuples {
-		keys[i] = map[string]string{"user": tp.User, "relation": tp.Relation, "object": tp.Object}
+		keys[i] = map[string]any{"user": tp.User, "relation": tp.Relation, "object": tp.Object}
+		// OpenFGA identifies a tuple to delete by its user, relation and object, and refuses a condition there.
+		if op == "writes" && !tp.ExpiresAt.IsZero() {
+			keys[i]["condition"] = map[string]any{"name": "not_expired", "context": map[string]any{"expires_at": tp.ExpiresAt.UTC().Format(time.RFC3339)}}
+		}
 	}
 	body, _ := json.Marshal(map[string]any{op: map[string]any{"tuple_keys": keys}})
 	endpoint, err := url.JoinPath(s.BaseURL, "stores", s.StoreID, "write")

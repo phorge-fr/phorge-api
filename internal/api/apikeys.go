@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -8,16 +11,18 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/auth"
+	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
+	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
-// keyRoutes are the routes of the API keys. A key is personal: it belongs to the user who created it, acts as them within
-// its scopes, and only they see it. Only a person manages keys, signed in with Authentik: a key cannot create, read or delete
-// keys. For now creating and changing one is for the platform administrators (the group of Authentik); reading and deleting
-// your own stays open to anyone, so that a key can always be revoked.
+// keyRoutes are the routes of the API keys. A key is a service account of Authentik with scopes on tenants, and it belongs to
+// the user who created it: only they see it, and it never gets more than they hold. Only a person manages keys, signed in with
+// Authentik: a key cannot create, read or delete keys. For now creating one is for the platform administrators (the group of
+// Authentik); reading and deleting your own stays open to anyone, so that a key can always be revoked.
 type keyRoutes struct {
 	base
 	store    access.KeyStore
@@ -29,7 +34,7 @@ func (k *keyRoutes) register(s *server.Server, authn func(http.Handler) http.Han
 	s.Handle("GET "+collection, authn(k.person(http.HandlerFunc(k.list))))
 	s.Handle("POST "+collection, authn(k.person(k.admin(http.HandlerFunc(k.create)))))
 	s.Handle("GET "+item, authn(k.person(http.HandlerFunc(k.get))))
-	s.Handle("PATCH "+item, authn(k.person(k.admin(http.HandlerFunc(k.patch)))))
+	s.Handle("PATCH "+item, authn(k.person(http.HandlerFunc(k.patch))))
 	s.Handle("DELETE "+item, authn(k.person(http.HandlerFunc(k.delete))))
 }
 
@@ -46,8 +51,8 @@ func (k *keyRoutes) person(next http.Handler) http.Handler {
 	})
 }
 
-// admin lets through who may create and change keys: the platform administrators, or any person when the deployment says so
-// (API_KEY_CREATION). A key never exceeds its owner, so opening this only decides who gets one.
+// admin lets through who may create keys: the platform administrators, or any person when the deployment says so
+// (API_KEY_CREATION). A key never exceeds what its creator holds, so opening this only decides who gets one.
 func (k *keyRoutes) admin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if k.settings.KeyCreation == config.KeyCreationUsers {
@@ -55,14 +60,9 @@ func (k *keyRoutes) admin(next http.Handler) http.Handler {
 			return
 		}
 		id, _ := auth.FromContext(r.Context())
-		ok, err := k.authz.PlatformAdmin(r.Context(), id)
-		if err != nil {
-			k.unavailable(w, "authorization", err)
-			return
-		}
-		if !ok {
+		if !k.authz.PlatformAdmin(r.Context(), id) {
 			k.log.Info("authorization refused", "subject", id.Subject, "route", r.Pattern)
-			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may create and change API keys on this platform")
+			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may create API keys on this platform")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -70,29 +70,35 @@ func (k *keyRoutes) admin(next http.Handler) http.Handler {
 }
 
 type keyBody struct {
-	ID          string       `json:"id"`
-	Owner       string       `json:"owner"`
-	DisplayName string       `json:"displayName"`
-	Scopes      []string     `json:"scopes"`
-	ExpiresAt   *time.Time   `json:"expiresAt,omitempty"`
-	Expired     bool         `json:"expired"`
-	Phase       status.Phase `json:"phase"`
-	Problems    string       `json:"problems,omitempty"`
-	CreatedAt   time.Time    `json:"createdAt"`
-	// Key is the key itself. It is in the answer to its creation and nowhere else: only its hash is stored.
+	ID          string         `json:"id"`
+	Owner       string         `json:"owner"`
+	DisplayName string         `json:"displayName"`
+	Grants      []access.Grant `json:"grants"`
+	ExpiresAt   *time.Time     `json:"expiresAt,omitempty"`
+	Expired     bool           `json:"expired"`
+	// Identity is the user name of the service account: the key is exchanged with it for a token of Authentik.
+	Identity  string       `json:"identity"`
+	Phase     status.Phase `json:"phase"`
+	Problems  string       `json:"problems,omitempty"`
+	CreatedAt time.Time    `json:"createdAt"`
+	// Key is the key itself. It is in the answer to its creation and nowhere else: it is read from the cluster once.
 	Key string `json:"key,omitempty"`
 }
 
 func (k *keyRoutes) body(key access.ApiKey) keyBody {
-	scopes := key.Scopes
-	if scopes == nil {
-		scopes = []string{}
+	grants := key.Grants
+	if grants == nil {
+		grants = []access.Grant{}
 	}
-	// A key past its date is expired whatever the composition has caught up with.
+	identity := key.Identity
+	if identity == "" {
+		identity = access.AccountPrefix + key.ID
+	}
+	// A key past its date is expired whatever the composition has caught up with: OpenFGA refuses it at the date.
 	expired := key.Expired || (key.ExpiresAt != nil && !key.ExpiresAt.After(k.now()))
 	return keyBody{
-		ID: key.ID, Owner: key.Owner, DisplayName: key.DisplayName, Scopes: scopes, ExpiresAt: key.ExpiresAt, Expired: expired,
-		Phase: key.Status.At(k.now()), Problems: key.Status.Problems, CreatedAt: key.CreatedAt,
+		ID: key.ID, Owner: key.Owner, DisplayName: key.DisplayName, Grants: grants, ExpiresAt: key.ExpiresAt, Expired: expired,
+		Identity: identity, Phase: key.Status.At(k.now()), Problems: key.Status.Problems, CreatedAt: key.CreatedAt,
 	}
 }
 
@@ -139,6 +145,63 @@ func (k *keyRoutes) get(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// holds reports whether the creator holds what a grant gives, on a tenant that exists. A key never exceeds the person who
+// makes it, and a tenant they cannot see is not told apart from one that does not exist.
+func (k *keyRoutes) holds(w http.ResponseWriter, r *http.Request, id auth.Identity, grants []access.Grant) bool {
+	admin := k.authz.PlatformAdmin(r.Context(), id)
+	for _, g := range grants {
+		if admin {
+			if _, err := k.tenants.Get(r.Context(), g.Tenant); err != nil {
+				if errors.Is(err, tenants.ErrNotFound) {
+					httperr.Write(w, http.StatusForbidden, "forbidden", "a key cannot be given what you do not hold on tenant "+g.Tenant)
+				} else {
+					k.storeError(w, err, "tenant")
+				}
+				return false
+			}
+			continue
+		}
+		for _, scope := range g.Scopes {
+			action, _ := authz.ScopeAction(scope)
+			ok, err := k.authz.Allowed(r.Context(), id, action, g.Tenant)
+			if err != nil {
+				k.unavailable(w, "authorization", err)
+				return false
+			}
+			if !ok {
+				k.log.Info("key refused: more than its creator holds", "subject", id.Subject, "tenant", g.Tenant, "scope", scope)
+				httperr.Write(w, http.StatusForbidden, "forbidden", "a key cannot be given what you do not hold on tenant "+g.Tenant)
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// issue waits for Crossplane to make the service account of a key and returns its key, read once from the cluster.
+func (k *keyRoutes) issue(ctx context.Context, id string) (string, error) {
+	timeout, every := k.settings.KeyIssueTimeout, k.settings.KeyPollInterval
+	if timeout <= 0 {
+		timeout = time.Minute
+	}
+	if every <= 0 {
+		every = time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for {
+		key, err := k.store.TakeKey(ctx, id)
+		if !errors.Is(err, access.ErrKeyNotIssued) {
+			return key, err
+		}
+		select {
+		case <-ctx.Done():
+			return "", fmt.Errorf("the key of %s was not issued within %s", id, timeout)
+		case <-time.After(every):
+		}
+	}
+}
+
 func (k *keyRoutes) create(w http.ResponseWriter, r *http.Request) {
 	var req access.CreateKey
 	if !decode(w, r, &req) {
@@ -149,24 +212,38 @@ func (k *keyRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := auth.FromContext(r.Context())
-	keyID, key, hash, err := access.NewKey()
+	if !k.holds(w, r, id, req.Grants) {
+		return
+	}
+	keyID, err := access.NewKeyID()
 	if err != nil {
 		k.unavailable(w, "the random source", err)
 		return
 	}
-	created, err := k.store.Create(r.Context(), access.KeyRecord{CreateKey: req, ID: keyID, Owner: id.Email, Hash: hash})
+	created, err := k.store.Create(r.Context(), access.KeyRecord{CreateKey: req, ID: keyID, Owner: id.Email})
 	if err != nil {
 		k.storeError(w, err, "API key")
 		return
 	}
-	k.log.Info("API key created", "key", keyID, "scopes", req.Scopes, "by", id.Subject)
+	key, err := k.issue(r.Context(), keyID)
+	if err != nil {
+		// A key that cannot be handed over is of no use and could not be shown later: nothing is left behind.
+		rollback, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Second)
+		defer cancel()
+		if derr := k.store.Delete(rollback, keyID); derr != nil {
+			k.log.Error("API key not removed after failing to issue it", "key", keyID, "error", derr)
+		}
+		k.unavailable(w, "the creation of the key", err)
+		return
+	}
+	k.log.Info("API key created", "key", keyID, "tenants", len(req.Grants), "by", id.Subject)
 
-	// The only time the key is shown: it is not stored, and cannot be shown again.
+	// The only time the key is shown: it was removed from the cluster as it was read.
 	body := k.body(created)
 	body.Key = key
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Location", "/v1/apikeys/"+created.ID)
-	writeJSON(w, http.StatusAccepted, body)
+	writeJSON(w, http.StatusCreated, body)
 }
 
 func (k *keyRoutes) patch(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +251,7 @@ func (k *keyRoutes) patch(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if err := req.Validate(k.now(), k.settings.KeyMaxLifetime); err != nil {
+	if err := req.Validate(); err != nil {
 		k.storeError(w, err, "API key")
 		return
 	}

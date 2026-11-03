@@ -23,8 +23,11 @@ type Settings struct {
 	InstanceBootGrace time.Duration
 	// InstanceStuckAfter is how long a transition lasts before it is reported in problems.
 	InstanceStuckAfter time.Duration
-	// KeyMaxLifetime caps the life of an API key and makes its expiry required, 0 leaves both free.
+	// KeyMaxLifetime caps the life of an API key, 0 leaves it free (a key always has an expiry).
 	KeyMaxLifetime time.Duration
+	// KeyIssueTimeout is how long creating a key waits for Crossplane to make its service account, and KeyPollInterval how often
+	// it looks. Zero takes the defaults (a minute, a second): the values are for the tests.
+	KeyIssueTimeout, KeyPollInterval time.Duration
 	// KeyCreation is who creates and changes API keys: config.KeyCreationPlatformAdmins or config.KeyCreationUsers.
 	KeyCreation string
 }
@@ -48,7 +51,7 @@ type Deps struct {
 // Register adds the routes. A route under /v1 must go through d.Auth.Middleware and be described in
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
-	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz, d.Log)))
+	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz)))
 
 	now := d.Now
 	if now == nil {
@@ -71,23 +74,17 @@ type identityBody struct {
 	Subject string    `json:"subject"`
 	Email   string    `json:"email,omitempty"`
 	// Name is the id of the key.
-	Name   string   `json:"name,omitempty"`
-	Scopes []string `json:"scopes,omitempty"`
+	Name string `json:"name,omitempty"`
 	// PlatformAdmin: the caller may create, resize and delete tenants.
 	PlatformAdmin bool `json:"platformAdmin"`
 }
 
-func whoami(a *authz.Authorizer, log *slog.Logger) http.HandlerFunc {
+func whoami(a *authz.Authorizer) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, _ := auth.FromContext(r.Context())
-		admin, err := a.AdminMay(r.Context(), id, authz.WriteTenants)
-		if err != nil {
-			// Who you are does not depend on Authentik being up: the answer is "not an administrator" rather than a failure.
-			log.Error("platform administrator status unknown", "error", err)
-		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(identityBody{
-			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Name: id.Name, Scopes: id.Scopes, PlatformAdmin: admin,
+			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Name: id.Name, PlatformAdmin: a.PlatformAdmin(r.Context(), id),
 		})
 	}
 }

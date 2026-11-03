@@ -39,12 +39,7 @@ func (t *tenantRoutes) visible(next http.Handler) http.Handler {
 func (t *tenantRoutes) adminOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := auth.FromContext(r.Context())
-		admin, err := t.authz.AdminMay(r.Context(), id, authz.WriteTenants)
-		if err != nil {
-			t.unavailable(w, "authorization", err)
-			return
-		}
-		if !admin {
+		if !t.authz.PlatformAdmin(r.Context(), id) {
 			t.log.Info("authorization refused", "subject", id.Subject, "key", id.Name, "route", r.Pattern)
 			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may do this")
 			return
@@ -78,11 +73,7 @@ func (t *tenantRoutes) list(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
 
 	var visible []string
-	all, err := t.authz.AdminMay(r.Context(), id, authz.ReadTenant)
-	if err != nil {
-		t.unavailable(w, "authorization", err)
-		return
-	}
+	all := t.authz.PlatformAdmin(r.Context(), id)
 	if !all {
 		var err error
 		if visible, err = t.authz.Tenants(r.Context(), id); err != nil {

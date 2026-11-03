@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -212,5 +213,69 @@ func TestOIDCDiscoveryIsLazyBacksOffAndRecovers(t *testing.T) {
 	now = now.Add(discoveryBackoff + time.Second)
 	if _, err := v.Verify(t.Context(), token); err != nil {
 		t.Fatalf("after the backoff and a recovery: %v", err)
+	}
+}
+
+func TestOIDCAcceptsAServiceKeyWhenTheDeploymentSaysSo(t *testing.T) {
+	p := newIDP(t)
+	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v.AcceptKeys("apikey-")
+
+	// The token of a service account: no email (authentik gives an empty one), its own name.
+	id, err := v.Verify(t.Context(), p.token(t, map[string]any{"email": "", "preferred_username": "apikey-0123456789abcdef"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Kind != KindServiceKey || id.Subject != "apikey:apikey-0123456789abcdef" || id.Name != "apikey-0123456789abcdef" ||
+		id.Email != "" || len(id.Groups) != 0 {
+		t.Errorf("unexpected identity: %+v", id)
+	}
+	// The claim may also be missing altogether.
+	if _, err := v.Verify(t.Context(), p.token(t, map[string]any{"email": nil, "preferred_username": "apikey-0123456789abcdef"})); err != nil {
+		t.Errorf("no email claim at all: %v", err)
+	}
+}
+
+func TestOIDCRefusesATokenWithoutEmailUnlessItIsAServiceKey(t *testing.T) {
+	p := newIDP(t)
+	for name, tt := range map[string]struct {
+		prefix, username string
+	}{
+		"keys are off":                    {"", "apikey-0123456789abcdef"},
+		"another name":                    {"apikey-", "svc-backup"},
+		"the prefix alone":                {"apikey-", "apikey-"},
+		"no user name":                    {"apikey-", ""},
+		"a capital":                       {"apikey-", "apikey-ABC"},
+		"a colon":                         {"apikey-", "apikey-a:b"},
+		"a relation":                      {"apikey-", "apikey-a#member"},
+		"a wildcard":                      {"apikey-", "apikey-*"},
+		"a space":                         {"apikey-", "apikey-a b"},
+		"an at sign":                      {"apikey-", "apikey-a@b"},
+		"too long":                        {"apikey-", "apikey-" + strings.Repeat("a", 60)},
+		"a name that contains the prefix": {"apikey-", "x-apikey-1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+			v.AcceptKeys(tt.prefix)
+			claims := map[string]any{"email": ""}
+			if tt.username != "" {
+				claims["preferred_username"] = tt.username
+			}
+			if _, err := v.Verify(t.Context(), p.token(t, claims)); !errors.Is(err, ErrUnauthenticated) {
+				t.Errorf("err = %v, want unauthenticated", err)
+			}
+		})
+	}
+}
+
+func TestOIDCKeepsAPersonWhoseNameLooksLikeAKey(t *testing.T) {
+	p := newIDP(t)
+	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v.AcceptKeys("apikey-")
+
+	// A token with an email is a person, whatever its name: the name never turns a person into a key.
+	id, err := v.Verify(t.Context(), p.token(t, map[string]any{"preferred_username": "apikey-0123456789abcdef"}))
+	if err != nil || id.Kind != KindUser || id.Subject != "user:alice@example.org" {
+		t.Errorf("identity %+v, err %v", id, err)
 	}
 }

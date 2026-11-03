@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Config is the whole configuration. It never contains anything that is not meant to be logged except OpenFGAAPIKey and
-// AuthentikToken, which are redacted by LogValue and String.
+// Config is the whole configuration. It never contains anything that is not meant to be logged except OpenFGAAPIKey, which
+// is redacted by LogValue and String.
 type Config struct {
 	// ListenAddr is the address of the HTTP server.
 	ListenAddr string
@@ -33,15 +33,6 @@ type Config struct {
 	// PlatformAdminGroup is the name of the Authentik group whose members may create, resize and delete tenants. The
 	// API reads it from the "groups" claim of the token. Empty: nobody can.
 	PlatformAdminGroup string
-	// AuthentikURL and AuthentikToken let the API ask Authentik whether the owner of an API key is a member of the platform
-	// administrators group (a key does not carry groups). The token is the one of a service account that may read that group
-	// and nothing else. Without them, a key is never a platform administrator's.
-	AuthentikURL   string
-	AuthentikToken string
-	// AuthentikCacheTTL is how long the members of the group are remembered, which is also how long a user removed from it keeps
-	// what it gave to their API keys. AuthentikTimeout bounds one request to Authentik. Required with AuthentikURL.
-	AuthentikCacheTTL time.Duration
-	AuthentikTimeout  time.Duration
 
 	// InstanceBootGrace is how long after a creation or a start the API refuses to stop a VM: a stop sent while the guest boots
 	// is lost and then hangs. Nothing reported by Incus or Crossplane says when the system inside listens, so it is a time.
@@ -49,11 +40,12 @@ type Config struct {
 	// InstanceStuckAfter is how long a start or a stop may last before the API reports it in problems.
 	InstanceStuckAfter time.Duration
 
-	// APIKeyMaxLifetime is the longest an API key may live. When it is positive an expiry is required and capped to it; 0 lets a
-	// key be permanent and its expiry optional.
+	// APIKeyMaxLifetime is the longest an API key may live: its expiry is capped to it. 0 caps nothing (a key always has an
+	// expiry).
 	APIKeyMaxLifetime time.Duration
-	// APIKeyCreation says who may create and change API keys: KeyCreationPlatformAdmins or KeyCreationUsers (any person signed in
-	// with Authentik: a key never exceeds its owner, so this only decides who gets one). Anyone lists and revokes their own.
+	// APIKeyCreation says who may create API keys: KeyCreationPlatformAdmins or KeyCreationUsers (any person signed in with
+	// Authentik: a key never exceeds what its creator holds, so this only decides who gets one). Anyone lists and revokes their
+	// own.
 	APIKeyCreation string
 }
 
@@ -74,11 +66,6 @@ const (
 	EnvCAFile             = "CA_FILE"
 	EnvKubeContext        = "KUBE_CONTEXT"
 	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
-	EnvAuthentikURL       = "AUTHENTIK_URL"
-	EnvAuthentikToken     = "AUTHENTIK_TOKEN" //nolint:gosec // the name of a variable, not a credential
-
-	EnvAuthentikCacheTTL  = "AUTHENTIK_CACHE_TTL"
-	EnvAuthentikTimeout   = "AUTHENTIK_TIMEOUT"
 	EnvInstanceBootGrace  = "INSTANCE_BOOT_GRACE"
 	EnvInstanceStuckAfter = "INSTANCE_STUCK_AFTER"
 	EnvAPIKeyMaxLifetime  = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
@@ -105,8 +92,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		CAFile:             get(EnvCAFile),
 		KubeContext:        get(EnvKubeContext),
 		PlatformAdminGroup: get(EnvPlatformAdminGroup),
-		AuthentikURL:       get(EnvAuthentikURL),
-		AuthentikToken:     get(EnvAuthentikToken),
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = defaultListenAddr
@@ -127,7 +112,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	for _, u := range []struct{ key, value string }{
 		{EnvIssuer, c.Issuer},
 		{EnvOpenFGAURL, c.OpenFGAURL},
-		{EnvAuthentikURL, c.AuthentikURL},
 	} {
 		if u.value != "" {
 			if err := checkURL(u.value); err != nil {
@@ -155,10 +139,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	duration(EnvInstanceBootGrace, 0, &c.InstanceBootGrace)
 	duration(EnvInstanceStuckAfter, time.Second, &c.InstanceStuckAfter)
 	duration(EnvAPIKeyMaxLifetime, 0, &c.APIKeyMaxLifetime)
-	if c.AuthentikURL != "" {
-		duration(EnvAuthentikCacheTTL, time.Second, &c.AuthentikCacheTTL)
-		duration(EnvAuthentikTimeout, time.Second, &c.AuthentikTimeout)
-	}
 	switch c.APIKeyCreation = get(EnvAPIKeyCreation); c.APIKeyCreation {
 	case KeyCreationPlatformAdmins, KeyCreationUsers:
 	case "":
@@ -166,16 +146,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("%s must be %s or %s, not %q", EnvAPIKeyCreation, KeyCreationPlatformAdmins, KeyCreationUsers, c.APIKeyCreation))
 	}
-	if (c.AuthentikURL == "") != (c.AuthentikToken == "") {
-		errs = append(errs, fmt.Errorf("%s and %s go together", EnvAuthentikURL, EnvAuthentikToken))
-	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return c, nil
 }
 
-// LogValue logs the configuration without the OpenFGA key nor the Authentik token.
+// LogValue logs the configuration without the OpenFGA key.
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("listen_addr", c.ListenAddr),
@@ -186,9 +163,6 @@ func (c Config) LogValue() slog.Value {
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
 		slog.String("platform_admin_group", c.PlatformAdminGroup),
-		slog.String("authentik_url", c.AuthentikURL),
-		slog.Duration("authentik_cache_ttl", c.AuthentikCacheTTL),
-		slog.Duration("authentik_timeout", c.AuthentikTimeout),
 		slog.Duration("instance_boot_grace", c.InstanceBootGrace),
 		slog.Duration("instance_stuck_after", c.InstanceStuckAfter),
 		slog.Duration("api_key_max_lifetime", c.APIKeyMaxLifetime),

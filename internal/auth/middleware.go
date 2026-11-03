@@ -11,16 +11,15 @@ import (
 
 // Authenticator authenticates the requests of the /v1 routes.
 type Authenticator struct {
-	// Users checks the tokens of Authentik, Keys the API keys.
+	// Users checks the tokens of Authentik, of a person or of the service account of a key.
 	Users Verifier
-	Keys  Verifier
 	Log   *slog.Logger
 }
 
 // Middleware refuses a request that carries no valid credential and gives the others their Identity.
 //
-// A key starts with "phk_", anything else is taken for a token of Authentik. The caller is told the same thing
-// whatever was wrong with the credential; the reason is only logged, never the credential.
+// The caller is told the same thing whatever was wrong with the credential; the reason is only logged, never the
+// credential.
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearer(r)
@@ -29,11 +28,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		verifier := a.Users
-		if strings.HasPrefix(token, KeyPrefix+"_") {
-			verifier = a.Keys
-		}
-		id, err := verifier.Verify(r.Context(), token)
+		id, err := a.Users.Verify(r.Context(), token)
 		switch {
 		case errors.Is(err, ErrUnavailable):
 			a.Log.Error("authentication unavailable", "error", err)

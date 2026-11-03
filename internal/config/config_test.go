@@ -79,42 +79,6 @@ func TestKeyIsNeverPrinted(t *testing.T) {
 	}
 }
 
-func TestAuthentikURLAndTokenGoTogether(t *testing.T) {
-	base := valid()
-	load := func(extra map[string]string) (Config, error) {
-		return Load(func(k string) (string, bool) {
-			if v, ok := extra[k]; ok {
-				return v, true
-			}
-			v, ok := base[k]
-			return v, ok
-		})
-	}
-	if _, err := load(nil); err != nil {
-		t.Errorf("without Authentik: %v", err)
-	}
-	c, err := load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok", EnvAuthentikCacheTTL: "1m", EnvAuthentikTimeout: "10s"})
-	if err != nil || c.AuthentikURL != "https://auth.example.org" || c.AuthentikToken != "tok" || c.AuthentikCacheTTL.String() != "1m0s" || c.AuthentikTimeout.String() != "10s" {
-		t.Errorf("both: %+v, %v", c, err)
-	}
-	for name, extra := range map[string]map[string]string{
-		"a url without a token": {EnvAuthentikURL: "https://auth.example.org"},
-		"a token without a url": {EnvAuthentikToken: "tok"},
-		"a url that is not one": {EnvAuthentikURL: "auth", EnvAuthentikToken: "tok", EnvAuthentikCacheTTL: "1m", EnvAuthentikTimeout: "10s"},
-		"no cache duration":     {EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok", EnvAuthentikTimeout: "10s"},
-		"no timeout":            {EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok", EnvAuthentikCacheTTL: "1m"},
-	} {
-		if _, err := load(extra); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
-	}
-	// The token is never logged.
-	c, _ = load(map[string]string{EnvAuthentikURL: "https://auth.example.org", EnvAuthentikToken: "tok-secret-value", EnvAuthentikCacheTTL: "1m", EnvAuthentikTimeout: "10s"})
-	if strings.Contains(c.String(), "tok-secret-value") {
-		t.Errorf("the token is in %s", c.String())
-	}
-}
-
 func TestTheBehaviourSettingsHaveNoDefault(t *testing.T) {
 	for _, key := range []string{EnvInstanceBootGrace, EnvInstanceStuckAfter, EnvAPIKeyMaxLifetime, EnvAPIKeyCreation} {
 		m := valid()

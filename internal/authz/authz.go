@@ -2,9 +2,9 @@
 //
 // Every decision is a Check in the phorge-api store on the object "tenant:<name>". The model (in Hangar,
 // overlays/control/controllers/crossplane/openfga-phorge-model.yml) gives a user its rights through a role
-// (admin > operator > user > viewer). An API key acts as its owner, limited to the scopes it was given: it is checked as the
-// owner, and refused whatever its owner may do when a scope is missing. A decision that cannot be taken is a refusal,
-// never an "allowed".
+// (admin > operator > user > viewer) and an API key its own tuples, which expire. A key is checked as itself, with what
+// OpenFGA holds for its subject "apikey:<name>", and nothing else. A decision that cannot be taken is a refusal, never an
+// "allowed".
 package authz
 
 import (
@@ -44,11 +44,11 @@ var relations = map[Action]string{
 	WriteMemberships: "can_write_memberships",
 }
 
-// scopes are the scopes of an API key, and the action each one lets it do. They are the ones of the ApiKey XRD.
-// tenants:write also lets a key read the tenants.
-var scopes = map[string]Action{
+// keyScopes are the scopes a key can be given, and the action each one lets it do: one OpenFGA tuple on a tenant each, the
+// relations key_<resource>_<action> of the model. They are the ones of the ApiKey XRD. There is none for WriteTenants: a key
+// is never a platform administrator.
+var keyScopes = map[string]Action{
 	"tenants:read":      ReadTenant,
-	"tenants:write":     WriteTenants,
 	"instances:read":    ReadInstances,
 	"instances:write":   WriteInstances,
 	"images:read":       ReadImages,
@@ -59,12 +59,18 @@ var scopes = map[string]Action{
 
 // Scopes lists the scopes of an API key, sorted.
 func Scopes() []string {
-	out := make([]string, 0, len(scopes))
-	for s := range scopes {
+	out := make([]string, 0, len(keyScopes))
+	for s := range keyScopes {
 		out = append(out, s)
 	}
 	slices.Sort(out)
 	return out
+}
+
+// ScopeAction is the action a scope of a key lets it do.
+func ScopeAction(scope string) (Action, bool) {
+	a, ok := keyScopes[scope]
+	return a, ok
 }
 
 // Checker is what Authorizer needs from OpenFGA.
@@ -73,37 +79,16 @@ type Checker interface {
 	ListObjects(ctx context.Context, user, relation, objectType string) ([]string, error)
 }
 
-// Directory tells whether a user is in a group, for the callers whose credential does not carry their groups (an API key).
-type Directory interface {
-	Member(ctx context.Context, email, group string) (bool, error)
-}
-
 // Authorizer answers the questions of the routes.
 type Authorizer struct {
 	fga        Checker
 	adminGroup string
-	dir        Directory
 }
 
 // New returns an Authorizer. The members of the Authentik group platformAdminGroup may create, resize and delete
-// tenants: the model has no relation for that, so it is read from the groups of the token, or from dir for an API key.
-// Empty group: nobody can. A nil dir: no API key can.
-func New(fga Checker, platformAdminGroup string, dir Directory) *Authorizer {
-	return &Authorizer{fga: fga, adminGroup: platformAdminGroup, dir: dir}
-}
-
-// ScopeAllows reports whether the scopes of the caller let it do action. A user has no scopes to hold: it can. A key can
-// only what one of its scopes names.
-func ScopeAllows(id auth.Identity, action Action) bool {
-	if id.Kind != auth.KindAPIKey {
-		return true
-	}
-	for _, s := range id.Scopes {
-		if scopes[s] == action || (action == ReadTenant && s == "tenants:write") {
-			return true
-		}
-	}
-	return false
+// tenants: the model has no relation for that, so it is read from the groups of the token. Empty group: nobody can.
+func New(fga Checker, platformAdminGroup string) *Authorizer {
+	return &Authorizer{fga: fga, adminGroup: platformAdminGroup}
 }
 
 // Allowed reports whether the caller may do action on the tenant. The error is for a decision that could not be taken
@@ -112,10 +97,6 @@ func (a *Authorizer) Allowed(ctx context.Context, id auth.Identity, action Actio
 	relation, ok := relations[action]
 	if !ok {
 		return false, fmt.Errorf("unknown action %q", action)
-	}
-	// A key does what its scopes name and what its owner may do: both are asked.
-	if !ScopeAllows(id, action) {
-		return false, nil
 	}
 	if !auth.ValidTenantName(tenant) {
 		// Not a tenant: nothing to ask, and nothing that came from a request goes into an OpenFGA object unchecked.
@@ -129,7 +110,7 @@ func (a *Authorizer) Allowed(ctx context.Context, id auth.Identity, action Actio
 
 // Tenants lists the tenants the caller can see (the slugs).
 func (a *Authorizer) Tenants(ctx context.Context, id auth.Identity) ([]string, error) {
-	if id.Subject == "" || !ScopeAllows(id, ReadTenant) {
+	if id.Subject == "" {
 		return nil, nil
 	}
 	objects, err := a.fga.ListObjects(ctx, id.Subject, relations[ReadTenant], "tenant")
@@ -148,33 +129,11 @@ func (a *Authorizer) Tenants(ctx context.Context, id auth.Identity) ([]string, e
 }
 
 // PlatformAdmin reports whether the caller belongs to the platform administrators group of Authentik, which is what lets
-// it create, resize and delete tenants and act on every tenant. The groups of a user are in its token. A key has none: they
-// are asked to Authentik for its owner, so a key stops being an administrator's as soon as its owner is no longer one (within
-// a minute). The name of the group is compared exactly. The error is for a question that could not be asked: the caller must
-// refuse, and say the service is unavailable.
-func (a *Authorizer) PlatformAdmin(ctx context.Context, id auth.Identity) (bool, error) {
-	if a.adminGroup == "" {
-		return false, nil
+// it create, resize and delete tenants and act on every tenant. The groups of a user are in its token; a key has none and is
+// never an administrator. The name of the group is compared exactly.
+func (a *Authorizer) PlatformAdmin(_ context.Context, id auth.Identity) bool {
+	if a.adminGroup == "" || id.Kind != auth.KindUser {
+		return false
 	}
-	if id.Kind == auth.KindAPIKey {
-		if a.dir == nil || id.Email == "" {
-			return false, nil
-		}
-		return a.dir.Member(ctx, id.Email, a.adminGroup)
-	}
-	return slices.Contains(id.Groups, a.adminGroup), nil
+	return slices.Contains(id.Groups, a.adminGroup)
 }
-
-// AdminMay reports whether the caller is a platform administrator whose scopes let it do action: what the administrators do
-// on tenants that are not theirs.
-func (a *Authorizer) AdminMay(ctx context.Context, id auth.Identity, action Action) (bool, error) {
-	if !ScopeAllows(id, action) {
-		return false, nil
-	}
-	return a.PlatformAdmin(ctx, id)
-}
-
-// UnknownScopeError is returned for a scope that does not exist.
-type UnknownScopeError struct{ Scope string }
-
-func (e *UnknownScopeError) Error() string { return fmt.Sprintf("unknown scope %q", e.Scope) }
