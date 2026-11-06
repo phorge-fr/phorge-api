@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1](https://github.com/phorge-fr/phorge-api/compare/v0.5.0...v0.5.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.8 ([1e2b8a8](https://github.com/phorge-fr/phorge-api/commit/1e2b8a8ad07ed486a6413817974fd474dda402d3))
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.8 ([8cf01cb](https://github.com/phorge-fr/phorge-api/commit/8cf01cbdcb39b83baff2a55da7c249a78bb39ecb))
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.9 ([a893883](https://github.com/phorge-fr/phorge-api/commit/a8938837ef90fd5b4b3a342f46b2a86674d5dc75))
+* **deps:** update module github.com/go-jose/go-jose/v4 to v4.1.9 ([578feba](https://github.com/phorge-fr/phorge-api/commit/578feba62ce1646eaae9015e3a21cf3fb25bc679))
+
 ## [0.5.0](https://github.com/phorge-fr/phorge-api/compare/v0.4.2...v0.5.0) (2026-11-02)
 
 
