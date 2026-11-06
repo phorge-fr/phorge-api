@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,8 +18,8 @@ type Config struct {
 	ListenAddr string
 	// Issuer is the OIDC issuer of Authentik; the JWKS is found from it. Kept configurable on purpose.
 	Issuer string
-	// Audience is the client id of the Phorge application in Authentik.
-	Audience string
+	// Audiences are the client ids of the Authentik applications whose access tokens are accepted.
+	Audiences []string
 	// OpenFGAURL is the base URL of OpenFGA, e.g. https://openfga.core.phorge.
 	OpenFGAURL string
 	// OpenFGAAPIKey is the bearer key for OpenFGA.
@@ -85,7 +86,6 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	c := Config{
 		ListenAddr:         get(EnvListenAddr),
 		Issuer:             get(EnvIssuer),
-		Audience:           get(EnvAudience),
 		OpenFGAURL:         get(EnvOpenFGAURL),
 		OpenFGAAPIKey:      get(EnvOpenFGAAPIKey),
 		OpenFGAStoreID:     get(EnvOpenFGAStoreID),
@@ -100,7 +100,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	var errs []error
 	for _, r := range []struct{ key, value string }{
 		{EnvIssuer, c.Issuer},
-		{EnvAudience, c.Audience},
+		{EnvAudience, get(EnvAudience)},
 		{EnvOpenFGAURL, c.OpenFGAURL},
 		{EnvOpenFGAAPIKey, c.OpenFGAAPIKey},
 		{EnvOpenFGAStoreID, c.OpenFGAStoreID},
@@ -108,6 +108,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		if r.value == "" {
 			errs = append(errs, fmt.Errorf("%s is required", r.key))
 		}
+	}
+	if raw := get(EnvAudience); raw != "" {
+		audiences, err := parseAudiences(raw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", EnvAudience, err))
+		}
+		c.Audiences = audiences
 	}
 	for _, u := range []struct{ key, value string }{
 		{EnvIssuer, c.Issuer},
@@ -152,12 +159,28 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	return c, nil
 }
 
+// parseAudiences reads a client id or a comma-separated list of them. An empty entry (a doubled or a trailing comma) is
+// a typo that would otherwise go unseen, so it is refused; a client id given twice is kept once.
+func parseAudiences(raw string) ([]string, error) {
+	var audiences []string
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			return nil, errors.New("has an empty entry: write client ids separated by single commas")
+		}
+		if !slices.Contains(audiences, entry) {
+			audiences = append(audiences, entry)
+		}
+	}
+	return audiences, nil
+}
+
 // LogValue logs the configuration without the OpenFGA key.
 func (c Config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("listen_addr", c.ListenAddr),
 		slog.String("issuer", c.Issuer),
-		slog.String("audience", c.Audience),
+		slog.String("audiences", strings.Join(c.Audiences, ",")),
 		slog.String("openfga_url", c.OpenFGAURL),
 		slog.String("openfga_store_id", c.OpenFGAStoreID),
 		slog.String("ca_file", c.CAFile),

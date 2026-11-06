@@ -98,7 +98,7 @@ func (p *idp) token(t *testing.T, override map[string]any) string {
 
 func TestOIDCAcceptsAValidToken(t *testing.T) {
 	p := newIDP(t)
-	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 
 	id, err := v.Verify(t.Context(), p.token(t, nil))
 	if err != nil {
@@ -111,7 +111,7 @@ func TestOIDCAcceptsAValidToken(t *testing.T) {
 
 func TestOIDCKeepsTheEmailExactlyAsWritten(t *testing.T) {
 	p := newIDP(t)
-	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 
 	id, err := v.Verify(t.Context(), p.token(t, map[string]any{"email": "Alice@Example.org"}))
 	if err != nil {
@@ -124,7 +124,7 @@ func TestOIDCKeepsTheEmailExactlyAsWritten(t *testing.T) {
 
 func TestOIDCReadsTheGroups(t *testing.T) {
 	p := newIDP(t)
-	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 
 	id, err := v.Verify(t.Context(), p.token(t, map[string]any{"groups": []string{"authentik Admins", "phorge-platform-admins"}}))
 	if err != nil {
@@ -179,7 +179,7 @@ func TestOIDCRefuses(t *testing.T) {
 	}
 	for name, token := range tests {
 		t.Run(name, func(t *testing.T) {
-			v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+			v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 			_, err := v.Verify(t.Context(), token)
 			if !errors.Is(err, ErrUnauthenticated) {
 				t.Errorf("err = %v, want ErrUnauthenticated", err)
@@ -192,7 +192,7 @@ func TestOIDCDiscoveryIsLazyBacksOffAndRecovers(t *testing.T) {
 	p := newIDP(t)
 	p.down.Store(true)
 	now := time.Now()
-	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 	v.now = func() time.Time { return now }
 	token := p.token(t, nil)
 
@@ -218,7 +218,7 @@ func TestOIDCDiscoveryIsLazyBacksOffAndRecovers(t *testing.T) {
 
 func TestOIDCAcceptsAServiceKeyWhenTheDeploymentSaysSo(t *testing.T) {
 	p := newIDP(t)
-	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 	v.AcceptKeys("apikey-")
 
 	// The token of a service account: no email (authentik gives an empty one), its own name.
@@ -255,7 +255,7 @@ func TestOIDCRefusesATokenWithoutEmailUnlessItIsAServiceKey(t *testing.T) {
 		"a name that contains the prefix": {"apikey-", "x-apikey-1"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+			v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 			v.AcceptKeys(tt.prefix)
 			claims := map[string]any{"email": ""}
 			if tt.username != "" {
@@ -270,12 +270,76 @@ func TestOIDCRefusesATokenWithoutEmailUnlessItIsAServiceKey(t *testing.T) {
 
 func TestOIDCKeepsAPersonWhoseNameLooksLikeAKey(t *testing.T) {
 	p := newIDP(t)
-	v := NewOIDCVerifier(p.srv.URL, testAudience, nil)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience}, nil)
 	v.AcceptKeys("apikey-")
 
 	// A token with an email is a person, whatever its name: the name never turns a person into a key.
 	id, err := v.Verify(t.Context(), p.token(t, map[string]any{"preferred_username": "apikey-0123456789abcdef"}))
 	if err != nil || id.Kind != KindUser || id.Subject != "user:alice@example.org" {
 		t.Errorf("identity %+v, err %v", id, err)
+	}
+}
+
+func TestOIDCAcceptsEveryListedAudience(t *testing.T) {
+	p := newIDP(t)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience, "console-client"}, nil)
+
+	for name, aud := range map[string]any{
+		"the first client":              testAudience,
+		"the second client":             "console-client",
+		"a list that holds one of them": []string{"another-app", "console-client"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			id, err := v.Verify(t.Context(), p.token(t, map[string]any{"aud": aud}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if id.Subject != "user:alice@example.org" {
+				t.Errorf("unexpected identity: %+v", id)
+			}
+		})
+	}
+}
+
+func TestOIDCRefusesWhatIsNotListed(t *testing.T) {
+	p := newIDP(t)
+
+	tests := map[string]struct {
+		audiences []string
+		aud       any
+	}{
+		"an audience that is not listed":  {[]string{testAudience, "console-client"}, "someone-else"},
+		"a list that holds none of them":  {[]string{testAudience, "console-client"}, []string{"a", "b"}},
+		"a part of a listed client id":    {[]string{testAudience, "console-client"}, "console"},
+		"a list with a comma in the aud":  {[]string{testAudience, "console-client"}, testAudience + ",console-client"},
+		"no audience at all":              {[]string{testAudience, "console-client"}, nil},
+		"nothing listed, a good audience": {nil, testAudience},
+		"an empty list, a good audience":  {[]string{}, testAudience},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			v := NewOIDCVerifier(p.srv.URL, tc.audiences, nil)
+			_, err := v.Verify(t.Context(), p.token(t, map[string]any{"aud": tc.aud}))
+			if !errors.Is(err, ErrUnauthenticated) {
+				t.Errorf("err = %v, want ErrUnauthenticated", err)
+			}
+		})
+	}
+}
+
+func TestOIDCStillChecksTheOtherClaimsWithSeveralAudiences(t *testing.T) {
+	p := newIDP(t)
+	v := NewOIDCVerifier(p.srv.URL, []string{testAudience, "console-client"}, nil)
+
+	for name, override := range map[string]map[string]any{
+		"another issuer": {"aud": "console-client", "iss": "https://evil.example.org"},
+		"expired":        {"aud": "console-client", "exp": time.Now().Add(-time.Hour).Unix()},
+		"no email":       {"aud": "console-client", "email": nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := v.Verify(t.Context(), p.token(t, override)); !errors.Is(err, ErrUnauthenticated) {
+				t.Errorf("err = %v, want ErrUnauthenticated", err)
+			}
+		})
 	}
 }

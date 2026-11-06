@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,10 +27,12 @@ const (
 // reached through a fragile path from the control cluster, and the API must still start, answer its probes and serve
 // API keys when it is down.
 type OIDCVerifier struct {
-	issuer   string
-	audience string
-	client   *http.Client
-	now      func() time.Time
+	issuer string
+	// audiences are the client ids of the Authentik applications whose tokens are accepted: the shared client of the
+	// command line and the console, and the confidential client of the console. Empty: no token is accepted.
+	audiences []string
+	client    *http.Client
+	now       func() time.Time
 
 	// keyPrefix is the start of the user name of the service accounts that are API keys. Empty: a token with no email is refused.
 	keyPrefix string
@@ -40,12 +43,13 @@ type OIDCVerifier struct {
 	retryAt  time.Time
 }
 
-// NewOIDCVerifier returns a verifier for tokens issued by issuer for the client id audience. client may be nil.
-func NewOIDCVerifier(issuer, audience string, client *http.Client) *OIDCVerifier {
+// NewOIDCVerifier returns a verifier for tokens issued by issuer for one of the client ids audiences. client may be nil.
+// With no audience it accepts nothing.
+func NewOIDCVerifier(issuer string, audiences []string, client *http.Client) *OIDCVerifier {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &OIDCVerifier{issuer: issuer, audience: audience, client: client, now: time.Now}
+	return &OIDCVerifier{issuer: issuer, audiences: audiences, client: client, now: time.Now}
 }
 
 // keyNameRe is the shape of the name of a service key. It becomes part of an OpenFGA user ("apikey:<name>"), so nothing that
@@ -87,7 +91,8 @@ func (v *OIDCVerifier) discover(ctx context.Context) (*oidc.IDTokenVerifier, err
 	}
 	v.failure = nil
 	v.verifier = provider.Verifier(&oidc.Config{
-		ClientID: v.audience,
+		// The audience is checked by Verify, against every client id that is accepted.
+		SkipClientIDCheck: true,
 		// Authentik signs with the RSA key of its certificate. "none" and the HMAC family are never accepted.
 		SupportedSigningAlgs: []string{"RS256", "ES256"},
 	})
@@ -103,6 +108,9 @@ func (v *OIDCVerifier) Verify(ctx context.Context, token string) (Identity, erro
 	tok, err := verifier.Verify(oidc.ClientContext(ctx, v.client), token)
 	if err != nil {
 		return Identity{}, fmt.Errorf("%w: %w", ErrUnauthenticated, err)
+	}
+	if !slices.ContainsFunc(tok.Audience, func(aud string) bool { return slices.Contains(v.audiences, aud) }) {
+		return Identity{}, fmt.Errorf("%w: wrong audience", ErrUnauthenticated)
 	}
 
 	var claims struct {

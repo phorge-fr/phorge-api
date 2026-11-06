@@ -1,7 +1,7 @@
 ---
 type: reference
 audience: operator who deploys or configures the API
-verified: 2026-11-01
+verified: 2026-11-06
 ---
 
 # Configuration
@@ -11,7 +11,7 @@ Configuration is read from the environment and the process refuses to start, lis
 | Variable | Required | Meaning |
 |---|---|---|
 | `OIDC_ISSUER` | yes | Authentik issuer, the JWKS is found from it |
-| `OIDC_AUDIENCE` | yes | Client id of the Phorge application |
+| `OIDC_AUDIENCE` | yes | Client id of the Phorge application, or several client ids separated by commas (`client-a,client-b`): the API accepts a token issued for any of them and refuses every other audience. Spaces around an id are ignored and an empty entry stops the start |
 | `OPENFGA_URL` | yes | Base URL of OpenFGA |
 | `OPENFGA_API_KEY` | yes | Bearer key for OpenFGA (never logged) |
 | `OPENFGA_STORE_ID` | yes | Id of the `phorge-api` store |

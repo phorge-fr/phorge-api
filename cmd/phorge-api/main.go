@@ -39,7 +39,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	users := auth.NewOIDCVerifier(cfg.Issuer, cfg.Audience, nil)
+	users := auth.NewOIDCVerifier(cfg.Issuer, cfg.Audiences, nil)
 	users.AcceptKeys(access.AccountPrefix)
 
 	kubeConn := kube.NewConnection(cfg.KubeContext)
