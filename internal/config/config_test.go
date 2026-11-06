@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -35,6 +36,50 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if c.PlatformAdminGroup != "" || c.CAFile != "" {
 		t.Errorf("optional values should be empty: %+v", c)
+	}
+	if len(c.Audiences) != 1 || c.Audiences[0] != "client-id" {
+		t.Errorf("Audiences = %q, want one client id: a single value behaves as it always did", c.Audiences)
+	}
+}
+
+func TestLoadAudiences(t *testing.T) {
+	tests := map[string][]string{
+		"a":                 {"a"},
+		"a,b":               {"a", "b"},
+		" a , b ":           {"a", "b"},
+		"a,b,a":             {"a", "b"},
+		"console, phorge-1": {"console", "phorge-1"},
+	}
+	for raw, want := range tests {
+		t.Run(raw, func(t *testing.T) {
+			m := valid()
+			m[EnvAudience] = raw
+			c, err := Load(env(m))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(c.Audiences, want) {
+				t.Errorf("Audiences = %q, want %q", c.Audiences, want)
+			}
+		})
+	}
+}
+
+func TestLoadRefusesABadListOfAudiences(t *testing.T) {
+	for _, raw := range []string{"a,,b", "a,", ",a", ",", " , ", "a, ,b"} {
+		t.Run(raw, func(t *testing.T) {
+			m := valid()
+			m[EnvAudience] = raw
+			_, err := Load(env(m))
+			if err == nil || !strings.Contains(err.Error(), EnvAudience) {
+				t.Errorf("err = %v, want an error that names %s", err, EnvAudience)
+			}
+		})
+	}
+	m := valid()
+	m[EnvAudience] = "   "
+	if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "is required") {
+		t.Errorf("a blank value is a missing one, err = %v", err)
 	}
 }
 
