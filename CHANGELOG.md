@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/phorge-fr/phorge-api/compare/v0.5.1...v0.6.0) (2026-11-06)
+
+
+### Features
+
+* **auth:** accept the access tokens of more than one OIDC client ([88d11a3](https://github.com/phorge-fr/phorge-api/commit/88d11a35c3fb2d64c9c52a1c7310f5b4e20dde15))
+* **auth:** accept the access tokens of more than one OIDC client ([5075899](https://github.com/phorge-fr/phorge-api/commit/5075899fafa64b606e65ce7266d8c95d9ebd87e4))
+
 ## [0.5.1](https://github.com/phorge-fr/phorge-api/compare/v0.5.0...v0.5.1) (2026-11-06)
 
 
