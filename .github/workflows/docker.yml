@@ -60,6 +60,7 @@ jobs:
                     -e RATE_LIMIT_WRITES_PER_MINUTE=60 \
                     -e RATE_LIMIT_BURST=10 \
                     -e MAX_IMAGES_PER_TENANT=20 \
+                    -e MAX_PROFILES_PER_TENANT=20 \
                     phorge-api:ci
                   for _ in $(seq 1 20); do
                     curl -fsS http://127.0.0.1:8080/healthz && break

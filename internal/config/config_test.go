@@ -19,15 +19,16 @@ func valid() map[string]string {
 		EnvOpenFGAAPIKey:  "s3cr3t-key",
 		EnvOpenFGAStoreID: "01M50R0P12MY8JHNKP3ATYSJC2",
 		// What decides how the API behaves has no default: a deployment writes it.
-		EnvInstanceBootGrace:  "5m",
-		EnvInstanceStuckAfter: "10m",
-		EnvAPIKeyMaxLifetime:  "8784h",
-		EnvAPIKeyCreation:     KeyCreationPlatformAdmins,
-		EnvTenantCreation:     TenantCreationPlatformAdmins,
-		EnvMaxTenantsPerUser:  "3",
-		EnvRateLimitPerMinute: "60",
-		EnvRateLimitBurst:     "10",
-		EnvMaxImagesPerTenant: "20",
+		EnvInstanceBootGrace:    "5m",
+		EnvInstanceStuckAfter:   "10m",
+		EnvAPIKeyMaxLifetime:    "8784h",
+		EnvAPIKeyCreation:       KeyCreationPlatformAdmins,
+		EnvTenantCreation:       TenantCreationPlatformAdmins,
+		EnvMaxTenantsPerUser:    "3",
+		EnvRateLimitPerMinute:   "60",
+		EnvRateLimitBurst:       "10",
+		EnvMaxImagesPerTenant:   "20",
+		EnvMaxProfilesPerTenant: "20",
 	}
 }
 
@@ -172,7 +173,7 @@ func TestTheDurationsAreChecked(t *testing.T) {
 }
 
 func TestTheRateLimitAndTheImageCapAreRequiredWholeNumbers(t *testing.T) {
-	for _, key := range []string{EnvRateLimitPerMinute, EnvRateLimitBurst, EnvMaxImagesPerTenant} {
+	for _, key := range []string{EnvRateLimitPerMinute, EnvRateLimitBurst, EnvMaxImagesPerTenant, EnvMaxProfilesPerTenant} {
 		m := valid()
 		delete(m, key)
 		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key+" is required") {

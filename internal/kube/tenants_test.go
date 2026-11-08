@@ -19,7 +19,7 @@ import (
 func newTenantStore() (*Tenants, *fake.FakeDynamicClient) {
 	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{
-			tenantsGVR: "TenantList", imagesGVR: "ImageList", instancesGVR: "InstanceList", membershipsGVR: "MembershipList", networksGVR: "NetworkList",
+			tenantsGVR: "TenantList", imagesGVR: "ImageList", instancesGVR: "InstanceList", membershipsGVR: "MembershipList", networksGVR: "NetworkList", profilesGVR: "ProfileList",
 		})
 	return NewTenants(Static(client)), client
 }
@@ -171,6 +171,7 @@ func TestDeleteRemovesWhatTheTenantHoldsBeforeTheTenant(t *testing.T) {
 		{instancesGVR, "Instance", "vm1", "t-demo"},
 		{membershipsGVR, "Membership", "m1", "t-demo"},
 		{networksGVR, "Network", "net", "t-demo"},
+		{profilesGVR, "Profile", "mine", "t-demo"},
 		{instancesGVR, "Instance", "other-tenant", "t-other"},
 	} {
 		obj := &unstructured.Unstructured{Object: map[string]any{
@@ -197,7 +198,7 @@ func TestDeleteRemovesWhatTheTenantHoldsBeforeTheTenant(t *testing.T) {
 			t.Errorf("%s was not deleted in the foreground", del.GetName())
 		}
 	}
-	want := []string{"instances/t-demo/vm1", "memberships/t-demo/m1", "networks/t-demo/net", "images/t-demo/debian", "tenants/phorge-system/demo"}
+	want := []string{"instances/t-demo/vm1", "memberships/t-demo/m1", "networks/t-demo/net", "profiles/t-demo/mine", "images/t-demo/debian", "tenants/phorge-system/demo"}
 	if len(order) != len(want) {
 		t.Fatalf("deleted %v, want %v", order, want)
 	}

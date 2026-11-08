@@ -579,7 +579,7 @@ func TestTheScopesOfAKeyAreListed(t *testing.T) {
 			t.Errorf("%+v: a scope is <resource>:<verb> and says what it does", s)
 		}
 	}
-	want := "images:read images:write instances:read instances:write memberships:read memberships:write networks:read networks:write tenants:read tenants:write"
+	want := "images:read images:write instances:read instances:write memberships:read memberships:write networks:read networks:write profiles:read profiles:write tenants:read tenants:write"
 	if strings.Join(got, " ") != want {
 		t.Errorf("scopes = %v, want %s", got, want)
 	}

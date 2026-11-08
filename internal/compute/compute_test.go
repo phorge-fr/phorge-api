@@ -343,3 +343,54 @@ func TestTheBuiltinProfilesAreTheThreeOfTheTenantComposition(t *testing.T) {
 		t.Error("ProfileNamed(xl)")
 	}
 }
+
+func TestMakingAProfileNeedsAName_AndThreeValues(t *testing.T) {
+	one, big := 1, 17
+	ok := CreateProfile{Name: "web", CPU: &one, MemoryMiB: new(int), DiskGiB: &one}
+	*ok.MemoryMiB = 1024
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a profile: %v", err)
+	}
+	for name, mutate := range map[string]func(r *CreateProfile){
+		"taken s":       func(r *CreateProfile) { r.Name = "s" },
+		"taken default": func(r *CreateProfile) { r.Name = "default" },
+		"uppercase":     func(r *CreateProfile) { r.Name = "Web" },
+		"a digit first": func(r *CreateProfile) { r.Name = "1web" },
+		"no cpu":        func(r *CreateProfile) { r.CPU = nil },
+		"no memory":     func(r *CreateProfile) { r.MemoryMiB = nil },
+		"no disk":       func(r *CreateProfile) { r.DiskGiB = nil },
+		"cpu 17":        func(r *CreateProfile) { r.CPU = &big },
+	} {
+		r := ok
+		mutate(&r)
+		if r.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestAllAndFindKnowTheThreeAndTheOnesTheUserMade(t *testing.T) {
+	mine := []Profile{{Name: "zeta"}, {Name: "alpha"}}
+	var names []string
+	for _, p := range All(mine) {
+		names = append(names, p.Name)
+	}
+	if got := strings.Join(names, " "); got != "s m l alpha zeta" {
+		t.Errorf("All = %s", got)
+	}
+	if _, ok := Find(mine, "alpha"); !ok {
+		t.Error("Find(alpha)")
+	}
+	if _, ok := Find(mine, "m"); !ok {
+		t.Error("Find(m)")
+	}
+	if _, ok := Find(mine, "ghost"); ok {
+		t.Error("Find(ghost)")
+	}
+	if !Taken("s") || !Taken("default") || Taken("alpha") {
+		t.Error("Taken")
+	}
+	if len(BuiltinProfiles) != 3 {
+		t.Error("All must not change the three of the tenant")
+	}
+}

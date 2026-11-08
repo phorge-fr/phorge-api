@@ -33,6 +33,7 @@ func TestUsedByCountsStoppedInstancesAndProfiles(t *testing.T) {
 			{Name: "c", CPU: 1, MemoryMiB: 1024, DiskGiB: 10, Running: false},
 		},
 		[]compute.Network{{Name: "n"}},
+		nil,
 	)
 	want := Used{Instances: 3, VCPU: 5, MemoryMiB: 2048 + 4096 + 1024, DiskGiB: 158, Networks: 1}
 	if got != want {
@@ -98,9 +99,24 @@ func TestSizeAskedTakesTheProfileOrTheDefaults(t *testing.T) {
 		"nothing":    {compute.CreateInstance{}, 1, 1024, 10},
 		"only a cpu": {compute.CreateInstance{CPU: &two}, 2, 1024, 10},
 	} {
-		cpu, mem, dsk := SizeAsked(tt.req)
+		cpu, mem, dsk := SizeAsked(tt.req, nil)
 		if cpu != tt.cpu || mem != tt.mem || dsk != tt.dsk {
 			t.Errorf("%s: %d/%d/%d, want %d/%d/%d", name, cpu, mem, dsk, tt.cpu, tt.mem, tt.dsk)
 		}
+	}
+}
+
+func TestAProfileTheUserMadeCountsWhatItComesTo(t *testing.T) {
+	mine := []compute.Profile{{Name: "web", CPU: 3, MemoryMiB: 3072, DiskGiB: 30}}
+	got := UsedBy([]compute.Instance{{Name: "a", Profile: "web"}, {Name: "b", Profile: "s"}}, nil, mine)
+	if want := (Used{Instances: 2, VCPU: 4, MemoryMiB: 3072 + 2048, DiskGiB: 94}); got != want {
+		t.Errorf("UsedBy = %+v, want %+v", got, want)
+	}
+	if cpu, mem, disk := SizeAsked(compute.CreateInstance{Profile: "web"}, mine); cpu != 3 || mem != 3072 || disk != 30 {
+		t.Errorf("SizeAsked = %d/%d/%d", cpu, mem, disk)
+	}
+	// without the profile in the list it counts nothing, as an instance whose profile is gone does
+	if got := UsedBy([]compute.Instance{{Name: "a", Profile: "web"}}, nil, nil); got.VCPU != 0 {
+		t.Errorf("an unknown profile counted %+v", got)
 	}
 }

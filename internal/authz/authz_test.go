@@ -44,7 +44,7 @@ var alice = auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org"
 func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 	// The actions on a tenant are relations of the model. Creating, resizing and deleting a tenant is not: it is for the
 	// platform administrators.
-	actions := []Action{ReadTenant, WriteTenant, ReadInstances, WriteInstances, ReadImages, WriteImages, ReadNetworks, WriteNetworks, ReadMemberships, WriteMemberships}
+	actions := []Action{ReadTenant, WriteTenant, ReadInstances, WriteInstances, ReadImages, WriteImages, ReadNetworks, WriteNetworks, ReadProfiles, WriteProfiles, ReadMemberships, WriteMemberships}
 	for _, a := range actions {
 		if !strings.HasPrefix(relations[a], "can_") {
 			t.Errorf("%s has no can_* relation: %q", a, relations[a])
@@ -75,7 +75,7 @@ func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 			t.Errorf("scope %s is not <resource>:<verb>: the console groups them by resource", scope)
 		}
 	}
-	want := "images:read,images:write,instances:read,instances:write,memberships:read,memberships:write,networks:read,networks:write,tenants:read,tenants:write"
+	want := "images:read,images:write,instances:read,instances:write,memberships:read,memberships:write,networks:read,networks:write,profiles:read,profiles:write,tenants:read,tenants:write"
 	if got := strings.Join(Scopes(), ","); got != want {
 		t.Errorf("Scopes() = %s, want the ones of the ApiKey XRD: %s", got, want)
 	}

@@ -8,20 +8,8 @@ import (
 	"testing"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
+	"github.com/phorge-fr/phorge-api/internal/status"
 )
-
-func TestProfilesWhoMayRead(t *testing.T) {
-	for who, want := range map[string]int{
-		"viewer": 200, "user": 200, "operator": 200, "admin": 200,
-		"svc":        403, // a key that writes instances reads nothing of them
-		"svc_images": 403, "mallory": 404, "": 401,
-	} {
-		e := newEnv(t)
-		if code := call(t, e, "GET", "/v1/tenants/demo/profiles", who, ""); code != want {
-			t.Errorf("%q: status %d, want %d", who, code, want)
-		}
-	}
-}
 
 func TestProfilesAreThreeSizes(t *testing.T) {
 	e := newEnv(t)
@@ -169,4 +157,267 @@ func TestPatchMovesAnInstanceBetweenAProfileAndItsOwnSize(t *testing.T) {
 			t.Errorf("status %d: %s", rec.Code, rec.Body)
 		}
 	})
+}
+
+func madeProfile(name string, cpu, mem, disk int) compute.Profile {
+	return compute.Profile{Name: name, CPU: cpu, MemoryMiB: mem, DiskGiB: disk, CreatedAt: now, Status: status.Object{Ready: true, NotReadySince: now}}
+}
+
+func TestProfilesWhoMayDoWhat(t *testing.T) {
+	const coll, item = "/v1/tenants/demo/profiles", "/v1/tenants/demo/profiles/web"
+	create := `{"name":"new","cpu":1,"memoryMiB":1024,"diskGiB":10}`
+	tests := []struct {
+		who                       string
+		list, get, create, delete int
+	}{
+		{"viewer", 200, 200, 403, 403},
+		{"user", 200, 200, 403, 403},
+		{"operator", 200, 200, 202, 202},
+		{"admin", 200, 200, 202, 202},
+		{"svc", 403, 403, 403, 403},
+		{"svc_mgr", 403, 403, 403, 403},
+		{"mallory", 404, 404, 404, 404},
+		{"", 401, 401, 401, 401},
+	}
+	for _, tt := range tests {
+		t.Run(tt.who, func(t *testing.T) {
+			e := newEnv(t)
+			e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+			for _, c := range []struct {
+				method, path, body string
+				want               int
+			}{
+				{"GET", coll, "", tt.list}, {"GET", item, "", tt.get}, {"POST", coll, create, tt.create}, {"DELETE", item, "", tt.delete},
+			} {
+				if got := call(t, e, c.method, c.path, tt.who, c.body); got != c.want {
+					t.Errorf("%s %s: status %d, want %d", c.method, c.path, got, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestTheListHoldsTheThreeOfTheTenantThenTheOnesTheUserMade(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("zeta", 1, 1024, 10))
+	e.profiles.put("demo", madeProfile("alpha", 2, 2048, 20))
+	var body struct {
+		Items []profileBody `json:"items"`
+	}
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/profiles", "viewer", ""), &body)
+	var names []string
+	for _, p := range body.Items {
+		names = append(names, p.Name)
+		if p.Builtin && (p.Phase != nil || p.CreatedAt != nil) {
+			t.Errorf("%s: a profile every tenant has carries what a made one does: %+v", p.Name, p)
+		}
+		if !p.Builtin && (p.Phase == nil || p.CreatedAt == nil || p.Description == "") {
+			t.Errorf("%s: a made profile has a phase, a date and says what it comes to: %+v", p.Name, p)
+		}
+	}
+	if got := strings.Join(names, " "); got != "s m l alpha zeta" {
+		t.Errorf("names = %s", got)
+	}
+	// one by one, a built-in and a made one, and one that is not there
+	var one profileBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/profiles/alpha", "viewer", ""), &one)
+	if one.CPU != 2 || one.Builtin || one.Description != "2 vCPU, 2048 MiB RAM, 20 GiB disk" {
+		t.Errorf("alpha = %+v", one)
+	}
+	if code := call(t, e, "GET", "/v1/tenants/demo/profiles/m", "viewer", ""); code != http.StatusOK {
+		t.Errorf("m: %d", code)
+	}
+	if code := call(t, e, "GET", "/v1/tenants/demo/profiles/ghost", "viewer", ""); code != http.StatusNotFound {
+		t.Errorf("ghost: %d", code)
+	}
+}
+
+func TestMakeAProfile(t *testing.T) {
+	e := newEnv(t)
+	rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"web","description":"for the web servers","cpu":2,"memoryMiB":2048,"diskGiB":20}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if got := rec.Header().Get("Location"); got != "/v1/tenants/demo/profiles/web" {
+		t.Errorf("Location = %q", got)
+	}
+	var body profileBody
+	mustDecode(t, rec, &body)
+	if body.Name != "web" || body.Builtin || body.CPU != 2 || body.MemoryMiB != 2048 || body.DiskGiB != 20 || body.CreatedBy != "user:operator@example.org" {
+		t.Errorf("body = %+v", body)
+	}
+	if got := e.profiles.created; len(got) != 1 || *got[0].CPU != 2 {
+		t.Errorf("the store received %+v", got)
+	}
+	if code := call(t, e, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"web","cpu":1,"memoryMiB":1024,"diskGiB":10}`); code != http.StatusConflict {
+		t.Errorf("the same name twice: status %d, want 409", code)
+	}
+}
+
+func TestMakeAProfileRefusesABadRequest(t *testing.T) {
+	e := newEnv(t)
+	const sz = `"cpu":1,"memoryMiB":1024,"diskGiB":10`
+	for name, tt := range map[string]struct{ body, want string }{
+		"no name":            {`{` + sz + `}`, "name must be"},
+		"uppercase":          {`{"name":"Web",` + sz + `}`, "name must be"},
+		"a digit first":      {`{"name":"1web",` + sz + `}`, "name must be"},
+		"ends with a hyphen": {`{"name":"web-",` + sz + `}`, "name must be"},
+		"33 characters":      {`{"name":"` + strings.Repeat("a", 33) + `",` + sz + `}`, "name must be"},
+		"s is taken":         {`{"name":"s",` + sz + `}`, "name s is taken"},
+		"m is taken":         {`{"name":"m",` + sz + `}`, "name m is taken"},
+		"l is taken":         {`{"name":"l",` + sz + `}`, "name l is taken"},
+		"default is taken":   {`{"name":"default",` + sz + `}`, "name default is taken"},
+		"no cpu":             {`{"name":"web","memoryMiB":1024,"diskGiB":10}`, "cpu is required"},
+		"no memory":          {`{"name":"web","cpu":1,"diskGiB":10}`, "memoryMiB is required"},
+		"no disk":            {`{"name":"web","cpu":1,"memoryMiB":1024}`, "diskGiB is required"},
+		"cpu 0":              {`{"name":"web","cpu":0,"memoryMiB":1024,"diskGiB":10}`, "cpu must be between"},
+		"cpu 17":             {`{"name":"web","cpu":17,"memoryMiB":1024,"diskGiB":10}`, "cpu must be between"},
+		"memory 255":         {`{"name":"web","cpu":1,"memoryMiB":255,"diskGiB":10}`, "memoryMiB must be between"},
+		"disk 501":           {`{"name":"web","cpu":1,"memoryMiB":1024,"diskGiB":501}`, "diskGiB must be between"},
+		"a long description": {`{"name":"web","description":"` + strings.Repeat("x", 201) + `",` + sz + `}`, "description must be"},
+	} {
+		rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", tt.body)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), tt.want) {
+			t.Errorf("%s: status %d: %s, want 422 with %q", name, rec.Code, rec.Body, tt.want)
+		}
+	}
+	if code := call(t, e, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"web","nat":true,`+sz+`}`); code != http.StatusBadRequest {
+		t.Errorf("a field the kind does not have: %d, want 400", code)
+	}
+	if len(e.profiles.created) != 0 {
+		t.Errorf("something reached the store: %+v", e.profiles.created)
+	}
+	if code := call(t, e, "POST", "/v1/tenants/ghost/profiles", "admin", `{"name":"web",`+sz+`}`); code != http.StatusNotFound {
+		t.Errorf("a tenant that does not exist: %d", code)
+	}
+}
+
+func TestATenantHoldsAtMostSomeProfiles(t *testing.T) {
+	s := testSettings
+	s.MaxProfilesPerTenant = 2
+	e := newEnvWith(t, s)
+	e.profiles.put("demo", madeProfile("one", 1, 1024, 10))
+	const sz = `"cpu":1,"memoryMiB":1024,"diskGiB":10`
+	if code := call(t, e, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"two",`+sz+`}`); code != http.StatusAccepted {
+		t.Fatalf("the second: status %d", code)
+	}
+	rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"three",`+sz+`}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"quota_exceeded"`) || !strings.Contains(rec.Body.String(), "2 out of 2") {
+		t.Errorf("the third: status %d: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestDeleteAProfile(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	rec := e.do(t, "DELETE", "/v1/tenants/demo/profiles/web", "operator", "")
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var body profileBody
+	mustDecode(t, rec, &body)
+	if body.Phase == nil || *body.Phase != "Deleting" {
+		t.Errorf("body = %+v", body)
+	}
+	if code := call(t, e, "DELETE", "/v1/tenants/demo/profiles/ghost", "operator", ""); code != http.StatusNotFound {
+		t.Errorf("a profile that does not exist: %d", code)
+	}
+	// the three of the tenant are not the user's
+	for _, name := range []string{"s", "m", "l", "default"} {
+		rec := e.do(t, "DELETE", "/v1/tenants/demo/profiles/"+name, "operator", "")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "every tenant has") {
+			t.Errorf("deleting %s: status %d: %s", name, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestDeleteAProfileInUseNamesTheInstances(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	e.instances.put("demo", compute.Instance{Name: "a", Profile: "web"})
+	e.instances.put("demo", compute.Instance{Name: "b", Profile: "web"})
+	e.instances.put("demo", compute.Instance{Name: "c", Profile: "s"})
+	rec := e.do(t, "DELETE", "/v1/tenants/demo/profiles/web", "operator", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"in_use"`) || !strings.Contains(rec.Body.String(), "a, b") || strings.Contains(rec.Body.String(), "c") && strings.Contains(rec.Body.String(), ", c") {
+		t.Errorf("status %d: %s: the refusal names the instances that have it, and only them", rec.Code, rec.Body)
+	}
+	if len(e.profiles.deleted) != 0 {
+		t.Errorf("a profile in use was deleted: %v", e.profiles.deleted)
+	}
+}
+
+func TestAnInstanceTakesAProfileTheUserMade(t *testing.T) {
+	e := newEnv(t)
+	e.images.put("demo", readyImage("debian"))
+	e.profiles.put("demo", madeProfile("web", 3, 3072, 30))
+	rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web1","image":"debian","profile":"web"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var body instanceBody
+	mustDecode(t, rec, &body)
+	if body.Profile != "web" || body.CPU != 3 || body.MemoryMiB != 3072 || body.DiskGiB != 30 {
+		t.Errorf("body = %+v: the profile, and what the user's own profile comes to", body)
+	}
+	// the list and one by one say it too
+	var got instanceBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/instances/web1", "viewer", ""), &got)
+	if got.CPU != 3 {
+		t.Errorf("get: %+v", got)
+	}
+	var list struct {
+		Items []instanceBody `json:"items"`
+	}
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/instances", "viewer", ""), &list)
+	if len(list.Items) != 1 || list.Items[0].DiskGiB != 30 {
+		t.Errorf("list: %+v", list.Items)
+	}
+}
+
+func TestAnUnknownProfileListsTheOnesTheTenantHas(t *testing.T) {
+	e := newEnv(t)
+	e.images.put("demo", readyImage("debian"))
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"a","image":"debian","profile":"xl"}`)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "profile xl does not exist in this tenant: s, m, l, web") {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+	// a profile another tenant made is not this one's
+	e.profiles.put("other", madeProfile("secret", 1, 1024, 10))
+	if code := call(t, e, "POST", "/v1/tenants/demo/instances", "user", `{"name":"b","image":"debian","profile":"secret"}`); code != http.StatusUnprocessableEntity {
+		t.Errorf("another tenant's profile: status %d, want 422", code)
+	}
+}
+
+func TestAProfileTheUserMadeCountsInTheQuota(t *testing.T) {
+	e := newEnv(t)
+	withTiny(e)
+	e.networks.put("tiny", readyNetwork("net"))
+	e.profiles.put("tiny", madeProfile("big", 1, 1024, 30)) // the small plan holds 20 GiB of disk
+	rec := e.do(t, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"a","image":"debian","profile":"big"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "30 GiB of disk") {
+		t.Errorf("status %d: %s", rec.Code, rec.Body)
+	}
+	e.profiles.put("tiny", madeProfile("fits", 1, 1024, 10))
+	if code := call(t, e, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"b","image":"debian","profile":"fits"}`); code != http.StatusAccepted {
+		t.Errorf("a profile that fits: status %d", code)
+	}
+	// and what the tenant holds says so
+	var q quotaBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/tiny/quota", "operator", ""), &q)
+	if q.Used.DiskGiB != 10 || q.Used.VCPU != 1 {
+		t.Errorf("used = %+v: the instance counts what its own profile comes to", q.Used)
+	}
+}
+
+func TestAnInstanceMovesToAProfileTheUserMade(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	e.instances.put("demo", compute.Instance{Name: "vm", Image: "debian", CPU: 2, MemoryMiB: 2048, DiskGiB: 20})
+	if code := call(t, e, "PATCH", "/v1/tenants/demo/instances/vm", "user", `{"profile":"web"}`); code != http.StatusOK {
+		t.Fatalf("status %d", code)
+	}
+	if p := e.instances.patched[0]; p.Profile == nil || *p.Profile != "web" {
+		t.Errorf("patch = %+v", p)
+	}
 }

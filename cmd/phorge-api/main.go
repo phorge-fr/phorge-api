@@ -50,6 +50,7 @@ func main() {
 		Tenants:     kube.NewTenants(kubeConn),
 		Images:      kube.NewImages(kubeConn),
 		Networks:    kube.NewNetworks(kubeConn),
+		Profiles:    kube.NewProfiles(kubeConn),
 		Instances:   kube.NewInstances(kubeConn),
 		Memberships: kube.NewMemberships(kubeConn),
 		Keys:        kube.NewApiKeys(kubeConn),
@@ -58,7 +59,7 @@ func main() {
 			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
 			KeyMaxLifetime: cfg.APIKeyMaxLifetime, KeyCreation: cfg.APIKeyCreation,
 			TenantCreation: cfg.TenantCreation, MaxTenantsPerUser: cfg.MaxTenantsPerUser,
-			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant,
+			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant, MaxProfilesPerTenant: cfg.MaxProfilesPerTenant,
 		},
 	})
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}

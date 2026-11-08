@@ -36,8 +36,9 @@ type Settings struct {
 	// RateLimitPerMinute is how many requests that create, change or delete a caller may send a minute, in bursts of RateLimitBurst;
 	// 0 limits nothing.
 	RateLimitPerMinute, RateLimitBurst int
-	// MaxImagesPerTenant is how many images a tenant may hold; 0 is no limit.
-	MaxImagesPerTenant int
+	// MaxImagesPerTenant is how many images a tenant may hold, and MaxProfilesPerTenant how many profiles its users may make; 0 is
+	// no limit.
+	MaxImagesPerTenant, MaxProfilesPerTenant int
 	// KeyCreation is who creates and changes API keys: config.KeyCreationPlatformAdmins or config.KeyCreationUsers.
 	KeyCreation string
 }
@@ -50,6 +51,7 @@ type Deps struct {
 	// Images, Networks and Instances are the stores of the tenant routes.
 	Images      compute.ImageStore
 	Networks    compute.NetworkStore
+	Profiles    compute.ProfileStore
 	Instances   compute.InstanceStore
 	Memberships access.MembershipStore
 	Keys        access.KeyStore
@@ -75,10 +77,10 @@ func Register(s *server.Server, d Deps) {
 	authn := func(h http.Handler) http.Handler { return d.Auth.Middleware(limited(limiter, h)) }
 	(&tenantRoutes{base: b, store: d.Tenants, settings: d.Settings}).register(s, authn)
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances, settings: d.Settings}).register(s, authn)
-	(&profileRoutes{base: b}).register(s, authn)
-	(&quotaRoutes{base: b, instances: d.Instances, networks: d.Networks}).register(s, authn)
-	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances}).register(s, authn)
-	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, settings: d.Settings}).register(s, authn)
+	(&profileRoutes{base: b, store: d.Profiles, instances: d.Instances, settings: d.Settings}).register(s, authn)
+	(&quotaRoutes{base: b, instances: d.Instances, networks: d.Networks, profiles: d.Profiles}).register(s, authn)
+	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances, profiles: d.Profiles}).register(s, authn)
+	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, profiles: d.Profiles, settings: d.Settings}).register(s, authn)
 	(&membershipRoutes{base: b, store: d.Memberships}).register(s, authn)
 	(&keyRoutes{base: b, store: d.Keys, settings: d.Settings}).register(s, authn)
 

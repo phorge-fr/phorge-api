@@ -19,6 +19,7 @@ type quotaRoutes struct {
 	base
 	instances compute.InstanceStore
 	networks  compute.NetworkStore
+	profiles  compute.ProfileStore
 }
 
 func (q *quotaRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -33,35 +34,37 @@ type quotaBody struct {
 
 func (q *quotaRoutes) get(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("t")
-	plan, used, ok := q.holdings(w, r, tenant)
+	plan, used, _, ok := holdings(w, r, &q.base, q.instances, q.networks, q.profiles, tenant)
 	if !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, quotaBody{Plan: plan, Limits: quota.LimitsOf(plan), Used: used})
 }
 
-// holdings reads the plan of a tenant and what it holds, or answers.
-func (q *quotaRoutes) holdings(w http.ResponseWriter, r *http.Request, tenant string) (tenants.Plan, quota.Used, bool) {
-	return holdings(w, r, &q.base, q.instances, q.networks, tenant)
-}
-
-func holdings(w http.ResponseWriter, r *http.Request, b *base, instances compute.InstanceStore, networks compute.NetworkStore, tenant string) (tenants.Plan, quota.Used, bool) {
+// holdings reads the plan of a tenant, what it holds, and the profiles its users made (an instance counts what its profile comes to),
+// or answers.
+func holdings(w http.ResponseWriter, r *http.Request, b *base, instances compute.InstanceStore, networks compute.NetworkStore, profiles compute.ProfileStore, tenant string) (tenants.Plan, quota.Used, []compute.Profile, bool) {
 	tn, err := b.tenants.Get(r.Context(), tenant)
 	if err != nil {
 		b.storeError(w, err, "tenant")
-		return "", quota.Used{}, false
+		return "", quota.Used{}, nil, false
 	}
 	in, err := instances.List(r.Context(), tenant)
 	if err != nil {
 		b.storeError(w, err, "instance")
-		return "", quota.Used{}, false
+		return "", quota.Used{}, nil, false
 	}
 	nw, err := networks.List(r.Context(), tenant)
 	if err != nil {
 		b.storeError(w, err, "network")
-		return "", quota.Used{}, false
+		return "", quota.Used{}, nil, false
 	}
-	return tn.Plan, quota.UsedBy(in, nw), true
+	made, err := profiles.List(r.Context(), tenant)
+	if err != nil {
+		b.storeError(w, err, "profile")
+		return "", quota.Used{}, nil, false
+	}
+	return tn.Plan, quota.UsedBy(in, nw, made), made, true
 }
 
 // quotaExceeded answers a request that would pass a limit: 409, with a code a program can act on and a sentence that says which.

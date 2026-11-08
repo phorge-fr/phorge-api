@@ -24,6 +24,7 @@ type instanceRoutes struct {
 	store    compute.InstanceStore
 	images   compute.ImageStore
 	networks compute.NetworkStore
+	profiles compute.ProfileStore
 	settings Settings
 }
 
@@ -59,7 +60,17 @@ type instanceBody struct {
 	CreatedBy       string       `json:"createdBy,omitempty"`
 }
 
-func (i *instanceRoutes) body(in compute.Instance) instanceBody {
+// userProfiles reads the profiles the users made in a tenant, for what an instance that has one comes to. When they cannot be read the
+// size of such an instance is left empty rather than failing the request.
+func (i *instanceRoutes) userProfiles(r *http.Request, tenant string) []compute.Profile {
+	made, err := i.profiles.List(r.Context(), tenant)
+	if err != nil {
+		return nil
+	}
+	return made
+}
+
+func (i *instanceRoutes) body(in compute.Instance, user []compute.Profile) instanceBody {
 	keys := in.SSHPublicKeys
 	if keys == nil {
 		keys = []string{}
@@ -79,7 +90,7 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 	}
 	// An instance with a profile has no size of its own on the object: the profile decides it, and the body says what it comes to.
 	cpu, mem, disk := in.CPU, in.MemoryMiB, in.DiskGiB
-	if p, ok := compute.ProfileNamed(in.Profile); ok && in.Profile != "" {
+	if p, ok := compute.Find(user, in.Profile); ok && in.Profile != "" {
 		cpu, mem, disk = p.CPU, p.MemoryMiB, p.DiskGiB
 	}
 	return instanceBody{
@@ -96,9 +107,10 @@ func (i *instanceRoutes) list(w http.ResponseWriter, r *http.Request) {
 		i.storeError(w, err, "instance")
 		return
 	}
+	made := i.userProfiles(r, r.PathValue("t"))
 	items := []instanceBody{}
 	for _, in := range found {
-		items = append(items, i.body(in))
+		items = append(items, i.body(in, made))
 	}
 	slices.SortFunc(items, func(a, b instanceBody) int { return strings.Compare(a.Name, b.Name) })
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
@@ -115,7 +127,7 @@ func (i *instanceRoutes) get(w http.ResponseWriter, r *http.Request) {
 		i.storeError(w, err, "instance")
 		return
 	}
-	writeJSON(w, http.StatusOK, i.body(in))
+	writeJSON(w, http.StatusOK, i.body(in, i.userProfiles(r, r.PathValue("t"))))
 }
 
 func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
@@ -154,22 +166,21 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Network = nw
+	// The plan limits the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
+	// that never becomes ready. The profiles the users made are read for it, an instance counts what its profile comes to.
+	plan, used, made, ok := holdings(w, r, &i.base, i.store, i.networks, i.profiles, tenant)
+	if !ok {
+		return
+	}
 	if req.Profile != "" {
-		if _, ok := compute.ProfileNamed(req.Profile); !ok {
-			i.storeError(w, &resource.InvalidError{Problems: []string{unknownProfile(req.Profile)}}, "instance")
+		if _, ok := compute.Find(made, req.Profile); !ok {
+			i.storeError(w, &resource.InvalidError{Problems: []string{unknownProfile(made, req.Profile)}}, "instance")
 			return
 		}
 	}
 	// A size is complete: the XRD has no defaults, so what the request left out takes the ones of the API.
 	req = req.WithDefaultSize()
-
-	// The plan limits the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
-	// that never becomes ready.
-	plan, used, ok := holdings(w, r, &i.base, i.store, i.networks, tenant)
-	if !ok {
-		return
-	}
-	cpu, mem, disk := quota.SizeAsked(req)
+	cpu, mem, disk := quota.SizeAsked(req, made)
 	if e := quota.CheckInstance(plan, used, cpu, mem, disk); e != nil {
 		quotaExceeded(w, e)
 		return
@@ -187,12 +198,13 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 	i.log.Info("instance created", "tenant", tenant, "instance", in.Name, "by", id.Subject)
 	// Accepted, not created: it takes about a minute. The quota of the plan is Incus's, its refusal comes back in problems.
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/instances/"+in.Name)
-	writeJSON(w, http.StatusAccepted, i.body(in))
+	writeJSON(w, http.StatusAccepted, i.body(in, made))
 }
 
-func unknownProfile(name string) string {
-	names := make([]string, 0, len(compute.BuiltinProfiles))
-	for _, p := range compute.BuiltinProfiles {
+func unknownProfile(user []compute.Profile, name string) string {
+	all := compute.All(user)
+	names := make([]string, 0, len(all))
+	for _, p := range all {
 		names = append(names, p.Name)
 	}
 	return "profile " + name + " does not exist in this tenant: " + strings.Join(names, ", ")
@@ -258,9 +270,10 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := r.PathValue("t")
+	made := i.userProfiles(r, tenant)
 	if req.Profile != nil {
-		if _, ok := compute.ProfileNamed(*req.Profile); !ok {
-			i.storeError(w, &resource.InvalidError{Problems: []string{unknownProfile(*req.Profile)}}, "instance")
+		if _, ok := compute.Find(made, *req.Profile); !ok {
+			i.storeError(w, &resource.InvalidError{Problems: []string{unknownProfile(made, *req.Profile)}}, "instance")
 			return
 		}
 	}
@@ -302,7 +315,7 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := auth.FromContext(r.Context())
 	i.log.Info("instance changed", "tenant", tenant, "instance", name, "by", id.Subject)
-	writeJSON(w, http.StatusOK, i.body(in))
+	writeJSON(w, http.StatusOK, i.body(in, made))
 }
 
 func (i *instanceRoutes) delete(w http.ResponseWriter, r *http.Request) {
@@ -322,5 +335,5 @@ func (i *instanceRoutes) delete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		in = compute.Instance{Name: name, Status: status.Object{Deleting: true}}
 	}
-	writeJSON(w, http.StatusAccepted, i.body(in))
+	writeJSON(w, http.StatusAccepted, i.body(in, i.userProfiles(r, tenant)))
 }
