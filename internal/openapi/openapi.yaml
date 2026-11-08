@@ -395,8 +395,9 @@ paths:
             operationId: createNetwork
             summary: Deploy a network in a tenant
             description: |
-                An OVN network of the tenant, NATed: its instances reach the Internet and are not reachable from it. Its addresses
-                are chosen by Incus. The answer is `202`: poll the `Location` until `phase` is `Ready`. The number of networks is
+                An OVN network of the tenant, NATed: its instances reach the Internet and are not reachable from it. The user may
+                choose its range with `ipv4`; without one Incus chooses it. A range the platform uses, or that a network of any tenant
+                already has, is refused with `409` (`range_reserved`, `range_in_use`). The answer is `202`: poll the `Location` until `phase` is `Ready`. The number of networks is
                 limited by the plan of the tenant: the next one never becomes ready, and `problems` says that a limit is reached.
             security:
                 - bearerAuth: []
@@ -1564,6 +1565,11 @@ components:
                     example: net
                 description:
                     type: string
+                ipv4:
+                    type: string
+                    example: 10.77.1.0/24
+                    description: |
+                        The range of the network, when the user chose it. Absent when Incus chose it: that choice is not reported yet.
                 phase:
                     $ref: "#/components/schemas/Phase"
                 problems:
@@ -1599,6 +1605,12 @@ components:
                 description:
                     type: string
                     maxLength: 200
+                ipv4:
+                    type: string
+                    example: 10.77.1.0/24
+                    description: |
+                        The range of the network, as its address with a prefix from `/16` to `/29`, in `10.0.0.0/8`, `172.16.0.0/12` or
+                        `192.168.0.0/16`. Incus takes the first host as the gateway. Omit it to let Incus choose.
         Instance:
             type: object
             required:

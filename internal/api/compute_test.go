@@ -100,6 +100,19 @@ func (s *networkStore) List(_ context.Context, tenant string) ([]compute.Network
 	return out, nil
 }
 
+func (s *networkStore) ListAll(_ context.Context) ([]compute.Network, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	var out []compute.Network
+	for _, byName := range s.data {
+		for _, n := range byName {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
 func (s *networkStore) Get(_ context.Context, tenant, name string) (compute.Network, error) {
 	if s.err != nil {
 		return compute.Network{}, s.err
@@ -119,7 +132,7 @@ func (s *networkStore) Create(_ context.Context, tenant string, r compute.Create
 		return compute.Network{}, compute.ErrExists
 	}
 	s.created = append(s.created, r)
-	n := compute.Network{Name: r.Name, Description: r.Description, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
+	n := compute.Network{Name: r.Name, Description: r.Description, IPv4: r.IPv4, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
 	s.put(tenant, n)
 	return n, nil
 }

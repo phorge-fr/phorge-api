@@ -128,3 +128,42 @@ func TestNetworkOfReadsTheStatus(t *testing.T) {
 		t.Errorf("networkOf = %+v", n)
 	}
 }
+
+func TestNetworkCreateWritesTheGatewayOfTheRange(t *testing.T) {
+	s, client := newNetworkStore()
+	if _, err := s.Create(t.Context(), "demo", compute.CreateNetwork{Name: "lan", IPv4: "10.77.1.0/24"}); err != nil {
+		t.Fatal(err)
+	}
+	obj, _ := client.Resource(networksGVR).Namespace("t-demo").Get(t.Context(), "lan", metav1.GetOptions{})
+	if got, _, _ := unstructured.NestedString(obj.Object, "spec", "ipv4"); got != "10.77.1.1/24" {
+		t.Errorf("spec.ipv4 = %q, want the gateway the kind takes", got)
+	}
+	if _, err := s.Create(t.Context(), "demo", compute.CreateNetwork{Name: "bad", IPv4: "10.77.1.5/24"}); err == nil {
+		t.Error("a host address was written")
+	}
+}
+
+func TestNetworkReadsItsRangeFromTheStatusAndListsAllTenants(t *testing.T) {
+	s, client := newNetworkStore()
+	for _, tenant := range []string{"demo", "other"} {
+		if _, err := s.Create(t.Context(), tenant, compute.CreateNetwork{Name: "lan", IPv4: "10.77.1.0/24"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Nothing reports the range back until the composition writes status.ipv4.
+	if n, _ := s.Get(t.Context(), "demo", "lan"); n.IPv4 != "" {
+		t.Errorf("ipv4 = %q before the status has it", n.IPv4)
+	}
+	obj, _ := client.Resource(networksGVR).Namespace("t-demo").Get(t.Context(), "lan", metav1.GetOptions{})
+	_ = unstructured.SetNestedField(obj.Object, "10.77.1.1/24", "status", "ipv4")
+	if _, err := client.Resource(networksGVR).Namespace("t-demo").Update(t.Context(), obj, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := s.Get(t.Context(), "demo", "lan"); n.IPv4 != "10.77.1.0/24" {
+		t.Errorf("ipv4 = %q, want the range of the gateway", n.IPv4)
+	}
+	all, err := s.ListAll(t.Context())
+	if err != nil || len(all) != 2 {
+		t.Errorf("ListAll = %v, %v, want the networks of both tenants", all, err)
+	}
+}
