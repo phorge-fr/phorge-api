@@ -78,7 +78,11 @@ func Register(s *server.Server, d Deps) {
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances, settings: d.Settings}).register(s, authn)
 	(&profileRoutes{base: b, store: d.Profiles, instances: d.Instances, settings: d.Settings}).register(s, authn)
 	(&quotaRoutes{base: b, instances: d.Instances, networks: d.Networks, profiles: d.Profiles}).register(s, authn)
-	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances, profiles: d.Profiles}).register(s, authn)
+	networks := &networkRoutes{base: b, store: d.Networks, instances: d.Instances, profiles: d.Profiles}
+	if d.Terminal != nil {
+		networks.ranges = &terminal.Reader{Incus: d.Terminal.Incus, Exchanger: d.Terminal.Exchanger}
+	}
+	networks.register(s, authn)
 	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, profiles: d.Profiles, settings: d.Settings}).register(s, authn)
 	if d.Terminal != nil {
 		(&terminalRoutes{

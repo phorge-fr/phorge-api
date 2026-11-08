@@ -60,8 +60,9 @@ func main() {
 		Memberships: kube.NewMemberships(kubeConn),
 		Keys:        kube.NewApiKeys(kubeConn),
 		Terminal: &api.Terminal{
-			Incus:     &terminal.Client{URL: cfg.IncusURL, HTTP: &incusHTTP},
-			Exchanger: &terminal.Authentik{URL: cfg.OIDCTokenURL, ClientID: cfg.OIDCClientID, Audience: cfg.IncusClientID, HTTP: fgaHTTP},
+			Incus: &terminal.Client{URL: cfg.IncusURL, HTTP: &incusHTTP},
+			// A token of Incus is kept for a few minutes: reading the networks of a tenant for a page is one exchange, not one per request.
+			Exchanger: terminal.NewCached(&terminal.Authentik{URL: cfg.OIDCTokenURL, ClientID: cfg.OIDCClientID, Audience: cfg.IncusClientID, HTTP: fgaHTTP}, 5*time.Minute, time.Minute),
 			Settings: terminal.Settings{
 				MaxPerUser: cfg.TerminalMaxPerUser, MaxPerTenant: cfg.TerminalMaxPerTenant,
 				Idle: cfg.TerminalIdle, MaxDuration: cfg.TerminalMaxDuration, Recheck: cfg.TerminalRecheck,

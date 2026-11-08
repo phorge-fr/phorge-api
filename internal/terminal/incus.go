@@ -33,6 +33,8 @@ func (s *Session) Close() {
 // Incus opens an interactive exec in an instance, with the token the person was given for it.
 type Incus interface {
 	Exec(ctx context.Context, token, project, instance string, size Size) (*Session, error)
+	// NetworkRanges reads the gateway addresses of the networks of a project, as the person of the token may see them.
+	NetworkRanges(ctx context.Context, token, project string) (map[string]string, error)
 }
 
 // Client talks to the HTTPS endpoint of Incus. Incus authenticates the websockets of an operation by the same header as the request

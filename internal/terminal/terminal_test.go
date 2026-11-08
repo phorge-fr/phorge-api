@@ -433,3 +433,95 @@ func TestARefusedExchangeIsToldApartFromAnOutage(t *testing.T) {
 		t.Errorf("unreachable: %v", err)
 	}
 }
+
+func TestTheNetworksOfAProjectAreReadWithTheTokenAndOnlyTheManagedOnesWithAnAddress(t *testing.T) {
+	var auth, query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth, query = r.Header.Get("Authorization"), r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"metadata":[
+			{"name":"lan","managed":true,"config":{"ipv4.address":"10.77.1.1/24"}},
+			{"name":"auto","managed":true,"config":{"ipv4.address":"auto"}},
+			{"name":"none","managed":true,"config":{"ipv4.address":"none"}},
+			{"name":"bare","managed":true,"config":{}},
+			{"name":"uplink","managed":false,"config":{"ipv4.address":"10.1.1.1/24"}}]}`))
+	}))
+	defer srv.Close()
+	got, err := (&Client{URL: srv.URL}).NetworkRanges(t.Context(), "tok", "t-demo")
+	if err != nil || len(got) != 1 || got["lan"] != "10.77.1.1/24" {
+		t.Fatalf("ranges = %v, %v: only an address Incus gave a managed network counts", got, err)
+	}
+	if auth != "Bearer tok" || query != "project=t-demo&recursion=1" {
+		t.Errorf("auth %q, query %q", auth, query)
+	}
+	for status, want := range map[int]error{http.StatusForbidden: ErrForbidden, http.StatusNotFound: ErrNotFound, http.StatusInternalServerError: ErrUnavailable} {
+		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "private", status) }))
+		_, err := (&Client{URL: bad.URL}).NetworkRanges(t.Context(), "tok", "t-demo")
+		bad.Close()
+		if !errors.Is(err, want) || strings.Contains(err.Error(), "private") {
+			t.Errorf("status %d: %v, want %v without the detail", status, err, want)
+		}
+	}
+}
+
+type countingExchange struct {
+	mu    sync.Mutex
+	calls int
+	fail  bool
+	ttl   time.Duration
+}
+
+func (c *countingExchange) Exchange(_ context.Context, subject string) (Token, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	if c.fail {
+		return Token{}, ErrUnavailable
+	}
+	return Token{Value: "incus-" + subject, Expires: time.Now().Add(c.ttl)}, nil
+}
+
+func TestTheCachedExchangeAsksOnceForAGoodTokenAndNeverKeepsAFailure(t *testing.T) {
+	inner := &countingExchange{ttl: time.Hour}
+	clock := time.Now()
+	c := NewCached(inner, 5*time.Minute, time.Minute)
+	c.Now = func() time.Time { return clock }
+	for i := 0; i < 3; i++ {
+		tok, err := c.Exchange(t.Context(), "alice")
+		if err != nil || tok.Value != "incus-alice" {
+			t.Fatal(tok, err)
+		}
+	}
+	if tok, _ := c.Exchange(t.Context(), "bob"); tok.Value != "incus-bob" {
+		t.Errorf("bob got %q: a token of somebody else", tok.Value)
+	}
+	if inner.calls != 2 {
+		t.Errorf("%d exchanges for alice three times and bob once, want 2", inner.calls)
+	}
+	clock = clock.Add(6 * time.Minute) // past the longest the cache keeps one
+	_, _ = c.Exchange(t.Context(), "alice")
+	if inner.calls != 3 {
+		t.Errorf("%d exchanges after the entry aged out, want 3", inner.calls)
+	}
+
+	short := &countingExchange{ttl: 90 * time.Second} // good for less than the age, and the margin comes off
+	cs := NewCached(short, 5*time.Minute, time.Minute)
+	now := time.Now()
+	cs.Now = func() time.Time { return now }
+	_, _ = cs.Exchange(t.Context(), "alice")
+	now = now.Add(40 * time.Second) // 50 s left of 90 s: inside the margin of a minute
+	_, _ = cs.Exchange(t.Context(), "alice")
+	if short.calls != 2 {
+		t.Errorf("%d exchanges, want a token that is about to expire not to be served", short.calls)
+	}
+
+	bad := &countingExchange{fail: true, ttl: time.Hour}
+	cb := NewCached(bad, time.Minute, time.Second)
+	for i := 0; i < 2; i++ {
+		if _, err := cb.Exchange(t.Context(), "alice"); err == nil {
+			t.Fatal("an exchange that failed did not fail")
+		}
+	}
+	if bad.calls != 2 {
+		t.Errorf("%d attempts, want each one asked again: a failure is not kept", bad.calls)
+	}
+}

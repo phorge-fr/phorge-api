@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/netip"
@@ -25,6 +26,50 @@ type networkRoutes struct {
 	store     compute.NetworkStore
 	instances compute.InstanceStore
 	profiles  compute.ProfileStore
+	// ranges reads what Incus chose, with the token of the caller. Nil: the platform has no terminal, so no way to ask.
+	ranges rangeReader
+}
+
+// rangeReader reads the gateway addresses that Incus gave the networks of a project, as the person of the token may see them.
+type rangeReader interface {
+	NetworkRanges(ctx context.Context, subjectToken, project string) (map[string]string, error)
+}
+
+// withRanges completes the networks whose range nobody chose: Incus chose it and nothing on the Kubernetes side knows it (the provider
+// does not report it), so it is read from Incus with the token of the caller, and Incus decides what they see. It is an addition to
+// the answer, never a condition of it: when Incus cannot be asked (a key, a token Incus does not take, an outage) the field stays
+// absent and nothing fails.
+func (n *networkRoutes) withRanges(r *http.Request, tenant string, list []compute.Network) []compute.Network {
+	if n.ranges == nil {
+		return list
+	}
+	missing := false
+	for _, nw := range list {
+		if nw.IPv4 == "" && !nw.Status.Deleting {
+			missing = true
+		}
+	}
+	id, _ := auth.FromContext(r.Context())
+	token, ok := auth.TokenFromContext(r.Context())
+	if !missing || !ok || !canCreateOwnTenant(id) {
+		return list
+	}
+	gateways, err := n.ranges.NetworkRanges(r.Context(), token, "t-"+tenant)
+	if err != nil {
+		n.log.Info("network ranges not read from incus", "tenant", tenant, "by", id.Subject, "error", err.Error())
+		return list
+	}
+	out := make([]compute.Network, len(list))
+	copy(out, list)
+	for i, nw := range out {
+		if nw.IPv4 != "" {
+			continue
+		}
+		if cidr, ok := compute.RangeOfGateway(gateways[nw.Name]); ok {
+			out[i].IPv4 = cidr
+		}
+	}
+	return out
 }
 
 func (n *networkRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -61,7 +106,7 @@ func (n *networkRoutes) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []networkBody{}
-	for _, nw := range found {
+	for _, nw := range n.withRanges(r, r.PathValue("t"), found) {
 		items = append(items, n.body(nw))
 	}
 	slices.SortFunc(items, func(a, b networkBody) int { return strings.Compare(a.Name, b.Name) })
@@ -79,7 +124,7 @@ func (n *networkRoutes) get(w http.ResponseWriter, r *http.Request) {
 		n.storeError(w, err, "network")
 		return
 	}
-	writeJSON(w, http.StatusOK, n.body(nw))
+	writeJSON(w, http.StatusOK, n.body(n.withRanges(r, r.PathValue("t"), []compute.Network{nw})[0]))
 }
 
 func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
