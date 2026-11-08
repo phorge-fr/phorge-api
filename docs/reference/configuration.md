@@ -15,6 +15,7 @@ Configuration is read from the environment and the process refuses to start, lis
 | `OPENFGA_URL` | yes | Base URL of OpenFGA |
 | `OPENFGA_API_KEY` | yes | Bearer key for OpenFGA (never logged) |
 | `OPENFGA_STORE_ID` | yes | Id of the `phorge-api` store |
+| `OPENFGA_MODEL_ID` | yes | Id of the authorization model every question is asked against (26 characters, a ULID). OpenFGA recommends giving it, and a model written to the store then takes effect for the API only when the API is deployed with its id. To change the model, write the new one first (a new immutable model), read its id, then deploy the API with it |
 | `CA_FILE` | no | PEM bundle added to the trusted roots (the internal CA) |
 | `KUBE_CONTEXT` | no | Context of the kubeconfig, outside the cluster only (development). In a pod the service account is used |
 | `LISTEN_ADDR` | no | Default `:8080` |

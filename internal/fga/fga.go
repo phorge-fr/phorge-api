@@ -29,6 +29,8 @@ type Client struct {
 	base  string
 	store string
 	key   string
+	// model is the id of the authorization model every question is asked against. Empty: OpenFGA answers with the latest one.
+	model string
 	http  *http.Client
 	now   func() time.Time
 }
@@ -39,6 +41,15 @@ func New(baseURL, storeID, key string, httpClient *http.Client) *Client {
 		httpClient = &http.Client{Timeout: Timeout}
 	}
 	return &Client{base: baseURL, store: storeID, key: key, http: httpClient, now: time.Now}
+}
+
+// WithModel returns a client that asks every question against the authorization model modelID instead of the latest one. OpenFGA
+// recommends it, for the performance and for a behaviour that stays the same until the model is switched on purpose: a model
+// written to the store takes effect for the API only when the API is deployed with its id (see docs/reference/configuration.md).
+func (c *Client) WithModel(modelID string) *Client {
+	copy := *c
+	copy.model = modelID
+	return &copy
 }
 
 // HTTPClient returns an HTTP client that trusts the system roots and, when caFile is not empty, the certificates of that
@@ -80,10 +91,12 @@ func (c *Client) Check(ctx context.Context, user, relation, object string) (bool
 	var out struct {
 		Allowed bool `json:"allowed"`
 	}
-	err := c.post(ctx, "check", map[string]any{
+	in := map[string]any{
 		"tuple_key": tupleKey{User: user, Relation: relation, Object: object},
 		"context":   c.evalContext(),
-	}, &out)
+	}
+	c.pin(in)
+	err := c.post(ctx, "check", in, &out)
 	return out.Allowed, err
 }
 
@@ -93,8 +106,17 @@ func (c *Client) ListObjects(ctx context.Context, user, relation, objectType str
 	var out struct {
 		Objects []string `json:"objects"`
 	}
-	err := c.post(ctx, "list-objects", map[string]any{"user": user, "relation": relation, "type": objectType, "context": c.evalContext()}, &out)
+	in := map[string]any{"user": user, "relation": relation, "type": objectType, "context": c.evalContext()}
+	c.pin(in)
+	err := c.post(ctx, "list-objects", in, &out)
 	return out.Objects, err
+}
+
+// pin adds the model of the client to a question.
+func (c *Client) pin(in map[string]any) {
+	if c.model != "" {
+		in["authorization_model_id"] = c.model
+	}
 }
 
 func (c *Client) post(ctx context.Context, op string, in, out any) error {

@@ -192,3 +192,39 @@ func TestHTTPClientRefusesABadBundle(t *testing.T) {
 		t.Error("a missing bundle was accepted")
 	}
 }
+
+func TestEveryQuestionIsAskedAgainstThePinnedModelAndOnlyThat(t *testing.T) {
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		_, _ = io.WriteString(w, `{"allowed":true,"objects":[]}`)
+	}))
+	defer srv.Close()
+
+	pinned := New(srv.URL, "01STORE", testKey, nil).WithModel("01M6XYT8C5Q4R8GB5QY5DYH87B")
+	if _, err := pinned.Check(t.Context(), "user:a@b", "can_read_tenant", "tenant:demo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pinned.ListObjects(t.Context(), "user:a@b", "can_read_tenant", "tenant"); err != nil {
+		t.Fatal(err)
+	}
+	for i, b := range bodies {
+		if b["authorization_model_id"] != "01M6XYT8C5Q4R8GB5QY5DYH87B" {
+			t.Errorf("question %d carries model %v: it would be asked against the latest one", i, b["authorization_model_id"])
+		}
+	}
+
+	// A client that is not pinned asks nothing about the model: OpenFGA answers with the latest.
+	bodies = nil
+	free := New(srv.URL, "01STORE", testKey, nil)
+	_, _ = free.Check(t.Context(), "user:a@b", "can_read_tenant", "tenant:demo")
+	if _, has := bodies[0]["authorization_model_id"]; has {
+		t.Errorf("a client with no model sent one: %v", bodies[0])
+	}
+	// WithModel returns a copy: the client it was made from stays as it was.
+	if free.model != "" || pinned.model == "" {
+		t.Error("WithModel changed the client it was called on")
+	}
+}

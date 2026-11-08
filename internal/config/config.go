@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,6 +28,9 @@ type Config struct {
 	OpenFGAAPIKey string
 	// OpenFGAStoreID is the id of the phorge-api store.
 	OpenFGAStoreID string
+	// OpenFGAModelID is the id of the authorization model of the phorge-api store that every question is asked against: a model written
+	// to the store takes effect only when the API is deployed with its id.
+	OpenFGAModelID string
 	// CAFile is an optional PEM bundle added to the trusted roots (the internal CA that signs openfga.core.phorge).
 	CAFile string
 	// KubeContext picks a context of the kubeconfig when the API runs outside the cluster (development). In a pod
@@ -71,6 +75,7 @@ const (
 	EnvOpenFGAURL           = "OPENFGA_URL"
 	EnvOpenFGAAPIKey        = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
 	EnvOpenFGAStoreID       = "OPENFGA_STORE_ID"
+	EnvOpenFGAModelID       = "OPENFGA_MODEL_ID"
 	EnvCAFile               = "CA_FILE"
 	EnvKubeContext          = "KUBE_CONTEXT"
 	EnvInstanceBootGrace    = "INSTANCE_BOOT_GRACE"
@@ -95,6 +100,9 @@ const (
 
 const defaultListenAddr = ":8080"
 
+// ulidRe is the shape of the id of an OpenFGA store or model: a ULID, 26 characters of Crockford's base32.
+var ulidRe = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
+
 // Load reads the configuration through lookup (os.LookupEnv in production). Every problem is reported at once, so that
 // a misconfigured pod says everything that is wrong in a single crash.
 func Load(lookup func(string) (string, bool)) (Config, error) {
@@ -109,6 +117,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		OpenFGAURL:     get(EnvOpenFGAURL),
 		OpenFGAAPIKey:  get(EnvOpenFGAAPIKey),
 		OpenFGAStoreID: get(EnvOpenFGAStoreID),
+		OpenFGAModelID: get(EnvOpenFGAModelID),
 		CAFile:         get(EnvCAFile),
 		KubeContext:    get(EnvKubeContext),
 
@@ -128,6 +137,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		{EnvOpenFGAURL, c.OpenFGAURL},
 		{EnvOpenFGAAPIKey, c.OpenFGAAPIKey},
 		{EnvOpenFGAStoreID, c.OpenFGAStoreID},
+		{EnvOpenFGAModelID, c.OpenFGAModelID},
 		{EnvIncusURL, c.IncusURL},
 		{EnvIncusClientID, c.IncusClientID},
 		{EnvOIDCTokenURL, c.OIDCTokenURL},
@@ -136,6 +146,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		if r.value == "" {
 			errs = append(errs, fmt.Errorf("%s is required", r.key))
 		}
+	}
+	if c.OpenFGAModelID != "" && !ulidRe.MatchString(c.OpenFGAModelID) {
+		errs = append(errs, fmt.Errorf("%s must be the id of a model of OpenFGA, 26 characters (a ULID), not %q", EnvOpenFGAModelID, c.OpenFGAModelID))
 	}
 	if raw := get(EnvAudience); raw != "" {
 		audiences, err := parseAudiences(raw)
@@ -233,6 +246,7 @@ func (c Config) LogValue() slog.Value {
 		slog.String("audiences", strings.Join(c.Audiences, ",")),
 		slog.String("openfga_url", c.OpenFGAURL),
 		slog.String("openfga_store_id", c.OpenFGAStoreID),
+		slog.String("openfga_model_id", c.OpenFGAModelID),
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
 		slog.Int("max_tenants_per_user", c.MaxTenantsPerUser),

@@ -51,7 +51,7 @@ func main() {
 	srvAPI := server.New(log)
 	api.Register(srvAPI, api.Deps{
 		Auth:        &auth.Authenticator{Users: users, Log: log},
-		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP)),
+		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP).WithModel(cfg.OpenFGAModelID)),
 		Tenants:     kube.NewTenants(kubeConn),
 		Images:      kube.NewImages(kubeConn),
 		Networks:    kube.NewNetworks(kubeConn),
