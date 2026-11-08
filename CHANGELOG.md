@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.10.0](https://github.com/phorge-fr/phorge-api/compare/v0.9.0...v0.10.0) (2026-11-08)
+
+
+### Features
+
+* **networks:** report the range that Incus chose ([e516d1c](https://github.com/phorge-fr/phorge-api/commit/e516d1cbdf3508ebcfc97a89077b89852c4fce89)), closes [#93](https://github.com/phorge-fr/phorge-api/issues/93)
+* **networks:** Report the range that Incus chose ([03aec5c](https://github.com/phorge-fr/phorge-api/commit/03aec5c0662079ab8d7b1b0c7e65c0f2191d6987))
+* **terminal:** open a terminal on an instance through the API ([b55d1af](https://github.com/phorge-fr/phorge-api/commit/b55d1afb0a4b14b0327cfacd75d47a157ee69166)), closes [#31](https://github.com/phorge-fr/phorge-api/issues/31)
+* **terminal:** Open a terminal on an instance through the API ([c196d7e](https://github.com/phorge-fr/phorge-api/commit/c196d7e37bda62b62ee82a44b3a89000058bf874))
+
 ## [0.9.0](https://github.com/phorge-fr/phorge-api/compare/v0.8.1...v0.9.0) (2026-11-08)
 
 
