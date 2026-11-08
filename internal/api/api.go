@@ -29,6 +29,10 @@ type Settings struct {
 	// KeyIssueTimeout is how long creating a key waits for Crossplane to make its service account, and KeyPollInterval how often
 	// it looks. Zero takes the defaults (a minute, a second): the values are for the tests.
 	KeyIssueTimeout, KeyPollInterval time.Duration
+	// TenantCreation is who creates a tenant: config.TenantCreationPlatformAdmins or config.TenantCreationUsers. MaxTenantsPerUser is
+	// how many tenants a person who is not a platform administrator may own, 0 is no limit.
+	TenantCreation    string
+	MaxTenantsPerUser int
 	// RateLimitPerMinute is how many requests that create, change or delete a caller may send a minute, in bursts of RateLimitBurst;
 	// 0 limits nothing.
 	RateLimitPerMinute, RateLimitBurst int
@@ -58,7 +62,7 @@ type Deps struct {
 // Register adds the routes. A route under /v1 must go through d.Auth.Middleware and be described in
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
-	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz)))
+	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz, d.Settings)))
 	s.Handle("GET /v1/limits", d.Auth.Middleware(http.HandlerFunc(limits)))
 
 	now := d.Now
@@ -69,7 +73,7 @@ func Register(s *server.Server, d Deps) {
 	// Who writes too much is slowed down, after the credential is known and before anything is read or written.
 	limiter := ratelimit.New(d.Settings.RateLimitPerMinute, d.Settings.RateLimitBurst, now)
 	authn := func(h http.Handler) http.Handler { return d.Auth.Middleware(limited(limiter, h)) }
-	(&tenantRoutes{base: b, store: d.Tenants}).register(s, authn)
+	(&tenantRoutes{base: b, store: d.Tenants, settings: d.Settings}).register(s, authn)
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances, settings: d.Settings}).register(s, authn)
 	(&profileRoutes{base: b}).register(s, authn)
 	(&quotaRoutes{base: b, instances: d.Instances, networks: d.Networks}).register(s, authn)
@@ -89,16 +93,19 @@ type identityBody struct {
 	Email   string    `json:"email,omitempty"`
 	// Name is the id of the key.
 	Name string `json:"name,omitempty"`
-	// PlatformAdmin: the caller may create, resize and delete tenants.
+	// PlatformAdmin: the caller may create a tenant for anyone, choose its plan and act on every tenant.
 	PlatformAdmin bool `json:"platformAdmin"`
+	// CanCreateTenants: the caller may create a tenant, for themselves when they are not a platform administrator.
+	CanCreateTenants bool `json:"canCreateTenants"`
 }
 
-func whoami(a *authz.Authorizer) http.HandlerFunc {
+func whoami(a *authz.Authorizer, settings Settings) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, _ := auth.FromContext(r.Context())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(identityBody{
 			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Name: id.Name, PlatformAdmin: a.PlatformAdmin(r.Context(), id),
+			CanCreateTenants: a.PlatformAdmin(r.Context(), id) || canCreateOwnTenant(settings, id),
 		})
 	}
 }

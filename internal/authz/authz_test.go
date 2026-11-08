@@ -44,7 +44,7 @@ var alice = auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org"
 func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 	// The actions on a tenant are relations of the model. Creating, resizing and deleting a tenant is not: it is for the
 	// platform administrators.
-	actions := []Action{ReadTenant, ReadInstances, WriteInstances, ReadImages, WriteImages, ReadNetworks, WriteNetworks, ReadMemberships, WriteMemberships}
+	actions := []Action{ReadTenant, WriteTenant, ReadInstances, WriteInstances, ReadImages, WriteImages, ReadNetworks, WriteNetworks, ReadMemberships, WriteMemberships}
 	for _, a := range actions {
 		if !strings.HasPrefix(relations[a], "can_") {
 			t.Errorf("%s has no can_* relation: %q", a, relations[a])
@@ -66,10 +66,10 @@ func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 	}
 	// The networks are for users until the scopes of a key cover them (phorge-fr/phorge-api#74): the model has the relations
 	// can_read_networks and can_write_networks for a role and no key_networks_* yet.
-	if len(keyScopes) != len(actions)-2 {
-		t.Errorf("%d scopes for %d actions, two of them (the networks) are not given to a key yet", len(keyScopes), len(actions))
+	if len(keyScopes) != len(actions)-3 {
+		t.Errorf("%d scopes for %d actions, three of them (the networks and writing the tenant) are not given to a key yet", len(keyScopes), len(actions))
 	}
-	for _, a := range []Action{ReadNetworks, WriteNetworks} {
+	for _, a := range []Action{ReadNetworks, WriteNetworks, WriteTenant} {
 		for scope, action := range keyScopes {
 			if action == a {
 				t.Errorf("scope %s gives %s: the model has no key relation for it yet", scope, a)

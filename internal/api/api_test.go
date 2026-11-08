@@ -129,14 +129,14 @@ func TestWhoami(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"user","subject":"user:alice@example.org","email":"alice@example.org","platformAdmin":true}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"user","subject":"user:alice@example.org","email":"alice@example.org","platformAdmin":true,"canCreateTenants":true}`; got != want {
 		t.Errorf("user: %s", got)
 	}
 
 	// A key has no email, and what it claims for itself means nothing: it is nobody's administrator.
 	key := verifier{id: auth.Identity{Kind: auth.KindServiceKey, Subject: "apikey:apikey-0123456789abcdef", Name: "apikey-0123456789abcdef", Groups: []string{"phorge-platform-admins"}}}
 	rec = get(newServer(key).Handler(), "/v1/whoami", "Bearer a.jwt.token")
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false,"canCreateTenants":false}`; got != want {
 		t.Errorf("key: %s", got)
 	}
 }

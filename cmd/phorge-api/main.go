@@ -57,6 +57,7 @@ func main() {
 		Settings: api.Settings{
 			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
 			KeyMaxLifetime: cfg.APIKeyMaxLifetime, KeyCreation: cfg.APIKeyCreation,
+			TenantCreation: cfg.TenantCreation, MaxTenantsPerUser: cfg.MaxTenantsPerUser,
 			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant,
 		},
 	})

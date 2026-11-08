@@ -46,6 +46,12 @@ type Config struct {
 	// RateLimitBurst. 0 limits nothing. MaxImagesPerTenant is how many images a tenant may hold, 0 is no limit.
 	RateLimitPerMinute, RateLimitBurst, MaxImagesPerTenant int
 
+	// TenantCreation says who may create a tenant: TenantCreationPlatformAdmins or TenantCreationUsers (any person signed in with
+	// Authentik, for themselves). MaxTenantsPerUser is how many tenants a person who is not a platform administrator may own,
+	// 0 is no limit.
+	TenantCreation    string
+	MaxTenantsPerUser int
+
 	// APIKeyMaxLifetime is the longest an API key may live: its expiry is capped to it. 0 caps nothing (a key always has an
 	// expiry).
 	APIKeyMaxLifetime time.Duration
@@ -54,6 +60,12 @@ type Config struct {
 	// own.
 	APIKeyCreation string
 }
+
+// The values of TENANT_CREATION.
+const (
+	TenantCreationPlatformAdmins = "platform-admins"
+	TenantCreationUsers          = "users"
+)
 
 // The values of API_KEY_CREATION.
 const (
@@ -74,6 +86,8 @@ const (
 	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
 	EnvInstanceBootGrace  = "INSTANCE_BOOT_GRACE"
 	EnvInstanceStuckAfter = "INSTANCE_STUCK_AFTER"
+	EnvTenantCreation     = "TENANT_CREATION"
+	EnvMaxTenantsPerUser  = "MAX_TENANTS_PER_USER"
 	EnvRateLimitPerMinute = "RATE_LIMIT_WRITES_PER_MINUTE"
 	EnvRateLimitBurst     = "RATE_LIMIT_BURST"
 	EnvMaxImagesPerTenant = "MAX_IMAGES_PER_TENANT"
@@ -170,6 +184,14 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	integer(EnvRateLimitPerMinute, 0, &c.RateLimitPerMinute)
 	integer(EnvRateLimitBurst, 1, &c.RateLimitBurst)
 	integer(EnvMaxImagesPerTenant, 0, &c.MaxImagesPerTenant)
+	integer(EnvMaxTenantsPerUser, 0, &c.MaxTenantsPerUser)
+	switch c.TenantCreation = get(EnvTenantCreation); c.TenantCreation {
+	case TenantCreationPlatformAdmins, TenantCreationUsers:
+	case "":
+		errs = append(errs, fmt.Errorf("%s is required: %s or %s", EnvTenantCreation, TenantCreationPlatformAdmins, TenantCreationUsers))
+	default:
+		errs = append(errs, fmt.Errorf("%s must be %s or %s, not %q", EnvTenantCreation, TenantCreationPlatformAdmins, TenantCreationUsers, c.TenantCreation))
+	}
 	duration(EnvInstanceBootGrace, 0, &c.InstanceBootGrace)
 	duration(EnvInstanceStuckAfter, time.Second, &c.InstanceStuckAfter)
 	duration(EnvAPIKeyMaxLifetime, 0, &c.APIKeyMaxLifetime)
@@ -213,6 +235,8 @@ func (c Config) LogValue() slog.Value {
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
 		slog.String("platform_admin_group", c.PlatformAdminGroup),
+		slog.String("tenant_creation", c.TenantCreation),
+		slog.Int("max_tenants_per_user", c.MaxTenantsPerUser),
 		slog.Int("rate_limit_writes_per_minute", c.RateLimitPerMinute),
 		slog.Int("rate_limit_burst", c.RateLimitBurst),
 		slog.Int("max_images_per_tenant", c.MaxImagesPerTenant),
