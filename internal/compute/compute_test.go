@@ -285,3 +285,61 @@ func TestCreateInstanceChecksItsNetworkName(t *testing.T) {
 		t.Errorf("no network named is the route's to resolve: %v", err)
 	}
 }
+
+func TestAProfileIsTheWholeSize(t *testing.T) {
+	two := 2
+	for name, tt := range map[string]struct {
+		req CreateInstance
+		ok  bool
+	}{
+		"a profile":            {CreateInstance{Name: "a", Image: "debian", Profile: "m"}, true},
+		"custom values":        {CreateInstance{Name: "a", Image: "debian", CPU: &two}, true},
+		"a profile and a cpu":  {CreateInstance{Name: "a", Image: "debian", Profile: "m", CPU: &two}, false},
+		"a profile and a disk": {CreateInstance{Name: "a", Image: "debian", Profile: "m", DiskGiB: &two}, false},
+		"a bad profile name":   {CreateInstance{Name: "a", Image: "debian", Profile: "-m"}, false},
+	} {
+		if err := tt.req.Validate(); (err == nil) != tt.ok {
+			t.Errorf("%s: err = %v, want ok = %v", name, err, tt.ok)
+		}
+	}
+	got := CreateInstance{Profile: "m"}.WithDefaultSize()
+	if got.CPU != nil || got.MemoryMiB != nil || got.DiskGiB != nil {
+		t.Errorf("WithDefaultSize gave a size to an instance that has a profile: %+v", got)
+	}
+}
+
+func TestPatchWithAProfileOrASize(t *testing.T) {
+	one, m := 1, "m"
+	for name, tt := range map[string]struct {
+		req PatchInstance
+		ok  bool
+	}{
+		"nothing":             {PatchInstance{}, false},
+		"a profile":           {PatchInstance{Profile: &m}, true},
+		"a profile and a cpu": {PatchInstance{Profile: &m, CPU: &one}, false},
+		"a cpu":               {PatchInstance{CPU: &one}, true},
+	} {
+		if err := tt.req.Validate(); (err == nil) != tt.ok {
+			t.Errorf("%s: err = %v, want ok = %v", name, err, tt.ok)
+		}
+	}
+}
+
+func TestTheBuiltinProfilesAreTheThreeOfTheTenantComposition(t *testing.T) {
+	want := map[string][3]int{"s": {1, 2048, 64}, "m": {2, 4096, 128}, "l": {4, 8192, 256}}
+	if len(BuiltinProfiles) != len(want) {
+		t.Fatalf("%d profiles, want %d", len(BuiltinProfiles), len(want))
+	}
+	for _, p := range BuiltinProfiles {
+		w, ok := want[p.Name]
+		if !ok || [3]int{p.CPU, p.MemoryMiB, p.DiskGiB} != w || !p.Builtin {
+			t.Errorf("profile %+v, want %v", p, w)
+		}
+	}
+	if _, ok := ProfileNamed("m"); !ok {
+		t.Error("ProfileNamed(m)")
+	}
+	if _, ok := ProfileNamed("xl"); ok {
+		t.Error("ProfileNamed(xl)")
+	}
+}

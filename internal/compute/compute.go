@@ -143,9 +143,12 @@ const (
 
 // Instance is an Instance object as the API presents it.
 type Instance struct {
-	Name          string
-	Image         string
-	Network       string
+	Name    string
+	Image   string
+	Network string
+	// Profile is the size the instance was given, when it was given one: then CPU, MemoryMiB and DiskGiB are empty on the object,
+	// the profile decides them.
+	Profile       string
 	CPU           int
 	MemoryMiB     int
 	DiskGiB       int
@@ -233,6 +236,7 @@ type CreateInstance struct {
 	Name          string   `json:"name"`
 	Image         string   `json:"image"`
 	Network       string   `json:"network"`
+	Profile       string   `json:"profile"`
 	CPU           *int     `json:"cpu"`
 	MemoryMiB     *int     `json:"memoryMiB"`
 	DiskGiB       *int     `json:"diskGiB"`
@@ -248,6 +252,12 @@ type CreateInstance struct {
 // PatchInstance is what can change on a running instance without recreating it (Incus applies cpu, memory, disk and the
 // keys live, and start and stop keep the same VM). The image, nesting and secure boot cannot: delete and create.
 type PatchInstance struct {
+	// Profile moves the instance to a profile: its own cpu, memoryMiB and diskGiB are then removed, the profile decides them. It
+	// cannot be given with them. Going the other way, from a profile to custom values, is giving the three values together.
+	Profile *string `json:"profile"`
+	// DropProfile removes the profile of the instance, for the custom values that come with the patch. Set by the route when the
+	// instance has a profile and the patch gives it the three values of a size, never by the caller.
+	DropProfile bool `json:"-"`
 	// MarkChange records that this patch changes running, with the time of the request: it is what tells a VM that is still
 	// booting from one that is stuck, and how long a transition has lasted. Set by the route, never by the caller.
 	MarkChange    bool      `json:"-"`
@@ -276,6 +286,14 @@ func (r CreateInstance) Validate() error {
 	if r.Network != "" && !ValidNetworkName(r.Network) {
 		p.add("network must be the name of a network of the tenant")
 	}
+	if r.Profile != "" {
+		if !ValidProfileName(r.Profile) {
+			p.add("profile must be the name of a profile of the tenant")
+		}
+		if r.CPU != nil || r.MemoryMiB != nil || r.DiskGiB != nil {
+			p.add("give a profile or cpu, memoryMiB and diskGiB, not both")
+		}
+	}
 	checkBounds(&p, "cpu", r.CPU, MinCPU, MaxCPU)
 	checkBounds(&p, "memoryMiB", r.MemoryMiB, MinMemory, MaxMemory)
 	checkBounds(&p, "diskGiB", r.DiskGiB, MinDisk, MaxDisk)
@@ -283,8 +301,12 @@ func (r CreateInstance) Validate() error {
 	return p.err()
 }
 
-// WithDefaultSize returns the request with the three values of a size, the missing ones taking the defaults.
+// WithDefaultSize returns the request with the three values of a size, the missing ones taking the defaults. A request that names
+// a profile keeps none: the profile is its size.
 func (r CreateInstance) WithDefaultSize() CreateInstance {
+	if r.Profile != "" {
+		return r
+	}
 	def := func(v *int, d int) *int {
 		if v != nil {
 			return v
@@ -300,8 +322,16 @@ func (r CreateInstance) WithDefaultSize() CreateInstance {
 // Validate checks the patch.
 func (r PatchInstance) Validate() error {
 	var p problems
-	if r.Running == nil && r.CPU == nil && r.MemoryMiB == nil && r.DiskGiB == nil && r.SSHPublicKeys == nil {
-		p.add("nothing to change: give running, cpu, memoryMiB, diskGiB or sshPublicKeys")
+	if r.Running == nil && r.Profile == nil && r.CPU == nil && r.MemoryMiB == nil && r.DiskGiB == nil && r.SSHPublicKeys == nil {
+		p.add("nothing to change: give running, profile, cpu, memoryMiB, diskGiB or sshPublicKeys")
+	}
+	if r.Profile != nil {
+		if !ValidProfileName(*r.Profile) {
+			p.add("profile must be the name of a profile of the tenant")
+		}
+		if r.CPU != nil || r.MemoryMiB != nil || r.DiskGiB != nil {
+			p.add("give a profile or cpu, memoryMiB and diskGiB, not both")
+		}
 	}
 	checkBounds(&p, "cpu", r.CPU, MinCPU, MaxCPU)
 	checkBounds(&p, "memoryMiB", r.MemoryMiB, MinMemory, MaxMemory)

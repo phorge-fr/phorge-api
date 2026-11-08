@@ -33,6 +33,7 @@ tags:
     - name: Tenants
     - name: Images
     - name: Networks
+    - name: Profiles
     - name: Instances
     - name: Memberships
     - name: API keys
@@ -60,6 +61,26 @@ paths:
                     $ref: "#/components/responses/Unauthenticated"
                 "503":
                     $ref: "#/components/responses/Unavailable"
+    /v1/limits:
+        get:
+            tags:
+                - Identity
+            operationId: getLimits
+            summary: What the API enforces on a request
+            description: |
+                The bounds of an instance (CPU, memory, disk) with the value each takes when a request leaves it out, and the longest
+                names. The plan of a tenant is a limit of its own and is not here.
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The limits.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Limits"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
     /v1/tenants:
         get:
             tags:
@@ -444,6 +465,35 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "409":
                     $ref: "#/components/responses/Conflict"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/profiles:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+        get:
+            tags:
+                - Profiles
+            operationId: listProfiles
+            summary: The sizes an instance of a tenant can take
+            description: |
+                Every tenant has the profiles `s` (1 vCPU, 2 GiB, 64 GiB), `m` (2, 4, 128) and `l` (4, 8, 256), created with it. An
+                instance takes one of them (`profile`) or its own `cpu`, `memoryMiB` and `diskGiB`. The plan of the tenant limits the
+                total: a profile whose disk is above the plan's is refused by Incus when an instance asks for it.
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The profiles, by size.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ProfileList"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/instances:
@@ -1108,6 +1158,86 @@ components:
                     items:
                         type: string
                         pattern: '^[a-z0-9][a-z0-9._-]{0,62}$'
+        Profile:
+            type: object
+            required:
+                - name
+                - cpu
+                - memoryMiB
+                - diskGiB
+                - builtin
+            properties:
+                name:
+                    type: string
+                    example: m
+                description:
+                    type: string
+                cpu:
+                    type: integer
+                memoryMiB:
+                    type: integer
+                diskGiB:
+                    type: integer
+                builtin:
+                    type: boolean
+                    description: Created with the tenant, and not changeable. The profiles a user makes are not.
+        ProfileList:
+            type: object
+            required:
+                - items
+            properties:
+                items:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/Profile"
+        Limit:
+            type: object
+            required:
+                - min
+                - max
+                - default
+            properties:
+                min:
+                    type: integer
+                max:
+                    type: integer
+                default:
+                    type: integer
+        Limits:
+            type: object
+            required:
+                - instance
+                - network
+            properties:
+                instance:
+                    type: object
+                    required:
+                        - cpu
+                        - memoryMiB
+                        - diskGiB
+                        - maxSshPublicKeys
+                        - maxNameLength
+                    properties:
+                        cpu:
+                            $ref: "#/components/schemas/Limit"
+                        memoryMiB:
+                            $ref: "#/components/schemas/Limit"
+                        diskGiB:
+                            $ref: "#/components/schemas/Limit"
+                        maxSshPublicKeys:
+                            type: integer
+                        maxNameLength:
+                            type: integer
+                network:
+                    type: object
+                    required:
+                        - maxNameLength
+                        - maxDescriptionLength
+                    properties:
+                        maxNameLength:
+                            type: integer
+                        maxDescriptionLength:
+                            type: integer
         Network:
             type: object
             required:
@@ -1181,6 +1311,10 @@ components:
                     type: string
                     description: The network the instance is attached to (`eth0`).
                     example: net
+                profile:
+                    type: string
+                    description: The profile the instance has for its size, when it has one. Then `cpu`, `memoryMiB` and `diskGiB` are what the profile comes to.
+                    example: m
                 cpu:
                     type: integer
                 memoryMiB:
@@ -1259,21 +1393,26 @@ components:
                         A network of the tenant, `Ready`. It can be left out when the tenant has exactly one, which is then used: with
                         none or several the request is refused (`422`) and says so.
                     example: net
+                profile:
+                    type: string
+                    pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$'
+                    description: |
+                        The size of the instance, a profile of the tenant (`s`, `m`, `l`, see `GET /v1/tenants/{t}/profiles`). Give it or
+                        `cpu`, `memoryMiB` and `diskGiB`, never both (`422`).
+                    example: m
                 cpu:
                     type: integer
+                    description: A custom size. What is left out takes the value of `GET /v1/limits`.
                     minimum: 1
                     maximum: 16
-                    default: 1
                 memoryMiB:
                     type: integer
                     minimum: 256
                     maximum: 65536
-                    default: 1024
                 diskGiB:
                     type: integer
                     minimum: 1
                     maximum: 500
-                    default: 10
                 running:
                     type: boolean
                     default: true
@@ -1300,6 +1439,11 @@ components:
             additionalProperties: false
             minProperties: 1
             properties:
+                profile:
+                    type: string
+                    description: |
+                        Move the instance to a profile: its own size is removed. Not with `cpu`, `memoryMiB` or `diskGiB`. An instance that has
+                        a profile leaves it by being given the three values together.
                 running:
                     type: boolean
                 cpu:

@@ -197,6 +197,10 @@ func (s *Instances) Create(ctx context.Context, tenant string, req compute.Creat
 			spec[key] = *v
 		}
 	}
+	// A size is a profile or the three values, never both: the XRD refuses the others.
+	if req.Profile != "" {
+		spec["profile"] = req.Profile
+	}
 	setInt("cpu", req.CPU)
 	setInt("memoryMiB", req.MemoryMiB)
 	setInt("diskGiB", req.DiskGiB)
@@ -227,6 +231,15 @@ func (s *Instances) Patch(ctx context.Context, tenant, name string, req compute.
 	spec := map[string]any{}
 	if req.Running != nil {
 		spec["running"] = *req.Running
+	}
+	// Moving to a profile removes the instance's own size, and the other way round: in a JSON merge patch a null deletes the
+	// field, and the XRD refuses both a profile and a value of the size.
+	if req.Profile != nil {
+		spec["profile"] = *req.Profile
+		spec["cpu"], spec["memoryMiB"], spec["diskGiB"] = nil, nil, nil
+	}
+	if req.DropProfile {
+		spec["profile"] = nil
 	}
 	if req.CPU != nil {
 		spec["cpu"] = *req.CPU
@@ -267,6 +280,7 @@ func (s *Instances) Delete(ctx context.Context, tenant, name string) error {
 func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	image, _, _ := unstructured.NestedString(obj.Object, "spec", "imageRef", "name")
 	network, _, _ := unstructured.NestedString(obj.Object, "spec", "network")
+	profile, _, _ := unstructured.NestedString(obj.Object, "spec", "profile")
 	running, _, _ := unstructured.NestedBool(obj.Object, "spec", "running")
 	nesting, _, _ := unstructured.NestedBool(obj.Object, "spec", "nesting")
 	secureBoot, _, _ := unstructured.NestedBool(obj.Object, "spec", "secureBoot")
@@ -278,6 +292,7 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	ready, since := readyOf(obj)
 	return compute.Instance{
 		Network:          network,
+		Profile:          profile,
 		Name:             obj.GetName(),
 		Image:            image,
 		CPU:              intOf(obj, "cpu"),

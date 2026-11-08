@@ -208,3 +208,73 @@ func TestAChangeOfRunningIsRecordedOnTheObject(t *testing.T) {
 		}
 	}
 }
+
+// A size is a profile or the three values: the XRD refuses a spec that has both, so the store must never write both.
+func TestInstanceCreateWithAProfileSendsNoSize(t *testing.T) {
+	client := newClient()
+	s := NewInstances(Static(client))
+	if _, err := s.Create(t.Context(), "demo", compute.CreateInstance{Name: "web", Image: "debian", Network: "net", Profile: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := client.Resource(instancesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, _, _ := unstructured.NestedMap(obj.Object, "spec")
+	if spec["profile"] != "m" || spec["network"] != "net" {
+		t.Errorf("spec = %v", spec)
+	}
+	for _, k := range []string{"cpu", "memoryMiB", "diskGiB"} {
+		if _, ok := spec[k]; ok {
+			t.Errorf("%s was sent next to a profile", k)
+		}
+	}
+	got := instanceOf(obj)
+	if got.Profile != "m" || got.Network != "net" {
+		t.Errorf("instanceOf = %+v", got)
+	}
+}
+
+func TestInstancePatchMovesBetweenAProfileAndItsOwnSize(t *testing.T) {
+	client := newClient()
+	s := NewInstances(Static(client))
+	if _, err := s.Create(t.Context(), "demo", compute.CreateInstance{Name: "web", Image: "debian", Network: "net", CPU: ptr(2), MemoryMiB: ptr(2048), DiskGiB: ptr(20)}); err != nil {
+		t.Fatal(err)
+	}
+	spec := func() map[string]any {
+		obj, err := client.Resource(instancesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, _, _ := unstructured.NestedMap(obj.Object, "spec")
+		return m
+	}
+
+	profile := "s"
+	if _, err := s.Patch(t.Context(), "demo", "web", compute.PatchInstance{Profile: &profile}); err != nil {
+		t.Fatal(err)
+	}
+	got := spec()
+	if got["profile"] != "s" {
+		t.Errorf("spec = %v: the profile was not set", got)
+	}
+	for _, k := range []string{"cpu", "memoryMiB", "diskGiB"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s was left next to the profile: the XRD refuses both", k)
+		}
+	}
+
+	if _, err := s.Patch(t.Context(), "demo", "web", compute.PatchInstance{DropProfile: true, CPU: ptr(4), MemoryMiB: ptr(4096), DiskGiB: ptr(40)}); err != nil {
+		t.Fatal(err)
+	}
+	got = spec()
+	if _, ok := got["profile"]; ok {
+		t.Errorf("spec = %v: the profile was left next to the values", got)
+	}
+	if got["cpu"] != int64(4) || got["memoryMiB"] != int64(4096) || got["diskGiB"] != int64(40) {
+		t.Errorf("spec = %v: the three values were not set", got)
+	}
+	if got["network"] != "net" || got["imageRef"] == nil {
+		t.Errorf("spec = %v: a change of size touched something else", got)
+	}
+}
