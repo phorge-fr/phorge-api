@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.8.0](https://github.com/phorge-fr/phorge-api/compare/v0.7.0...v0.8.0) (2026-11-08)
+
+
+### Features
+
+* **limits:** publish the ceilings of the deployment and correct the quota wording ([9c11bf3](https://github.com/phorge-fr/phorge-api/commit/9c11bf3c7b31773639e1da15e9fa4bbf8707e8f8))
+* **limits:** publish the ceilings of the deployment and correct the quota wording ([76ba33c](https://github.com/phorge-fr/phorge-api/commit/76ba33c9598c4526c20f2dfad8804229f61b35b3))
+* **networks:** let the user choose the range of a network ([1807bf3](https://github.com/phorge-fr/phorge-api/commit/1807bf3229e4fdbd366e5263ad47318904614a76)), closes [#92](https://github.com/phorge-fr/phorge-api/issues/92)
+* **networks:** Let the user choose the range of a network ([46b9415](https://github.com/phorge-fr/phorge-api/commit/46b9415f40c889a1982795ec185c39e45ca313d2))
+
 ## [0.7.0](https://github.com/phorge-fr/phorge-api/compare/v0.6.0...v0.7.0) (2026-11-08)
 
 
