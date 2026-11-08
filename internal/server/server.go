@@ -2,7 +2,9 @@
 package server
 
 import (
+	"bufio"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -87,6 +89,18 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.code = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the real writer, and Hijack is what a websocket upgrade calls: the connection then
+// speaks for itself, so the request is recorded as the 101 it becomes.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(r.ResponseWriter).Hijack()
+	if err == nil {
+		r.code = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
 }
 
 func (s *Server) instrument(next http.Handler) http.Handler {

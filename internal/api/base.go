@@ -29,8 +29,7 @@ type base struct {
 }
 
 // guard lets a request through when the caller may do action on the tenant of the path, and answers otherwise (see
-// authz.Authorizer.Require). The platform administrators may do anything on a tenant, as they may delete it, but only on a
-// tenant that exists. A name that is not a tenant slug is never looked at further.
+// authz.Authorizer.Require). A name that is not a tenant slug is never looked at further.
 func (b *base) guard(action authz.Action, next http.Handler) http.Handler {
 	require := b.authz.Require(action, b.log, next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

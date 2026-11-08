@@ -21,6 +21,7 @@ verified: 2026-11-08
 | `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, and the keys with `memberships:read` and `memberships:write` on it |
 | `GET /v1/apikeys/scopes` | The scopes a key can be given, `<resource>:<verb>`, with what each does. For a person, like the other routes of the keys |
 | `GET`, `POST /v1/apikeys`, `GET`, `PATCH`, `DELETE /v1/apikeys/{id}` | Your own API keys, with a token of Authentik (a key cannot manage keys). Any person creates theirs. `PATCH` only renames |
+| `GET /v1/tenants/{t}/instances/{name}/console` | A terminal on a running instance, as a websocket, for a person with `instances:write` (never a key). See [Terminal](terminal.md) |
 | `GET`, `POST /v1/tenants/{t}/instances`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/instances/{name}` | The virtual machines: read with a role or a key tuple (`instances:read`), write with `user` or `instances:write` |
 | `/healthz`, `/readyz` (503 while shutting down), `/metrics` | Probes and metrics |
 

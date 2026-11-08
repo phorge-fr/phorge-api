@@ -9,6 +9,7 @@ Pages are grouped by what the reader wants, following [the organization's docume
 | [Get a token with the device flow](how-to/get-a-token-with-the-device-flow.md) | Call the API from a terminal with your identity |
 | [Run the integration tests](how-to/run-the-integration-tests.md) | Test against the real cluster and OpenFGA store |
 | [Release the API](how-to/release-the-api.md) | Cut a version with release-please |
+| [Open a terminal from the console](how-to/open-a-terminal-from-the-console.md) | Relay a terminal on an instance for a person |
 
 ## Reference
 
@@ -21,6 +22,7 @@ Pages are grouped by what the reader wants, following [the organization's docume
 | [Images and instances](reference/images-and-instances.md) | Behavior of the image and instance routes |
 | [Networks](reference/networks.md) | Behavior of the network routes |
 | [Memberships and API keys](reference/memberships-and-api-keys.md) | Roles and personal keys |
+| [Terminal](reference/terminal.md) | Opening, protocol, closing codes and limits of a terminal |
 | [Limits and quotas](reference/limits-and-quotas.md) | The plan of a tenant, the images, the rate of a caller |
 
 ## Explanation

@@ -15,6 +15,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/ratelimit"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
+	"github.com/phorge-fr/phorge-api/internal/terminal"
 )
 
 // Settings are the values that decide how the API behaves. They come from the environment (internal/config): none has a value
@@ -51,8 +52,10 @@ type Deps struct {
 	Instances   compute.InstanceStore
 	Memberships access.MembershipStore
 	Keys        access.KeyStore
-	Log         *slog.Logger
-	Settings    Settings
+	// Terminal opens a terminal on an instance. Nil: the route is not registered.
+	Terminal *Terminal
+	Log      *slog.Logger
+	Settings Settings
 	// Now is the clock, time.Now when nil.
 	Now func() time.Time
 }
@@ -77,6 +80,12 @@ func Register(s *server.Server, d Deps) {
 	(&quotaRoutes{base: b, instances: d.Instances, networks: d.Networks, profiles: d.Profiles}).register(s, authn)
 	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances, profiles: d.Profiles}).register(s, authn)
 	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, profiles: d.Profiles, settings: d.Settings}).register(s, authn)
+	if d.Terminal != nil {
+		(&terminalRoutes{
+			base: b, instances: d.Instances, terminal: *d.Terminal, registry: terminal.NewRegistry(d.Terminal.Settings),
+			opens: ratelimit.New(d.Settings.RateLimitPerMinute, d.Settings.RateLimitBurst, now),
+		}).register(s, authn)
+	}
 	(&membershipRoutes{base: b, store: d.Memberships}).register(s, authn)
 	(&keyRoutes{base: b, store: d.Keys, settings: d.Settings}).register(s, authn)
 

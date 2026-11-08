@@ -12,7 +12,7 @@ func env(m map[string]string) func(string) (string, bool) {
 }
 
 func valid() map[string]string {
-	return map[string]string{
+	return map[string]string{ //nolint:gosec // names and values of settings in a test, not credentials
 		EnvIssuer:         "https://auth.phorge.fr/application/o/phorge/",
 		EnvAudience:       "client-id",
 		EnvOpenFGAURL:     "https://openfga.core.phorge",
@@ -27,6 +27,16 @@ func valid() map[string]string {
 		EnvRateLimitBurst:       "10",
 		EnvMaxImagesPerTenant:   "20",
 		EnvMaxProfilesPerTenant: "20",
+		// The terminal: Incus, the exchange at Authentik, and the limits of a session.
+		EnvIncusURL:             "https://incus.example.org",
+		EnvIncusClientID:        "incus-client",
+		EnvOIDCTokenURL:         "https://auth.phorge.fr/application/o/token/",
+		EnvOIDCClientID:         "client-id",
+		EnvTerminalMaxPerUser:   "5",
+		EnvTerminalMaxPerTenant: "10",
+		EnvTerminalIdle:         "15m",
+		EnvTerminalMaxDuration:  "1h",
+		EnvTerminalRecheck:      "30s",
 	}
 }
 
@@ -186,5 +196,37 @@ func TestTheRateLimitAndTheImageCapAreRequiredWholeNumbers(t *testing.T) {
 	m[EnvRateLimitPerMinute], m[EnvMaxImagesPerTenant] = "0", "0"
 	if c, err := Load(env(m)); err != nil || c.RateLimitPerMinute != 0 || c.MaxImagesPerTenant != 0 {
 		t.Errorf("0 means no limit: %+v, %v", c, err)
+	}
+}
+
+func TestTheTerminalSettingsAreRequiredAndChecked(t *testing.T) {
+	for _, key := range []string{EnvIncusURL, EnvIncusClientID, EnvOIDCTokenURL, EnvOIDCClientID, EnvTerminalMaxPerUser, EnvTerminalMaxPerTenant, EnvTerminalIdle, EnvTerminalMaxDuration, EnvTerminalRecheck} {
+		m := valid()
+		delete(m, key)
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key+" is required") {
+			t.Errorf("without %s: %v, want it to be named as required", key, err)
+		}
+	}
+	c, err := Load(env(valid()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IncusURL != "https://incus.example.org" || c.TerminalMaxPerUser != 5 || c.TerminalMaxPerTenant != 10 || c.TerminalIdle.String() != "15m0s" || c.TerminalMaxDuration.String() != "1h0m0s" || c.TerminalRecheck.String() != "30s" {
+		t.Errorf("%+v", c)
+	}
+	for name, tt := range map[string]struct{ key, value string }{
+		"no terminal at all is not a limit": {EnvTerminalMaxPerUser, "0"},
+		"no terminal for a tenant":          {EnvTerminalMaxPerTenant, "0"},
+		"an idle time that is too short":    {EnvTerminalIdle, "2s"},
+		"a duration that is too short":      {EnvTerminalMaxDuration, "10s"},
+		"a recheck that never happens":      {EnvTerminalRecheck, "0s"},
+		"an Incus that is not a URL":        {EnvIncusURL, "incus"},
+		"a token endpoint that is not one":  {EnvOIDCTokenURL, "auth"},
+	} {
+		m := valid()
+		m[tt.key] = tt.value
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), tt.key) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

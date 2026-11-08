@@ -17,6 +17,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/openapi"
 	"github.com/phorge-fr/phorge-api/internal/server"
+	"github.com/phorge-fr/phorge-api/internal/terminal"
 )
 
 type verifier struct {
@@ -33,6 +34,7 @@ func newServer(users auth.Verifier) *server.Server {
 		Settings: testSettings,
 		Auth:     &auth.Authenticator{Users: users, Log: log},
 		Authz:    authz.New(nil), // nothing here asks OpenFGA
+		Terminal: &Terminal{Incus: &terminal.Client{URL: "http://127.0.0.1:1"}, Exchanger: &fakeExchange{}, Settings: terminalSettings},
 		Log:      log,
 	})
 	return s

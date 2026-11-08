@@ -51,6 +51,16 @@ type Config struct {
 	// APIKeyMaxLifetime is the longest an API key may live: its expiry is capped to it. 0 caps nothing (a key always has an
 	// expiry).
 	APIKeyMaxLifetime time.Duration
+
+	// IncusURL is the HTTPS address of Incus, where the terminal of an instance is opened. IncusClientID is the client ID of the Incus
+	// application in Authentik: the audience of the token that a person's token is exchanged for. OIDCTokenURL is the token endpoint
+	// of Authentik where the exchange is made, by the client OIDCClientID (the public client of the API).
+	IncusURL, IncusClientID, OIDCTokenURL, OIDCClientID string
+	// TerminalMaxPerUser and TerminalMaxPerTenant are how many terminals a person, and a tenant, may have open. TerminalIdle is how
+	// long one may go without a byte, TerminalMaxDuration how long it may last and TerminalRecheck how often the right of its person is
+	// checked again while it is open (Incus does not end a session whose right was removed).
+	TerminalMaxPerUser, TerminalMaxPerTenant           int
+	TerminalIdle, TerminalMaxDuration, TerminalRecheck time.Duration
 }
 
 // Environment variables.
@@ -71,6 +81,16 @@ const (
 	EnvMaxImagesPerTenant   = "MAX_IMAGES_PER_TENANT"
 	EnvMaxProfilesPerTenant = "MAX_PROFILES_PER_TENANT"
 	EnvAPIKeyMaxLifetime    = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
+
+	EnvIncusURL             = "INCUS_URL"
+	EnvIncusClientID        = "INCUS_CLIENT_ID" //nolint:gosec // the name of a variable, not a credential
+	EnvOIDCTokenURL         = "OIDC_TOKEN_URL"  //nolint:gosec // the name of a variable, not a credential
+	EnvOIDCClientID         = "OIDC_CLIENT_ID"  //nolint:gosec // the name of a variable, not a credential
+	EnvTerminalMaxPerUser   = "TERMINAL_MAX_PER_USER"
+	EnvTerminalMaxPerTenant = "TERMINAL_MAX_PER_TENANT"
+	EnvTerminalIdle         = "TERMINAL_IDLE_TIMEOUT"
+	EnvTerminalMaxDuration  = "TERMINAL_MAX_DURATION"
+	EnvTerminalRecheck      = "TERMINAL_RECHECK_INTERVAL"
 )
 
 const defaultListenAddr = ":8080"
@@ -91,6 +111,11 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		OpenFGAStoreID: get(EnvOpenFGAStoreID),
 		CAFile:         get(EnvCAFile),
 		KubeContext:    get(EnvKubeContext),
+
+		IncusURL:      get(EnvIncusURL),
+		IncusClientID: get(EnvIncusClientID),
+		OIDCTokenURL:  get(EnvOIDCTokenURL),
+		OIDCClientID:  get(EnvOIDCClientID),
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = defaultListenAddr
@@ -103,6 +128,10 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 		{EnvOpenFGAURL, c.OpenFGAURL},
 		{EnvOpenFGAAPIKey, c.OpenFGAAPIKey},
 		{EnvOpenFGAStoreID, c.OpenFGAStoreID},
+		{EnvIncusURL, c.IncusURL},
+		{EnvIncusClientID, c.IncusClientID},
+		{EnvOIDCTokenURL, c.OIDCTokenURL},
+		{EnvOIDCClientID, c.OIDCClientID},
 	} {
 		if r.value == "" {
 			errs = append(errs, fmt.Errorf("%s is required", r.key))
@@ -118,6 +147,8 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	for _, u := range []struct{ key, value string }{
 		{EnvIssuer, c.Issuer},
 		{EnvOpenFGAURL, c.OpenFGAURL},
+		{EnvIncusURL, c.IncusURL},
+		{EnvOIDCTokenURL, c.OIDCTokenURL},
 	} {
 		if u.value != "" {
 			if err := checkURL(u.value); err != nil {
@@ -166,6 +197,12 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	duration(EnvInstanceBootGrace, 0, &c.InstanceBootGrace)
 	duration(EnvInstanceStuckAfter, time.Second, &c.InstanceStuckAfter)
 	duration(EnvAPIKeyMaxLifetime, 0, &c.APIKeyMaxLifetime)
+	// A terminal is a long-lived connection: it has no "no limit" for how many, how idle or how long.
+	integer(EnvTerminalMaxPerUser, 1, &c.TerminalMaxPerUser)
+	integer(EnvTerminalMaxPerTenant, 1, &c.TerminalMaxPerTenant)
+	duration(EnvTerminalIdle, 10*time.Second, &c.TerminalIdle)
+	duration(EnvTerminalMaxDuration, time.Minute, &c.TerminalMaxDuration)
+	duration(EnvTerminalRecheck, time.Second, &c.TerminalRecheck)
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
@@ -206,6 +243,15 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("instance_boot_grace", c.InstanceBootGrace),
 		slog.Duration("instance_stuck_after", c.InstanceStuckAfter),
 		slog.Duration("api_key_max_lifetime", c.APIKeyMaxLifetime),
+		slog.String("incus_url", c.IncusURL),
+		slog.String("incus_client_id", c.IncusClientID),
+		slog.String("oidc_token_url", c.OIDCTokenURL),
+		slog.String("oidc_client_id", c.OIDCClientID),
+		slog.Int("terminal_max_per_user", c.TerminalMaxPerUser),
+		slog.Int("terminal_max_per_tenant", c.TerminalMaxPerTenant),
+		slog.Duration("terminal_idle_timeout", c.TerminalIdle),
+		slog.Duration("terminal_max_duration", c.TerminalMaxDuration),
+		slog.Duration("terminal_recheck_interval", c.TerminalRecheck),
 	)
 }
 
