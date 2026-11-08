@@ -20,10 +20,10 @@ Three things bound what one caller or one tenant can create. Each has its own an
 | Plan | Instances | vCPU | Memory | Disk | Networks |
 |---|---|---|---|---|---|
 | `small` | 2 | 2 | 4 GiB | 128 GiB | 1 |
-| `medium` | 2 | 4 | 8 GiB | 256 GiB | 2 |
-| `large` | 2 | 8 | 16 GiB | 512 GiB | 3 |
+| `medium` | 4 | 4 | 8 GiB | 256 GiB | 2 |
+| `large` | 6 | 8 | 16 GiB | 512 GiB | 3 |
 
-Each plan holds two instances of its own profile size: `small` two `s`, `medium` two `m`, `large` two `l`.
+The CPU, the memory and the disk of each plan hold two instances of its own profile size: `small` two `s`, `medium` two `m`, `large` two `l`. The count of instances is the plan's own (2, 4 and 6), for instances smaller than the profile.
 
 `GET /v1/tenants/{t}/quota` answers the plan, the limits and what the tenant holds (`used`). A stopped instance counts, as it does for Incus; an instance that has a profile counts what the profile comes to, one of the three every tenant has or one its users made. The table is written twice, here and in the Tenant composition of Hangar; a test of each side says the same numbers.
 
@@ -31,7 +31,7 @@ Creating an instance or a network that would pass a limit is refused by the API 
 
 A platform administrator raises the limits of a tenant by changing its plan (`PATCH /v1/tenants/{t}`).
 
-A profile bigger than what is left of a plan is refused with the limit it passes: a `l` on a `small` plan, or a third instance. The numbers of the plans are written twice, in the Tenant composition of Hangar and in `internal/quota`, and a test of each says the same.
+A profile bigger than what is left of a plan is refused with the limit it passes: a `l` on a `small` plan, or a third `s` on it. The numbers of the plans are written twice, in the Tenant composition of Hangar and in `internal/quota`, and a test of each says the same.
 
 ## The rate
 

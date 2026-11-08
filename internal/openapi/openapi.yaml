@@ -1969,8 +1969,8 @@ components:
         Plan:
             type: string
             description: |
-                The quota of the tenant, enforced by Incus. Each plan holds two instances of the size of its own profile.
-                `small`: 2 VMs, 2 vCPU, 4 GiB, 128 GiB of disk, 1 network. `medium`: 2, 4, 8, 256, 2. `large`: 2, 8, 16, 512, 3.
+                The quota of the tenant, enforced by Incus. The CPU, the memory and the disk of each plan hold two instances of the
+                size of its own profile. `small`: 2 VMs, 2 vCPU, 4 GiB, 128 GiB of disk, 1 network. `medium`: 4, 4, 8, 256, 2. `large`: 6, 8, 16, 512, 3.
             enum:
                 - small
                 - medium

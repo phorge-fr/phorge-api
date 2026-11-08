@@ -26,7 +26,7 @@ func TestQuotaSaysWhatThePlanAllowsAndWhatTheTenantHolds(t *testing.T) {
 	e.instances.put("demo", compute.Instance{Name: "b", Image: "debian", Profile: "m", Running: false}) // stopped: it counts
 	var got quotaBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &got)
-	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 2, VCPU: 8, MemoryMiB: 16384, DiskGiB: 512, Networks: 3}) {
+	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 6, VCPU: 8, MemoryMiB: 16384, DiskGiB: 512, Networks: 3}) {
 		t.Errorf("plan and limits: %+v", got)
 	}
 	if want := (quota.Used{Instances: 2, VCPU: 4, MemoryMiB: 2048 + 4096, DiskGiB: 148, Networks: 1}); got.Used != want {
