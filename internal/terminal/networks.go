@@ -12,15 +12,56 @@ import (
 )
 
 // NetworkRanges asks Incus, with the token of a person, for the networks of a project and returns the gateway address that each
-// managed network has ("10.77.1.1/24"), by name. Incus decides what the person may see: a person with no right on the project gets
-// ErrForbidden, and a network that is not there yet is not in the map.
+// managed one has ("10.77.1.1/24"), by name. The address is read from the state of the network, not from its config: Incus gives a
+// person who only views the project an empty config, and the state, which lists the address and the netmask of the gateway, is what
+// they may see (measured on the platform). Incus decides what the person sees: a person with no right on the project gets
+// ErrForbidden, and a network that is not up yet is not in the map.
 func (c *Client) NetworkRanges(ctx context.Context, token, project string) (map[string]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	endpoint := fmt.Sprintf("%s/1.0/networks?project=%s&recursion=1", strings.TrimRight(c.URL, "/"), url.QueryEscape(project))
+	base := strings.TrimRight(c.URL, "/")
+	var list struct {
+		Metadata []struct {
+			Name    string `json:"name"`
+			Managed bool   `json:"managed"`
+		} `json:"metadata"`
+	}
+	if err := c.get(ctx, token, fmt.Sprintf("%s/1.0/networks?project=%s&recursion=1", base, url.QueryEscape(project)), &list); err != nil {
+		return nil, err
+	}
+	ranges := map[string]string{}
+	for _, n := range list.Metadata {
+		if !n.Managed {
+			continue
+		}
+		var state struct {
+			Metadata struct {
+				Addresses []struct {
+					Family  string `json:"family"`
+					Address string `json:"address"`
+					Netmask string `json:"netmask"`
+				} `json:"addresses"`
+			} `json:"metadata"`
+		}
+		if err := c.get(ctx, token, fmt.Sprintf("%s/1.0/networks/%s/state?project=%s", base, url.PathEscape(n.Name), url.QueryEscape(project)), &state); err != nil {
+			continue // a network that is not up yet has no state: the others are still read
+		}
+		for _, a := range state.Metadata.Addresses {
+			if a.Family == "inet" && a.Address != "" && a.Netmask != "" {
+				ranges[n.Name] = a.Address + "/" + a.Netmask
+				break
+			}
+		}
+	}
+	return ranges, nil
+}
+
+// get reads one JSON answer of Incus with the token. What Incus says is never returned: a refusal is ErrForbidden, an unknown project
+// ErrNotFound, anything else ErrUnavailable.
+func (c *Client) get(ctx context.Context, token, endpoint string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+		return fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := c.HTTP
@@ -29,36 +70,23 @@ func (c *Client) NetworkRanges(ctx context.Context, token, project string) (map[
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: networks: %w", ErrUnavailable, err)
+		return fmt.Errorf("%w: read: %w", ErrUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusForbidden:
-		return nil, ErrForbidden
+		return ErrForbidden
 	case http.StatusNotFound:
-		return nil, ErrNotFound
+		return ErrNotFound
 	default:
-		return nil, fmt.Errorf("%w: networks answered %d", ErrUnavailable, resp.StatusCode)
+		return fmt.Errorf("%w: read answered %d", ErrUnavailable, resp.StatusCode)
 	}
-	var out struct {
-		Metadata []struct {
-			Name    string            `json:"name"`
-			Managed bool              `json:"managed"`
-			Config  map[string]string `json:"config"`
-		} `json:"metadata"`
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("%w: read answered something that is not JSON", ErrUnavailable)
 	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("%w: networks answered something that is not JSON", ErrUnavailable)
-	}
-	ranges := map[string]string{}
-	for _, n := range out.Metadata {
-		if addr := n.Config["ipv4.address"]; n.Managed && addr != "" && addr != "none" && addr != "auto" {
-			ranges[n.Name] = addr
-		}
-	}
-	return ranges, nil
+	return nil
 }
 
 // Reader reads from Incus as a person: it trades their token for one of Incus (cached for a short while) and asks.

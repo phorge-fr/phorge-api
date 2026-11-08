@@ -434,24 +434,48 @@ func TestARefusedExchangeIsToldApartFromAnOutage(t *testing.T) {
 	}
 }
 
-func TestTheNetworksOfAProjectAreReadWithTheTokenAndOnlyTheManagedOnesWithAnAddress(t *testing.T) {
-	var auth, query string
+func TestTheNetworksOfAProjectAreReadFromTheirStateWithTheTokenAndOnlyTheManagedOnes(t *testing.T) {
+	var mu sync.Mutex
+	var auths, paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth, query = r.Header.Get("Authorization"), r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"metadata":[
-			{"name":"lan","managed":true,"config":{"ipv4.address":"10.77.1.1/24"}},
-			{"name":"auto","managed":true,"config":{"ipv4.address":"auto"}},
-			{"name":"none","managed":true,"config":{"ipv4.address":"none"}},
-			{"name":"bare","managed":true,"config":{}},
-			{"name":"uplink","managed":false,"config":{"ipv4.address":"10.1.1.1/24"}}]}`))
+		mu.Lock()
+		auths, paths = append(auths, r.Header.Get("Authorization")), append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/1.0/networks":
+			// what Incus gives a person who only views the project: no config at all
+			_, _ = w.Write([]byte(`{"metadata":[
+				{"name":"lan","managed":true,"config":{}},
+				{"name":"pending","managed":true,"config":{}},
+				{"name":"v6only","managed":true,"config":{}},
+				{"name":"uplink","managed":false,"config":{}}]}`))
+		case "/1.0/networks/lan/state":
+			_, _ = w.Write([]byte(`{"metadata":{"addresses":[{"family":"inet6","address":"fd42::1","netmask":"64","scope":"link"},{"family":"inet","address":"10.77.1.1","netmask":"24","scope":"link"}]}}`))
+		case "/1.0/networks/v6only/state":
+			_, _ = w.Write([]byte(`{"metadata":{"addresses":[{"family":"inet6","address":"fd42::1","netmask":"64","scope":"link"}]}}`))
+		default: // a network that is not up yet, and the unmanaged one that must not be asked
+			http.Error(w, "private", http.StatusInternalServerError)
+		}
 	}))
 	defer srv.Close()
 	got, err := (&Client{URL: srv.URL}).NetworkRanges(t.Context(), "tok", "t-demo")
 	if err != nil || len(got) != 1 || got["lan"] != "10.77.1.1/24" {
-		t.Fatalf("ranges = %v, %v: only an address Incus gave a managed network counts", got, err)
+		t.Fatalf("ranges = %v, %v: the IPv4 address of the state of a managed network, and nothing for one that is not up", got, err)
 	}
-	if auth != "Bearer tok" || query != "project=t-demo&recursion=1" {
-		t.Errorf("auth %q, query %q", auth, query)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, a := range auths {
+		if a != "Bearer tok" {
+			t.Errorf("a request carried %q", a)
+		}
+	}
+	for _, p := range paths {
+		if strings.Contains(p, "uplink") {
+			t.Errorf("the unmanaged network was asked for: %s", p)
+		}
+		if !strings.HasSuffix(p, "project=t-demo&recursion=1") && !strings.HasSuffix(p, "state?project=t-demo") {
+			t.Errorf("unexpected request %s", p)
+		}
 	}
 	for status, want := range map[int]error{http.StatusForbidden: ErrForbidden, http.StatusNotFound: ErrNotFound, http.StatusInternalServerError: ErrUnavailable} {
 		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "private", status) }))

@@ -84,6 +84,7 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"type":"async","metadata":{"id":"op","metadata":{"fds":{"0":"s0","control":"sc"}}}}`))
 	})
+	// Incus gives a person who only views a project the networks with no config, and the address in the state of each.
 	mux.HandleFunc("GET /1.0/networks", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.netTokens = append(f.netTokens, r.Header.Get("Authorization"))
@@ -104,11 +105,23 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 			Config  map[string]string `json:"config"`
 		}
 		var list []net
-		for name, gw := range nets {
-			list = append(list, net{Name: name, Managed: true, Config: map[string]string{"ipv4.address": gw}})
+		for name := range nets {
+			list = append(list, net{Name: name, Managed: true, Config: map[string]string{}})
 		}
-		list = append(list, net{Name: "uplink", Managed: false, Config: map[string]string{"ipv4.address": "10.1.1.1/24"}})
+		list = append(list, net{Name: "uplink", Managed: false, Config: map[string]string{}})
 		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": list})
+	})
+	mux.HandleFunc("GET /1.0/networks/{name}/state", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.netTokens = append(f.netTokens, r.Header.Get("Authorization"))
+		gw, ok := f.networks[r.PathValue("name")]
+		f.mu.Unlock()
+		if !ok || r.URL.Query().Get("project") != "t-demo" {
+			http.Error(w, "unknown", http.StatusNotFound)
+			return
+		}
+		addr, mask, _ := strings.Cut(gw, "/")
+		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]any{"addresses": []map[string]string{{"family": "inet", "address": addr, "netmask": mask, "scope": "link"}}}})
 	})
 	mux.HandleFunc("GET /1.0/operations/{id}/websocket", func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, nil)
