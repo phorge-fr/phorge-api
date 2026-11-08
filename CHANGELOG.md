@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/phorge-fr/phorge-api/compare/v0.10.1...v0.11.0) (2026-11-08)
+
+
+### Features
+
+* **authz:** ask every question against a pinned OpenFGA model ([5db65b1](https://github.com/phorge-fr/phorge-api/commit/5db65b1f4aee8670aa192b739b862e8d0f340459)), closes [#107](https://github.com/phorge-fr/phorge-api/issues/107)
+* **authz:** Ask every question against a pinned OpenFGA model ([a2c0f24](https://github.com/phorge-fr/phorge-api/commit/a2c0f248b57afd84cc77af86f1006517bd7b100b))
+
 ## [0.10.1](https://github.com/phorge-fr/phorge-api/compare/v0.10.0...v0.10.1) (2026-11-08)
 
 
