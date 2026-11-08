@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.7.0](https://github.com/phorge-fr/phorge-api/compare/v0.6.0...v0.7.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **profiles:** MAX_PROFILES_PER_TENANT is required, like the other values that decide how the API behaves.
+* **tenants:** TENANT_CREATION and MAX_TENANTS_PER_USER are required, like the other values that decide how the API behaves, and deleting a tenant is no longer for the platform administrators only: its owner may.
+* **quota:** RATE_LIMIT_WRITES_PER_MINUTE, RATE_LIMIT_BURST and MAX_IMAGES_PER_TENANT are required, like the other values that decide how the API behaves: the deployment must write them before it runs this version.
+
+### Features
+
+* **apikeys:** let a key hold tenants:write, networks:read and networks:write ([694c68b](https://github.com/phorge-fr/phorge-api/commit/694c68bd361c4cb09460ba0ee1b8652408c8f63e))
+* **apikeys:** let a key hold tenants:write, networks:read and networks:write ([da2b9ff](https://github.com/phorge-fr/phorge-api/commit/da2b9ff13f0d0a5edbe4e8aa923faacd847ca040))
+* **networks:** let users deploy networks and attach their instances to them ([5a1e307](https://github.com/phorge-fr/phorge-api/commit/5a1e307a6581b2eb6a34b66730ae8922d5c869f3))
+* **networks:** let users deploy networks and attach their instances to them ([7daa9d9](https://github.com/phorge-fr/phorge-api/commit/7daa9d9ccc73a9fdfc8580151e2aeba8ab7e1be6))
+* **profiles:** let users make and delete their own profiles ([fd05be8](https://github.com/phorge-fr/phorge-api/commit/fd05be8e522136f3a1a3267ea7b6a9cb4412d14f))
+* **profiles:** let users make and delete their own profiles ([b0a1d63](https://github.com/phorge-fr/phorge-api/commit/b0a1d639f84c19c32ed5e1e42b8dabf4bfe84d78))
+* **profiles:** size an instance with a profile of its tenant ([ea7de4a](https://github.com/phorge-fr/phorge-api/commit/ea7de4a831c88f0a9e99bed84909cad9e053d1bf))
+* **profiles:** size an instance with a profile of its tenant ([f6e21f1](https://github.com/phorge-fr/phorge-api/commit/f6e21f191eb4966a653a27249eb863cd009146c3))
+* **quota:** align the plans with the profiles: 2, 4 and 6 instances ([b2fe4e6](https://github.com/phorge-fr/phorge-api/commit/b2fe4e630e01f2969b062a99ba3fd580d306c954))
+* **quota:** allow 2, 4 and 6 instances in the small, medium and large plans ([ced9a7c](https://github.com/phorge-fr/phorge-api/commit/ced9a7cc91b7f27106b2a0ccd26c6dafda7e7cf4))
+* **quota:** hold two instances of the size of each profile in every plan ([6234f01](https://github.com/phorge-fr/phorge-api/commit/6234f01c7c991f70a07bb310d687bbb00f524d1c))
+* **quota:** say which limit a request passes, and slow down who writes too much ([8be2f13](https://github.com/phorge-fr/phorge-api/commit/8be2f13a919cf87d7c799938cb8ca6be319f58b9))
+* **quota:** say which limit a request passes, and slow down who writes too much ([803c5f9](https://github.com/phorge-fr/phorge-api/commit/803c5f9784961b9d2d13429b68f72b4c7e2f7fed))
+* **status:** tell a network limit in words ([c675256](https://github.com/phorge-fr/phorge-api/commit/c675256391618fd9d452c5f4b99ffdbdfa007f0e))
+* **status:** tell the user what is wrong in words, not Crossplane conditions ([6d9e1b3](https://github.com/phorge-fr/phorge-api/commit/6d9e1b37d05b002e17f338456c61904c4a75f65e))
+* **status:** tell the user what is wrong in words, not Crossplane conditions ([74637ae](https://github.com/phorge-fr/phorge-api/commit/74637aeab4588c08a71ade72879a781902d573ad))
+* **tenants:** let a person create, rename and delete their own tenant ([de164e2](https://github.com/phorge-fr/phorge-api/commit/de164e2c31295e7ff2aa15187a1a02b1f4158b6e))
+* **tenants:** let a person create, rename and delete their own tenant ([2323f89](https://github.com/phorge-fr/phorge-api/commit/2323f89a350b6de469c979b71dac87167dad8dfc))
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/getkin/kin-openapi to v0.153.0 ([289894f](https://github.com/phorge-fr/phorge-api/commit/289894f2037bf91668f71956f9bee34fae924810))
+* **deps:** update module github.com/getkin/kin-openapi to v0.153.0 ([3df3a1e](https://github.com/phorge-fr/phorge-api/commit/3df3a1ecd831b56fb9ab1122b9c195233f583f21))
+* **tenants:** delete what a tenant holds before the tenant ([357d171](https://github.com/phorge-fr/phorge-api/commit/357d17131638e2b397d841ada2bbc96299866ada))
+* **tenants:** delete what a tenant holds before the tenant ([13334be](https://github.com/phorge-fr/phorge-api/commit/13334be20d2c9542fa0b5f2ca8c722fc9cb26cef))
+
 ## [0.6.0](https://github.com/phorge-fr/phorge-api/compare/v0.5.1...v0.6.0) (2026-11-06)
 
 
