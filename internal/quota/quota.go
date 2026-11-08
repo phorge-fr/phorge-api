@@ -12,7 +12,7 @@ import (
 )
 
 // Limits are the limits of a plan. They are the ones of the Tenant composition in Hangar (composition-tenant.yml): the two lists
-// are the same.
+// are the same. The CPU, the memory and the disk of each plan hold two instances of the size of its profile (small two s, medium two m, large two l); the count of instances is 2, 4 and 6.
 type Limits struct {
 	Instances int `json:"instances"`
 	VCPU      int `json:"vcpu"`
@@ -23,9 +23,9 @@ type Limits struct {
 
 // Plans are the quota plans of the Tenant XRD.
 var Plans = map[tenants.Plan]Limits{
-	tenants.Small:  {Instances: 1, VCPU: 2, MemoryMiB: 4 * 1024, DiskGiB: 20, Networks: 1},
-	tenants.Medium: {Instances: 3, VCPU: 4, MemoryMiB: 8 * 1024, DiskGiB: 100, Networks: 2},
-	tenants.Large:  {Instances: 6, VCPU: 8, MemoryMiB: 16 * 1024, DiskGiB: 250, Networks: 3},
+	tenants.Small:  {Instances: 2, VCPU: 2, MemoryMiB: 4 * 1024, DiskGiB: 128, Networks: 1},
+	tenants.Medium: {Instances: 4, VCPU: 4, MemoryMiB: 8 * 1024, DiskGiB: 256, Networks: 2},
+	tenants.Large:  {Instances: 6, VCPU: 8, MemoryMiB: 16 * 1024, DiskGiB: 512, Networks: 3},
 }
 
 // LimitsOf returns the limits of a plan. An unknown plan holds nothing: it is the plan of a tenant that the XRD would refuse.
