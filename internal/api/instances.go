@@ -39,6 +39,7 @@ type instanceBody struct {
 	Name          string   `json:"name"`
 	Image         string   `json:"image"`
 	Network       string   `json:"network"`
+	Profile       string   `json:"profile,omitempty"`
 	CPU           int      `json:"cpu"`
 	MemoryMiB     int      `json:"memoryMiB"`
 	DiskGiB       int      `json:"diskGiB"`
@@ -75,8 +76,13 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 		problems = fmt.Sprintf("the instance has been %s for %s, which is too long: the system inside may not answer the request"+
 			" (it was still booting, or it is stuck)", transition, stuck.Round(time.Minute))
 	}
+	// An instance with a profile has no size of its own on the object: the profile decides it, and the body says what it comes to.
+	cpu, mem, disk := in.CPU, in.MemoryMiB, in.DiskGiB
+	if p, ok := compute.ProfileNamed(in.Profile); ok && in.Profile != "" {
+		cpu, mem, disk = p.CPU, p.MemoryMiB, p.DiskGiB
+	}
 	return instanceBody{
-		Name: in.Name, Image: in.Image, Network: in.Network, CPU: in.CPU, MemoryMiB: in.MemoryMiB, DiskGiB: in.DiskGiB, Running: in.Running,
+		Name: in.Name, Image: in.Image, Network: in.Network, Profile: in.Profile, CPU: cpu, MemoryMiB: mem, DiskGiB: disk, Running: in.Running,
 		Nesting: in.Nesting, SecureBoot: in.SecureBoot, SSHPublicKeys: keys, State: in.State, IPv4: in.IPv4,
 		Transition: transition, TransitionSince: since,
 		Phase: in.Status.At(i.now()), Problems: problems, CreatedAt: in.CreatedAt, CreatedBy: in.CreatedBy,
@@ -147,6 +153,12 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Network = nw
+	if req.Profile != "" {
+		if _, ok := compute.ProfileNamed(req.Profile); !ok {
+			i.storeError(w, &resource.InvalidError{Problems: []string{unknownProfile(req.Profile)}}, "instance")
+			return
+		}
+	}
 	// A size is complete: the XRD has no defaults, so what the request left out takes the ones of the API.
 	req = req.WithDefaultSize()
 
@@ -163,6 +175,14 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 	// Accepted, not created: it takes about a minute. The quota of the plan is Incus's, its refusal comes back in problems.
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/instances/"+in.Name)
 	writeJSON(w, http.StatusAccepted, i.body(in))
+}
+
+func unknownProfile(name string) string {
+	names := make([]string, 0, len(compute.BuiltinProfiles))
+	for _, p := range compute.BuiltinProfiles {
+		names = append(names, p.Name)
+	}
+	return "profile " + name + " does not exist in this tenant: " + strings.Join(names, ", ")
 }
 
 // pickNetwork returns the network an instance is attached to, or answers and returns false. A network that is not Ready yet is
@@ -225,13 +245,30 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := r.PathValue("t")
-	if req.Running != nil {
+	if req.Profile != nil {
+		if _, ok := compute.ProfileNamed(*req.Profile); !ok {
+			i.storeError(w, &resource.InvalidError{Problems: []string{unknownProfile(*req.Profile)}}, "instance")
+			return
+		}
+	}
+	sizeGiven := req.CPU != nil || req.MemoryMiB != nil || req.DiskGiB != nil
+	if req.Running != nil || sizeGiven {
 		current, err := i.store.Get(r.Context(), tenant, name)
 		if err != nil {
 			i.storeError(w, err, "instance")
 			return
 		}
-		if !*req.Running {
+		// An instance with a profile has no size of its own: a value alone would sit next to the profile, which the XRD refuses.
+		// Leaving the profile is giving the three values together.
+		if sizeGiven && current.Profile != "" {
+			if req.CPU == nil || req.MemoryMiB == nil || req.DiskGiB == nil {
+				i.storeError(w, &resource.InvalidError{Problems: []string{"the instance has the profile " + current.Profile +
+					": give a profile, or cpu, memoryMiB and diskGiB together to leave it"}}, "instance")
+				return
+			}
+			req.DropProfile = true
+		}
+		if req.Running != nil && !*req.Running {
 			// A stop sent while the guest boots is lost and the stop then hangs, see compute.Instance.StopRefusedFor.
 			if wait := current.StopRefusedFor(i.now(), i.settings.InstanceBootGrace); wait > 0 {
 				httperr.Write(w, http.StatusConflict, "starting", "the instance is still starting: stopping it now would hang, as its system does not "+
@@ -239,9 +276,11 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		// The time of the request is recorded when it changes running, in either direction. A patch that changes nothing does not
-		// move it: repeating a start must not postpone a stop for ever.
-		req.MarkChange = *req.Running != current.Running
+		if req.Running != nil {
+			// The time of the request is recorded when it changes running, in either direction. A patch that changes nothing does not
+			// move it: repeating a start must not postpone a stop for ever.
+			req.MarkChange = *req.Running != current.Running
+		}
 	}
 	in, err := i.store.Patch(r.Context(), tenant, name, req)
 	if err != nil {

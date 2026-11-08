@@ -53,6 +53,7 @@ type Deps struct {
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
 	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz)))
+	s.Handle("GET /v1/limits", d.Auth.Middleware(http.HandlerFunc(limits)))
 
 	now := d.Now
 	if now == nil {
@@ -61,6 +62,7 @@ func Register(s *server.Server, d Deps) {
 	b := base{authz: d.Authz, tenants: d.Tenants, log: d.Log, now: now}
 	(&tenantRoutes{base: b, store: d.Tenants}).register(s, d.Auth.Middleware)
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances}).register(s, d.Auth.Middleware)
+	(&profileRoutes{base: b}).register(s, d.Auth.Middleware)
 	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances}).register(s, d.Auth.Middleware)
 	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, settings: d.Settings}).register(s, d.Auth.Middleware)
 	(&membershipRoutes{base: b, store: d.Memberships}).register(s, d.Auth.Middleware)

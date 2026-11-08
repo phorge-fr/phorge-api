@@ -180,8 +180,11 @@ func (s *instanceStore) Create(_ context.Context, tenant string, r compute.Creat
 		return compute.Instance{}, compute.ErrExists
 	}
 	s.created = append(s.created, r)
-	in := compute.Instance{Name: r.Name, Image: r.Image, Network: r.Network, CPU: *r.CPU, MemoryMiB: *r.MemoryMiB, DiskGiB: *r.DiskGiB, Running: true, SecureBoot: true,
+	in := compute.Instance{Name: r.Name, Image: r.Image, Network: r.Network, Profile: r.Profile, Running: true, SecureBoot: true,
 		SSHPublicKeys: r.SSHPublicKeys, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
+	if r.Profile == "" {
+		in.CPU, in.MemoryMiB, in.DiskGiB = *r.CPU, *r.MemoryMiB, *r.DiskGiB
+	}
 	s.put(tenant, in)
 	return in, nil
 }
@@ -196,6 +199,12 @@ func (s *instanceStore) Patch(_ context.Context, tenant, name string, r compute.
 	}
 	if r.CPU != nil {
 		in.CPU = *r.CPU
+	}
+	if r.Profile != nil {
+		in.Profile, in.CPU, in.MemoryMiB, in.DiskGiB = *r.Profile, 0, 0, 0
+	}
+	if r.DropProfile {
+		in.Profile = ""
 	}
 	s.patched = append(s.patched, r)
 	s.put(tenant, in)

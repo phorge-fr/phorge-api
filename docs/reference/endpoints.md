@@ -11,9 +11,11 @@ verified: 2026-11-08
 | `GET /docs` | Swagger UI |
 | `GET /openapi.yaml` | The OpenAPI document, written by hand in `internal/openapi/openapi.yaml`. A test compares it with the registered routes, so a route and its description go in together |
 | `GET /v1/whoami` | Who the credential stands for |
+| `GET /v1/limits` | What the API enforces on a request: the bounds of an instance and the value each takes when a request leaves it out, the longest names. Any credential; nothing about a tenant |
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you can see (the platform administrators see all of them) |
 | `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create, resize and delete a tenant: platform administrators only |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with a role or a key tuple (`images:read`), write with `operator` or `images:write` |
+| `GET /v1/tenants/{t}/profiles` | The sizes an instance can take: the profiles `s`, `m` and `l` every tenant is created with. Read with a role or a key tuple (`instances:read`) |
 | `GET`, `POST /v1/tenants/{t}/networks`, `GET`, `DELETE /v1/tenants/{t}/networks/{name}` | The networks of a tenant, which comes without one: read with a role (`viewer` and above), write with `operator`. No key scope covers them yet |
 | `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, and the keys with `memberships:read` and `memberships:write` on it |
 | `GET`, `POST /v1/apikeys`, `GET`, `PATCH`, `DELETE /v1/apikeys/{id}` | Your own API keys, with a token of Authentik (a key cannot manage keys). Creating: platform administrators for now. `PATCH` only renames |
