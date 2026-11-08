@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.1](https://github.com/phorge-fr/phorge-api/compare/v0.10.0...v0.10.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **networks:** read the range Incus chose from the state of the network ([47d044e](https://github.com/phorge-fr/phorge-api/commit/47d044eb04ddc0ddbf670fe8730acebf2ff15100)), closes [#104](https://github.com/phorge-fr/phorge-api/issues/104)
+* **networks:** Read the range Incus chose from the state of the network ([094c76d](https://github.com/phorge-fr/phorge-api/commit/094c76dfe13282baf7ea8364580da5d5775ed81c))
+
 ## [0.10.0](https://github.com/phorge-fr/phorge-api/compare/v0.9.0...v0.10.0) (2026-11-08)
 
 
