@@ -142,6 +142,68 @@ func (s *networkStore) put(tenant string, n compute.Network) {
 	s.data[tenant][n.Name] = n
 }
 
+// profileStore is an in-memory store of the profiles users made, per tenant.
+type profileStore struct {
+	data    map[string]map[string]compute.Profile
+	err     error
+	created []compute.CreateProfile
+	deleted []string
+}
+
+func (s *profileStore) List(_ context.Context, tenant string) ([]compute.Profile, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	var out []compute.Profile
+	for _, p := range s.data[tenant] {
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+func (s *profileStore) Get(_ context.Context, tenant, name string) (compute.Profile, error) {
+	if s.err != nil {
+		return compute.Profile{}, s.err
+	}
+	p, ok := s.data[tenant][name]
+	if !ok {
+		return compute.Profile{}, compute.ErrNotFound
+	}
+	return p, nil
+}
+
+func (s *profileStore) Create(_ context.Context, tenant string, r compute.CreateProfile) (compute.Profile, error) {
+	if s.err != nil {
+		return compute.Profile{}, s.err
+	}
+	if _, ok := s.data[tenant][r.Name]; ok {
+		return compute.Profile{}, compute.ErrExists
+	}
+	s.created = append(s.created, r)
+	p := compute.Profile{Name: r.Name, Description: r.Description, CPU: *r.CPU, MemoryMiB: *r.MemoryMiB, DiskGiB: *r.DiskGiB, CreatedBy: r.CreatedBy, CreatedAt: now,
+		Status: status.Object{NotReadySince: now}}
+	s.put(tenant, p)
+	return p, nil
+}
+
+func (s *profileStore) Delete(_ context.Context, tenant, name string) error {
+	p, err := s.Get(context.Background(), tenant, name)
+	if err != nil {
+		return err
+	}
+	p.Status.Deleting = true
+	s.data[tenant][name] = p
+	s.deleted = append(s.deleted, tenant+"/"+name)
+	return nil
+}
+
+func (s *profileStore) put(tenant string, p compute.Profile) {
+	if s.data[tenant] == nil {
+		s.data[tenant] = map[string]compute.Profile{}
+	}
+	s.data[tenant][p.Name] = p
+}
+
 type instanceStore struct {
 	data    map[string]map[string]compute.Instance
 	err     error

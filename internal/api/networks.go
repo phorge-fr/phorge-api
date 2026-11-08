@@ -23,6 +23,7 @@ type networkRoutes struct {
 	base
 	store     compute.NetworkStore
 	instances compute.InstanceStore
+	profiles  compute.ProfileStore
 }
 
 func (n *networkRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -91,7 +92,7 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant := r.PathValue("t")
 	// The plan limits how many: say it before asking, with a code, instead of leaving a network that never becomes ready.
-	plan, used, ok := holdings(w, r, &n.base, n.instances, n.store, tenant)
+	plan, used, _, ok := holdings(w, r, &n.base, n.instances, n.store, n.profiles, tenant)
 	if !ok {
 		return
 	}

@@ -525,14 +525,15 @@ paths:
             operationId: listProfiles
             summary: The sizes an instance of a tenant can take
             description: |
-                Every tenant has the profiles `s` (1 vCPU, 2 GiB, 64 GiB), `m` (2, 4, 128) and `l` (4, 8, 256), created with it. An
-                instance takes one of them (`profile`) or its own `cpu`, `memoryMiB` and `diskGiB`. The plan of the tenant limits the
-                total: a profile whose disk is above the plan's is refused by Incus when an instance asks for it.
+                Every tenant has the profiles `s` (1 vCPU, 2 GiB, 64 GiB), `m` (2, 4, 128) and `l` (4, 8, 256), created with it and
+                marked `builtin`, then the profiles its users made. An instance takes one of them (`profile`) or its own `cpu`,
+                `memoryMiB` and `diskGiB`. The plan of the tenant limits the total: a profile whose disk is above the plan's is
+                refused by Incus when an instance asks for it.
             security:
                 - bearerAuth: []
             responses:
                 "200":
-                    description: The profiles, by size.
+                    description: The profiles, the three of the tenant first, then the others by name.
                     content:
                         application/json:
                             schema:
@@ -543,6 +544,107 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "404":
                     $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        post:
+            tags:
+                - Profiles
+            operationId: createProfile
+            summary: Make a profile in a tenant
+            description: |
+                A size of the user's own: CPU, memory and a root disk, all three given. The name is 1 to 32 characters, and `s`, `m`, `l`
+                and `default` are taken. A tenant holds a limited number of them (`quota_exceeded` past it). The answer is `202`: poll the
+                `Location` until `phase` is `Ready`. A profile that is bigger than the plan is a definition: it is the instance that
+                Incus refuses.
+            security:
+                - bearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ProfileCreate"
+            responses:
+                "202":
+                    description: Accepted, being made.
+                    headers:
+                        Location:
+                            schema:
+                                type: string
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Profile"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/profiles/{name}:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+            - $ref: "#/components/parameters/name"
+        get:
+            tags:
+                - Profiles
+            operationId: getProfile
+            summary: One profile
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The profile.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Profile"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        delete:
+            tags:
+                - Profiles
+            operationId: deleteProfile
+            summary: Delete a profile
+            description: |
+                Only a profile a user made: `s`, `m` and `l` are not changed nor deleted (`403`). A profile that an instance has cannot be
+                deleted: the answer is `409` and says which instances. Delete them first, or give them another size. For a few seconds
+                after the last one is gone Crossplane still refuses, with a `409` that names nobody: try again.
+            security:
+                - bearerAuth: []
+            responses:
+                "202":
+                    description: Being deleted.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Profile"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/instances:
@@ -1314,7 +1416,48 @@ components:
                     type: integer
                 builtin:
                     type: boolean
-                    description: Created with the tenant, and not changeable. The profiles a user makes are not.
+                    description: Created with the tenant, and not changeable. The profiles a user made are not.
+                phase:
+                    $ref: "#/components/schemas/Phase"
+                problems:
+                    type: string
+                    description: |
+                        What is wrong, in a sentence made for the user. Never a Crossplane condition or a provider error. Absent when all is
+                        well, and for the profiles every tenant has.
+                createdAt:
+                    type: string
+                    format: date-time
+                createdBy:
+                    type: string
+        ProfileCreate:
+            type: object
+            additionalProperties: false
+            required:
+                - name
+                - cpu
+                - memoryMiB
+                - diskGiB
+            properties:
+                name:
+                    type: string
+                    pattern: '^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$'
+                    description: 1 to 32 characters. `s`, `m`, `l` and `default` are taken.
+                    example: web
+                description:
+                    type: string
+                    maxLength: 200
+                cpu:
+                    type: integer
+                    minimum: 1
+                    maximum: 16
+                memoryMiB:
+                    type: integer
+                    minimum: 256
+                    maximum: 65536
+                diskGiB:
+                    type: integer
+                    minimum: 1
+                    maximum: 500
         ProfileList:
             type: object
             required:
@@ -1342,6 +1485,7 @@ components:
             required:
                 - instance
                 - network
+                - profile
             properties:
                 instance:
                     type: object
@@ -1363,6 +1507,16 @@ components:
                         maxNameLength:
                             type: integer
                 network:
+                    type: object
+                    required:
+                        - maxNameLength
+                        - maxDescriptionLength
+                    properties:
+                        maxNameLength:
+                            type: integer
+                        maxDescriptionLength:
+                            type: integer
+                profile:
                     type: object
                     required:
                         - maxNameLength
@@ -1642,6 +1796,8 @@ components:
                 - images:write
                 - networks:read
                 - networks:write
+                - profiles:read
+                - profiles:write
                 - memberships:read
                 - memberships:write
         Grant:

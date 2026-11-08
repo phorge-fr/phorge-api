@@ -45,6 +45,8 @@ type Config struct {
 	// RateLimitPerMinute is how many requests that create, change or delete one caller may send a minute, in bursts of
 	// RateLimitBurst. 0 limits nothing. MaxImagesPerTenant is how many images a tenant may hold, 0 is no limit.
 	RateLimitPerMinute, RateLimitBurst, MaxImagesPerTenant int
+	// MaxProfilesPerTenant is how many profiles the users of a tenant may make, 0 is no limit.
+	MaxProfilesPerTenant int
 
 	// TenantCreation says who may create a tenant: TenantCreationPlatformAdmins or TenantCreationUsers (any person signed in with
 	// Authentik, for themselves). MaxTenantsPerUser is how many tenants a person who is not a platform administrator may own,
@@ -75,24 +77,25 @@ const (
 
 // Environment variables.
 const (
-	EnvListenAddr         = "LISTEN_ADDR"
-	EnvIssuer             = "OIDC_ISSUER"
-	EnvAudience           = "OIDC_AUDIENCE"
-	EnvOpenFGAURL         = "OPENFGA_URL"
-	EnvOpenFGAAPIKey      = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
-	EnvOpenFGAStoreID     = "OPENFGA_STORE_ID"
-	EnvCAFile             = "CA_FILE"
-	EnvKubeContext        = "KUBE_CONTEXT"
-	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
-	EnvInstanceBootGrace  = "INSTANCE_BOOT_GRACE"
-	EnvInstanceStuckAfter = "INSTANCE_STUCK_AFTER"
-	EnvTenantCreation     = "TENANT_CREATION"
-	EnvMaxTenantsPerUser  = "MAX_TENANTS_PER_USER"
-	EnvRateLimitPerMinute = "RATE_LIMIT_WRITES_PER_MINUTE"
-	EnvRateLimitBurst     = "RATE_LIMIT_BURST"
-	EnvMaxImagesPerTenant = "MAX_IMAGES_PER_TENANT"
-	EnvAPIKeyMaxLifetime  = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
-	EnvAPIKeyCreation     = "API_KEY_CREATION"     //nolint:gosec // the name of a variable, not a credential
+	EnvListenAddr           = "LISTEN_ADDR"
+	EnvIssuer               = "OIDC_ISSUER"
+	EnvAudience             = "OIDC_AUDIENCE"
+	EnvOpenFGAURL           = "OPENFGA_URL"
+	EnvOpenFGAAPIKey        = "OPENFGA_API_KEY" //nolint:gosec // the name of a variable, not a credential
+	EnvOpenFGAStoreID       = "OPENFGA_STORE_ID"
+	EnvCAFile               = "CA_FILE"
+	EnvKubeContext          = "KUBE_CONTEXT"
+	EnvPlatformAdminGroup   = "PLATFORM_ADMIN_GROUP"
+	EnvInstanceBootGrace    = "INSTANCE_BOOT_GRACE"
+	EnvInstanceStuckAfter   = "INSTANCE_STUCK_AFTER"
+	EnvTenantCreation       = "TENANT_CREATION"
+	EnvMaxTenantsPerUser    = "MAX_TENANTS_PER_USER"
+	EnvRateLimitPerMinute   = "RATE_LIMIT_WRITES_PER_MINUTE"
+	EnvRateLimitBurst       = "RATE_LIMIT_BURST"
+	EnvMaxImagesPerTenant   = "MAX_IMAGES_PER_TENANT"
+	EnvMaxProfilesPerTenant = "MAX_PROFILES_PER_TENANT"
+	EnvAPIKeyMaxLifetime    = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
+	EnvAPIKeyCreation       = "API_KEY_CREATION"     //nolint:gosec // the name of a variable, not a credential
 )
 
 const defaultListenAddr = ":8080"
@@ -184,6 +187,7 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	integer(EnvRateLimitPerMinute, 0, &c.RateLimitPerMinute)
 	integer(EnvRateLimitBurst, 1, &c.RateLimitBurst)
 	integer(EnvMaxImagesPerTenant, 0, &c.MaxImagesPerTenant)
+	integer(EnvMaxProfilesPerTenant, 0, &c.MaxProfilesPerTenant)
 	integer(EnvMaxTenantsPerUser, 0, &c.MaxTenantsPerUser)
 	switch c.TenantCreation = get(EnvTenantCreation); c.TenantCreation {
 	case TenantCreationPlatformAdmins, TenantCreationUsers:
@@ -240,6 +244,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Int("rate_limit_writes_per_minute", c.RateLimitPerMinute),
 		slog.Int("rate_limit_burst", c.RateLimitBurst),
 		slog.Int("max_images_per_tenant", c.MaxImagesPerTenant),
+		slog.Int("max_profiles_per_tenant", c.MaxProfilesPerTenant),
 		slog.Duration("instance_boot_grace", c.InstanceBootGrace),
 		slog.Duration("instance_stuck_after", c.InstanceStuckAfter),
 		slog.Duration("api_key_max_lifetime", c.APIKeyMaxLifetime),

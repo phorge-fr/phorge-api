@@ -28,6 +28,8 @@ const (
 	WriteImages      Action = "write_images"
 	ReadNetworks     Action = "read_networks"
 	WriteNetworks    Action = "write_networks"
+	ReadProfiles     Action = "read_profiles"
+	WriteProfiles    Action = "write_profiles"
 	ReadMemberships  Action = "read_memberships"
 	WriteMemberships Action = "write_memberships"
 	// WriteTenant is changing and deleting the tenant that the caller administers: the admin role of the tenant, which the owner
@@ -48,6 +50,8 @@ var relations = map[Action]string{
 	WriteTenant:      "can_write_tenant",
 	ReadNetworks:     "can_read_networks",
 	WriteNetworks:    "can_write_networks",
+	ReadProfiles:     "can_read_profiles",
+	WriteProfiles:    "can_write_profiles",
 	ReadMemberships:  "can_read_memberships",
 	WriteMemberships: "can_write_memberships",
 }
@@ -64,6 +68,8 @@ var keyScopes = map[string]Action{
 	"images:write":      WriteImages,
 	"networks:read":     ReadNetworks,
 	"networks:write":    WriteNetworks,
+	"profiles:read":     ReadProfiles,
+	"profiles:write":    WriteProfiles,
 	"memberships:read":  ReadMemberships,
 	"memberships:write": WriteMemberships,
 }
@@ -79,6 +85,8 @@ var scopeDescriptions = map[string]string{
 	"images:write":      "Pull and delete images",
 	"networks:read":     "See the networks",
 	"networks:write":    "Deploy and delete networks",
+	"profiles:read":     "See the profiles",
+	"profiles:write":    "Make and delete profiles",
 	"memberships:read":  "See who has a role on the tenant",
 	"memberships:write": "Give and take away roles on the tenant",
 }

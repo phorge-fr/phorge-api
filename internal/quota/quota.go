@@ -34,11 +34,12 @@ func LimitsOf(p tenants.Plan) Limits { return Plans[p] }
 // Used is what a tenant holds. A stopped instance counts: Incus counts it.
 type Used = Limits
 
-// UsedBy adds up the instances and the networks of a tenant. An instance that has a profile counts what the profile comes to.
-func UsedBy(instances []compute.Instance, networks []compute.Network) Used {
+// UsedBy adds up the instances and the networks of a tenant. An instance that has a profile counts what the profile comes to: the
+// three every tenant has, or one of the profiles the user made (user).
+func UsedBy(instances []compute.Instance, networks []compute.Network, user []compute.Profile) Used {
 	u := Used{Instances: len(instances), Networks: len(networks)}
 	for _, in := range instances {
-		cpu, mem, disk := SizeOf(in)
+		cpu, mem, disk := SizeOf(in, user)
 		u.VCPU += cpu
 		u.MemoryMiB += mem
 		u.DiskGiB += disk
@@ -47,16 +48,16 @@ func UsedBy(instances []compute.Instance, networks []compute.Network) Used {
 }
 
 // SizeOf is the CPU, the memory and the disk an instance comes to, its profile's when it has one.
-func SizeOf(in compute.Instance) (cpu, memMiB, diskGiB int) {
-	if p, ok := compute.ProfileNamed(in.Profile); ok && in.Profile != "" {
+func SizeOf(in compute.Instance, user []compute.Profile) (cpu, memMiB, diskGiB int) {
+	if p, ok := compute.Find(user, in.Profile); ok && in.Profile != "" {
 		return p.CPU, p.MemoryMiB, p.DiskGiB
 	}
 	return in.CPU, in.MemoryMiB, in.DiskGiB
 }
 
 // SizeAsked is the size a request for an instance comes to, with the defaults of what it leaves out.
-func SizeAsked(r compute.CreateInstance) (cpu, memMiB, diskGiB int) {
-	if p, ok := compute.ProfileNamed(r.Profile); ok && r.Profile != "" {
+func SizeAsked(r compute.CreateInstance, user []compute.Profile) (cpu, memMiB, diskGiB int) {
+	if p, ok := compute.Find(user, r.Profile); ok && r.Profile != "" {
 		return p.CPU, p.MemoryMiB, p.DiskGiB
 	}
 	r = r.WithDefaultSize()

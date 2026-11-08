@@ -15,6 +15,7 @@ Authentication tells who calls, OpenFGA decides what they may do (`internal/auth
 | write instances | `can_write_instances` | `instances:write` |
 | write images | `can_write_images` | `images:write` |
 | read, write networks | `can_read_networks`, `can_write_networks` | `networks:read`, `networks:write` |
+| read, write profiles | `can_read_profiles`, `can_write_profiles` | `profiles:read`, `profiles:write` |
 | rename and delete the tenant | `can_write_tenant` | `tenants:write` |
 | read, write memberships, and keys | `can_read_memberships`, `can_write_memberships` | `memberships:read`, `memberships:write` |
 
