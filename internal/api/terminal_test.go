@@ -58,6 +58,10 @@ type fakeIncus struct {
 	tokens []string
 	status int
 	forbid string
+	// networks are the gateways Incus reports by network name, netStatus its answer to the list, netTokens the tokens it was shown.
+	networks  map[string]string
+	netStatus int
+	netTokens []string
 }
 
 func newFakeIncus(t *testing.T) *fakeIncus {
@@ -80,6 +84,32 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"type":"async","metadata":{"id":"op","metadata":{"fds":{"0":"s0","control":"sc"}}}}`))
 	})
+	mux.HandleFunc("GET /1.0/networks", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.netTokens = append(f.netTokens, r.Header.Get("Authorization"))
+		status := f.netStatus
+		nets := f.networks
+		f.mu.Unlock()
+		if r.URL.Query().Get("project") != "t-demo" || r.URL.Query().Get("recursion") != "1" {
+			http.Error(w, "wrong query", http.StatusBadRequest)
+			return
+		}
+		if status != 0 && status != http.StatusOK {
+			http.Error(w, `{"error":"private detail"}`, status)
+			return
+		}
+		type net struct {
+			Name    string            `json:"name"`
+			Managed bool              `json:"managed"`
+			Config  map[string]string `json:"config"`
+		}
+		var list []net
+		for name, gw := range nets {
+			list = append(list, net{Name: name, Managed: true, Config: map[string]string{"ipv4.address": gw}})
+		}
+		list = append(list, net{Name: "uplink", Managed: false, Config: map[string]string{"ipv4.address": "10.1.1.1/24"}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": list})
+	})
 	mux.HandleFunc("GET /1.0/operations/{id}/websocket", func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -98,6 +128,12 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+func (f *fakeIncus) set(update func(f *fakeIncus)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	update(f)
 }
 
 func (f *fakeIncus) seen() (execs, tokens []string) {
@@ -454,6 +490,8 @@ func TestTheAuditLogNamesWhoWhereAndHowLongButNeverWhatWasTyped(t *testing.T) {
 		}
 	}
 }
+
+var errTest = errors.New("a failure behind, with a private detail")
 
 type writerFunc func([]byte) (int, error)
 

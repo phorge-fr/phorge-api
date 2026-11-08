@@ -1634,7 +1634,7 @@ components:
                     type: string
                     example: 10.77.1.0/24
                     description: |
-                        The range of the network, when the user chose it. Absent when Incus chose it: that choice is not reported yet.
+                        The range of the network: the one the user chose, or, when Incus chose it, the one it reports to the person who reads the network. Absent when it is not known (a key, a person Incus does not show the network to, an Incus that does not answer, a network just created).
                 phase:
                     $ref: "#/components/schemas/Phase"
                 problems:
