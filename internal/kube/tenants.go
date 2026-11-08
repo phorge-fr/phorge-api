@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/phorge-fr/phorge-api/internal/status"
 	"strings"
 	"time"
 
@@ -218,7 +219,33 @@ func tenantOf(obj *unstructured.Unstructured) tenants.Tenant {
 		Deleting:     obj.GetDeletionTimestamp() != nil,
 	}
 	t.Ready, t.NotReadySince = readyOf(obj)
+	t.SyncFailedSince = syncFailedSince(obj)
 	return t
+}
+
+// statusOf is the status of an object as a client polls it: Ready, the problems the composition wrote, and whether the composition itself
+// can no longer be applied.
+func statusOf(obj *unstructured.Unstructured, problems string) status.Object {
+	ready, since := readyOf(obj)
+	return status.Object{
+		Ready: ready, NotReadySince: since, Problems: problems,
+		SyncFailedSince: syncFailedSince(obj), Deleting: obj.GetDeletionTimestamp() != nil,
+	}
+}
+
+// syncFailedSince is when the Synced condition became false, the zero time when it is not.
+func syncFailedSince(obj *unstructured.Unstructured) time.Time {
+	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, c := range conditions {
+		cond, ok := c.(map[string]any)
+		if !ok || cond["type"] != "Synced" || cond["status"] != "False" {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, fmt.Sprint(cond["lastTransitionTime"])); err == nil {
+			return at
+		}
+	}
+	return time.Time{}
 }
 
 // readyOf reads the Ready condition: whether it is true, and since when it is what it is (the creation time of the object

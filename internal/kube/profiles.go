@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
-	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
 var profilesGVR = schema.GroupVersionResource{Group: "phorge.fr", Version: "v1alpha1", Resource: "profiles"}
@@ -96,7 +95,6 @@ func profileOf(obj *unstructured.Unstructured) compute.Profile {
 	description, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 
-	ready, since := readyOf(obj)
 	return compute.Profile{
 		Name:        obj.GetName(),
 		Description: description,
@@ -105,6 +103,6 @@ func profileOf(obj *unstructured.Unstructured) compute.Profile {
 		DiskGiB:     intOf(obj, "diskGiB"),
 		CreatedAt:   obj.GetCreationTimestamp().Time,
 		CreatedBy:   obj.GetAnnotations()[CreatedByAnnotation],
-		Status:      status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Status:      statusOf(obj, problems),
 	}
 }

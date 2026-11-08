@@ -59,6 +59,8 @@ type Tenant struct {
 	// Ready is the Ready condition. NotReadySince is when it last changed, the creation time if it never did.
 	Ready         bool
 	NotReadySince time.Time
+	// SyncFailedSince is when Crossplane could not apply the composition, the zero time when it can.
+	SyncFailedSince time.Time
 	// Problems is status.problems: the Incus or OpenFGA error of a composed resource, empty when everything is up.
 	Problems string
 	Deleting bool
@@ -66,7 +68,7 @@ type Tenant struct {
 
 // PhaseAt is the phase of the tenant at now.
 func (t Tenant) PhaseAt(now time.Time) Phase {
-	return status.Object{Ready: t.Ready, NotReadySince: t.NotReadySince, Problems: t.Problems, Deleting: t.Deleting}.At(now)
+	return status.Object{Ready: t.Ready, NotReadySince: t.NotReadySince, Problems: t.Problems, SyncFailedSince: t.SyncFailedSince, Deleting: t.Deleting}.At(now)
 }
 
 // MessageAt is what a client reads about what is wrong with the tenant at now, see status.Public.
