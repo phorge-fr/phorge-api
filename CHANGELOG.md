@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.1](https://github.com/phorge-fr/phorge-api/compare/v0.8.0...v0.8.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* **status:** call an object failed when its composition cannot run ([784694a](https://github.com/phorge-fr/phorge-api/commit/784694a20f73757f860dfba924bb07ec5d722004)), closes [#95](https://github.com/phorge-fr/phorge-api/issues/95)
+* **status:** Call an object failed when its composition cannot run ([822e0d5](https://github.com/phorge-fr/phorge-api/commit/822e0d5c62508b31e137d255730a3d6fdf31812d))
+
 ## [0.8.0](https://github.com/phorge-fr/phorge-api/compare/v0.7.0...v0.8.0) (2026-11-08)
 
 
