@@ -150,7 +150,7 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st := &store{tenants: map[string]tenants.Tenant{
 		"demo":  {Name: "demo", Owner: "alice@example.org", Plan: tenants.Small, CreatedAt: now, Ready: true, NotReadySince: now, Namespace: "t-demo", IncusProject: "t-demo"},
-		"other": {Name: "other", Owner: "bob@example.org", Plan: tenants.Large, CreatedAt: now, NotReadySince: now.Add(-time.Hour), Problems: "Reached maximum"},
+		"other": {Name: "other", Owner: "bob@example.org", Plan: tenants.Large, CreatedAt: now, NotReadySince: now.Add(-time.Hour), Problems: "project Synced: Reached maximum"},
 	}}
 	fga := &checker{
 		grants: map[string]bool{
@@ -344,8 +344,30 @@ func TestGetShowsThePhase(t *testing.T) {
 	if ready.Phase != tenants.Ready || ready.Namespace != "t-demo" || ready.Owner != "alice@example.org" || ready.Plan != tenants.Small {
 		t.Errorf("ready: %+v", ready)
 	}
-	if failed.Phase != tenants.Failed || failed.Problems != "Reached maximum" {
-		t.Errorf("failed: %+v, the problem is shown as it is once it has lasted", failed)
+	if failed.Phase != tenants.Failed || failed.Problems != "This tenant has reached a limit of its plan." {
+		t.Errorf("failed: %+v, the problem is told in words once it has lasted", failed)
+	}
+}
+
+// What the console showed for a tenant whose project did not exist: the conditions of Crossplane's objects, with the name of an
+// Incus project. A client is never told that.
+func TestACrossplaneConditionNeverReachesTheClient(t *testing.T) {
+	e := newEnv(t)
+	e.store.tenants["broken"] = tenants.Tenant{Name: "broken", Owner: "alice@example.org", Plan: tenants.Small, CreatedAt: now, NotReadySince: now.Add(-time.Hour),
+		Problems: "network Ready: not ready | network Synced: create failed: apply failed: Failed to create network \"default\": Failed to load project \"t-broken\": Project not found | " +
+			"owner Ready: not ready | profile LastAsyncOperation: apply failed: Failed to create profile \"phorge\": Project not found | project Ready: not ready"}
+	var got tenantBody
+	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/broken", "admin", ""), &got)
+	if got.Phase != tenants.Failed {
+		t.Errorf("phase = %s", got.Phase)
+	}
+	for _, leak := range []string{"Ready", "Synced", "LastAsyncOperation", "apply failed", "Project not found", "t-broken", "network", "profile", "owner"} {
+		if strings.Contains(got.Problems, leak) {
+			t.Errorf("%q reaches the client: %q", leak, got.Problems)
+		}
+	}
+	if got.Problems == "" {
+		t.Error("a failed tenant says nothing")
 	}
 }
 
