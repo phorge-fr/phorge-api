@@ -189,7 +189,10 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 			"user:operator@example.org can_write_instances tenant:demo": true,
 
 			// An admin of the tenant holds everything the model gives.
-			"user:tadmin@example.org can_read_tenant tenant:demo":       true,
+			"user:tadmin@example.org can_read_tenant tenant:demo":  true,
+			"user:tadmin@example.org can_write_tenant tenant:demo": true,
+			// alice owns demo: she is its admin.
+			"user:alice@example.org can_write_tenant tenant:demo":       true,
 			"user:tadmin@example.org can_read_images tenant:demo":       true,
 			"user:tadmin@example.org can_write_images tenant:demo":      true,
 			"user:tadmin@example.org can_read_networks tenant:demo":     true,
@@ -515,11 +518,13 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-func TestDeleteIsForPlatformAdministratorsOnly(t *testing.T) {
+// Deleting a tenant destroys its virtual machines: it is for the admins of the tenant, the owner among them (alice), and the
+// platform administrators. Everyone else, a key included, is refused.
+func TestDeleteIsForTheAdminsOfTheTenantOnly(t *testing.T) {
 	e := newEnv(t)
 	for token, want := range map[string]int{
-		"alice":    http.StatusForbidden, // owner of demo: it destroys the VMs, an administrator of the platform decides
 		"viewer":   http.StatusForbidden,
+		"operator": http.StatusForbidden,
 		"svc":      http.StatusForbidden, // it reads the tenant, it does not delete it
 		"svc_none": http.StatusNotFound,
 		"mallory":  http.StatusNotFound,
@@ -535,6 +540,9 @@ func TestDeleteIsForPlatformAdministratorsOnly(t *testing.T) {
 	}
 	if len(e.store.deleted) != 0 {
 		t.Errorf("deleted by somebody who may not: %v", e.store.deleted)
+	}
+	if rec := e.do(t, http.MethodDelete, "/v1/tenants/demo", "alice", ""); rec.Code != http.StatusAccepted {
+		t.Errorf("the owner: status %d, want 202", rec.Code)
 	}
 }
 
@@ -589,7 +597,7 @@ func TestAServiceKeyDoesWhatOpenFGAHoldsForIt(t *testing.T) {
 	}
 
 	rec := e.do(t, http.MethodGet, "/v1/whoami", "svc", "")
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false,"canCreateTenants":false}`; got != want {
 		t.Errorf("whoami: %s", got)
 	}
 }

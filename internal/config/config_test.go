@@ -23,6 +23,8 @@ func valid() map[string]string {
 		EnvInstanceStuckAfter: "10m",
 		EnvAPIKeyMaxLifetime:  "8784h",
 		EnvAPIKeyCreation:     KeyCreationPlatformAdmins,
+		EnvTenantCreation:     TenantCreationPlatformAdmins,
+		EnvMaxTenantsPerUser:  "3",
 		EnvRateLimitPerMinute: "60",
 		EnvRateLimitBurst:     "10",
 		EnvMaxImagesPerTenant: "20",

@@ -30,8 +30,11 @@ const (
 	WriteNetworks    Action = "write_networks"
 	ReadMemberships  Action = "read_memberships"
 	WriteMemberships Action = "write_memberships"
-	// WriteTenants is creating, resizing and deleting a tenant. The model has no relation for it: it is for the platform
-	// administrators, see Authorizer.PlatformAdmin.
+	// WriteTenant is changing and deleting the tenant that the caller administers: the admin role of the tenant, which the owner
+	// holds. A key has no scope for it yet.
+	WriteTenant Action = "write_tenant"
+	// WriteTenants is creating a tenant for someone else and choosing a plan. The model has no relation for it: it is for the
+	// platform administrators, see Authorizer.PlatformAdmin.
 	WriteTenants Action = "write_tenants"
 )
 
@@ -42,6 +45,7 @@ var relations = map[Action]string{
 	WriteInstances:   "can_write_instances",
 	ReadImages:       "can_read_images",
 	WriteImages:      "can_write_images",
+	WriteTenant:      "can_write_tenant",
 	ReadNetworks:     "can_read_networks",
 	WriteNetworks:    "can_write_networks",
 	ReadMemberships:  "can_read_memberships",
