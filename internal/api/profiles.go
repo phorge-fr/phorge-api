@@ -200,16 +200,32 @@ type limitsBody struct {
 	Profile struct {
 		MaxNameLength        int `json:"maxNameLength"`
 		MaxDescriptionLength int `json:"maxDescriptionLength"`
+		// MaxPerTenant is how many profiles the users of a tenant may make, 0 is no limit.
+		MaxPerTenant int `json:"maxPerTenant"`
 	} `json:"profile"`
+	Image struct {
+		// MaxPerTenant is how many images a tenant may hold, 0 is no limit.
+		MaxPerTenant int `json:"maxPerTenant"`
+	} `json:"image"`
+	Tenant struct {
+		// MaxPerUser is how many tenants a person who is not a platform administrator may own, 0 is no limit.
+		MaxPerUser int `json:"maxPerUser"`
+	} `json:"tenant"`
 }
 
-// limits answers GET /v1/limits. It holds nothing about a tenant: the plan of a tenant is a limit of its own.
-func limits(w http.ResponseWriter, _ *http.Request) {
-	l := compute.CurrentLimits()
-	var b limitsBody
-	b.Instance.CPU, b.Instance.MemoryMiB, b.Instance.DiskGiB = l.CPU, l.MemoryMiB, l.DiskGiB
-	b.Instance.MaxSSHKeys, b.Instance.MaxNameLength = l.MaxSSHKeys, 63
-	b.Network.MaxNameLength, b.Network.MaxDescriptionLength = l.MaxNetworkName, l.MaxNetworkDescription
-	b.Profile.MaxNameLength, b.Profile.MaxDescriptionLength = 32, compute.MaxProfileDescription
-	writeJSON(w, http.StatusOK, b)
+// limits answers GET /v1/limits: what the API enforces on a request, and the ceilings the deployment sets. It holds nothing about a
+// tenant: the plan of a tenant is a limit of its own, see GET /v1/tenants/{t}/quota.
+func limits(s Settings) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		l := compute.CurrentLimits()
+		var b limitsBody
+		b.Instance.CPU, b.Instance.MemoryMiB, b.Instance.DiskGiB = l.CPU, l.MemoryMiB, l.DiskGiB
+		b.Instance.MaxSSHKeys, b.Instance.MaxNameLength = l.MaxSSHKeys, 63
+		b.Network.MaxNameLength, b.Network.MaxDescriptionLength = l.MaxNetworkName, l.MaxNetworkDescription
+		b.Profile.MaxNameLength, b.Profile.MaxDescriptionLength = 32, compute.MaxProfileDescription
+		b.Profile.MaxPerTenant = s.MaxProfilesPerTenant
+		b.Image.MaxPerTenant = s.MaxImagesPerTenant
+		b.Tenant.MaxPerUser = s.MaxTenantsPerUser
+		writeJSON(w, http.StatusOK, b)
+	})
 }

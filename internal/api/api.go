@@ -65,7 +65,7 @@ type Deps struct {
 // internal/openapi/openapi.yaml: the tests check both.
 func Register(s *server.Server, d Deps) {
 	s.Handle("GET /v1/whoami", d.Auth.Middleware(whoami(d.Authz, d.Settings)))
-	s.Handle("GET /v1/limits", d.Auth.Middleware(http.HandlerFunc(limits)))
+	s.Handle("GET /v1/limits", d.Auth.Middleware(limits(d.Settings)))
 
 	now := d.Now
 	if now == nil {

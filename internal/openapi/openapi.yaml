@@ -679,8 +679,10 @@ paths:
                 The image has to be an image of the same tenant, and `Ready`. The answer is `202`: it takes about a minute. Poll the
                 `Location` until `phase` is `Ready`.
 
-                The quota of the tenant's plan is enforced by Incus, not by this request: a refusal such as `Reached maximum number
-                of instances` comes back as `problems` of the instance, in words, and the instance then becomes `Failed`. Stopped VMs count.
+                A request that would pass a limit of the tenant's plan is refused here, before Incus is asked: `409` with the code
+                `quota_exceeded` and a message that says which limit (`GET /v1/tenants/{t}/quota` says what is left). Stopped VMs count.
+                Incus stays the authority: a `PATCH` that grows an instance is only checked by Incus, and its refusal comes back as
+                `problems` of the instance, in words.
 
                 An instance whose first start failed is stuck (the cause is in `problems`): delete it and create it again.
             security:
@@ -1486,6 +1488,8 @@ components:
                 - instance
                 - network
                 - profile
+                - image
+                - tenant
             properties:
                 instance:
                     type: object
@@ -1521,11 +1525,33 @@ components:
                     required:
                         - maxNameLength
                         - maxDescriptionLength
+                        - maxPerTenant
                     properties:
                         maxNameLength:
                             type: integer
                         maxDescriptionLength:
                             type: integer
+                        maxPerTenant:
+                            type: integer
+                            description: How many profiles the users of a tenant may make. `0` is no limit.
+                image:
+                    type: object
+                    required:
+                        - maxPerTenant
+                    properties:
+                        maxPerTenant:
+                            type: integer
+                            description: How many images a tenant may hold. `0` is no limit.
+                tenant:
+                    type: object
+                    required:
+                        - maxPerUser
+                    properties:
+                        maxPerUser:
+                            type: integer
+                            description: |
+                                How many tenants a person who is not a platform administrator may own. `0` is no limit. The platform
+                                administrators are not bound.
         Network:
             type: object
             required:
