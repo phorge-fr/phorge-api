@@ -259,8 +259,6 @@ func TestCreateInstanceNeedsAnUnambiguousReadyNetwork(t *testing.T) {
 // The XRD has no default size: the API completes what the request left out, so a client that sends no size keeps getting the
 // instance it always got.
 func TestCreateInstanceCompletesItsSize(t *testing.T) {
-	e := newEnv(t)
-	e.images.put("demo", readyImage("debian"))
 	for name, tt := range map[string]struct {
 		body          string
 		cpu, mem, dsk int
@@ -270,6 +268,9 @@ func TestCreateInstanceCompletesItsSize(t *testing.T) {
 		"only a disk": {`{"name":"c","image":"debian","diskGiB":50}`, 1, 1024, 50},
 		"all three":   {`{"name":"d","image":"debian","cpu":2,"memoryMiB":2048,"diskGiB":20}`, 2, 2048, 20},
 	} {
+		// a tenant of its own for each case: a plan holds two instances
+		e := newEnv(t)
+		e.images.put("demo", readyImage("debian"))
 		if code := call(t, e, "POST", "/v1/tenants/demo/instances", "user", tt.body); code != http.StatusAccepted {
 			t.Fatalf("%s: status %d", name, code)
 		}

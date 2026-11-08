@@ -11,9 +11,9 @@ import (
 // The plans are written twice, here and in the Tenant composition of Hangar: this is the table the composition says.
 func TestThePlansAreTheOnesOfTheTenantComposition(t *testing.T) {
 	want := map[tenants.Plan]Limits{
-		tenants.Small:  {1, 2, 4096, 20, 1},
-		tenants.Medium: {3, 4, 8192, 100, 2},
-		tenants.Large:  {6, 8, 16384, 250, 3},
+		tenants.Small:  {2, 2, 4096, 128, 1},
+		tenants.Medium: {2, 4, 8192, 256, 2},
+		tenants.Large:  {2, 8, 16384, 512, 3},
 	}
 	for plan, w := range want {
 		if got := LimitsOf(plan); got != w {
@@ -22,6 +22,38 @@ func TestThePlansAreTheOnesOfTheTenantComposition(t *testing.T) {
 	}
 	if (LimitsOf("xl") != Limits{}) {
 		t.Error("an unknown plan holds something")
+	}
+}
+
+// A plan holds two instances of the size of its own profile, and nothing that is bigger: this is what the alignment says.
+func TestEachPlanHoldsTwoOfItsOwnProfile(t *testing.T) {
+	for plan, name := range map[tenants.Plan]string{tenants.Small: "s", tenants.Medium: "m", tenants.Large: "l"} {
+		p, ok := compute.ProfileNamed(name)
+		if !ok {
+			t.Fatalf("no profile %s", name)
+		}
+		l := LimitsOf(plan)
+		if l.Instances != 2 || l.VCPU != 2*p.CPU || l.MemoryMiB < 2*p.MemoryMiB || l.DiskGiB < 2*p.DiskGiB {
+			t.Errorf("plan %s %+v does not hold two %s (%+v)", plan, l, name, p)
+		}
+		var used Used
+		for i := 0; i < 2; i++ {
+			if e := CheckInstance(plan, used, p.CPU, p.MemoryMiB, p.DiskGiB); e != nil {
+				t.Errorf("plan %s refuses instance %d of its own profile %s: %v", plan, i+1, name, e)
+			}
+			used.Instances++
+			used.VCPU += p.CPU
+			used.MemoryMiB += p.MemoryMiB
+			used.DiskGiB += p.DiskGiB
+		}
+		if e := CheckInstance(plan, used, 1, 256, 1); e == nil || e.Limit != "instances" {
+			t.Errorf("plan %s accepts a third instance: %v", plan, e)
+		}
+	}
+	// a profile bigger than the plan is refused
+	l, small := compute.BuiltinProfiles[2], tenants.Small
+	if e := CheckInstance(small, Used{}, l.CPU, l.MemoryMiB, l.DiskGiB); e == nil {
+		t.Error("a l on a small plan is accepted")
 	}
 }
 
@@ -49,13 +81,13 @@ func TestCheckInstanceSaysWhichLimitIsPassed(t *testing.T) {
 		limit, mentioned string
 	}{
 		"nothing is passed":     {tenants.Medium, Used{Instances: 1, VCPU: 1, MemoryMiB: 1024, DiskGiB: 10}, 1, 1024, 10, "", ""},
-		"exactly the plan":      {tenants.Small, Used{}, 2, 4096, 20, "", ""},
-		"the count":             {tenants.Small, Used{Instances: 1}, 1, 1024, 10, "instances", "1 instance out of 1"},
-		"the count, several":    {tenants.Medium, Used{Instances: 3}, 1, 1024, 10, "instances", "3 instances out of 3"},
+		"exactly the plan":      {tenants.Small, Used{}, 2, 4096, 128, "", ""},
+		"the count":             {tenants.Small, Used{Instances: 2}, 1, 1024, 10, "instances", "2 instances out of 2"},
+		"the count, one":        {tenants.Medium, Used{Instances: 2}, 1, 1024, 10, "instances", "2 instances out of 2"},
 		"the CPU":               {tenants.Medium, Used{Instances: 1, VCPU: 3}, 2, 1024, 10, "vcpu", "needs 2 vCPU and the tenant has 3 out of 4"},
 		"the memory":            {tenants.Medium, Used{Instances: 1, MemoryMiB: 7168}, 1, 2048, 10, "memoryMiB", "2 GiB of memory and the tenant has 7 GiB out of 8 GiB"},
-		"the disk":              {tenants.Small, Used{}, 1, 1024, 64, "diskGiB", "64 GiB of disk and the tenant has 0 out of 20 GiB"},
-		"the count comes first": {tenants.Small, Used{Instances: 1, VCPU: 2}, 16, 65536, 500, "instances", ""},
+		"the disk":              {tenants.Small, Used{}, 1, 1024, 200, "diskGiB", "200 GiB of disk and the tenant has 0 out of 128 GiB"},
+		"the count comes first": {tenants.Small, Used{Instances: 2, VCPU: 2}, 16, 65536, 500, "instances", ""},
 	} {
 		e := CheckInstance(tt.plan, tt.used, tt.cpu, tt.mem, tt.disk)
 		switch {

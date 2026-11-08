@@ -393,9 +393,9 @@ func TestAProfileTheUserMadeCountsInTheQuota(t *testing.T) {
 	e := newEnv(t)
 	withTiny(e)
 	e.networks.put("tiny", readyNetwork("net"))
-	e.profiles.put("tiny", madeProfile("big", 1, 1024, 30)) // the small plan holds 20 GiB of disk
+	e.profiles.put("tiny", madeProfile("big", 1, 1024, 200)) // the small plan holds 128 GiB of disk
 	rec := e.do(t, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"a","image":"debian","profile":"big"}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "30 GiB of disk") {
+	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "200 GiB of disk") {
 		t.Errorf("status %d: %s", rec.Code, rec.Body)
 	}
 	e.profiles.put("tiny", madeProfile("fits", 1, 1024, 10))

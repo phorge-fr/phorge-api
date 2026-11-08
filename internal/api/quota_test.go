@@ -26,7 +26,7 @@ func TestQuotaSaysWhatThePlanAllowsAndWhatTheTenantHolds(t *testing.T) {
 	e.instances.put("demo", compute.Instance{Name: "b", Image: "debian", Profile: "m", Running: false}) // stopped: it counts
 	var got quotaBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &got)
-	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 6, VCPU: 8, MemoryMiB: 16384, DiskGiB: 250, Networks: 3}) {
+	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 2, VCPU: 8, MemoryMiB: 16384, DiskGiB: 512, Networks: 3}) {
 		t.Errorf("plan and limits: %+v", got)
 	}
 	if want := (quota.Used{Instances: 2, VCPU: 4, MemoryMiB: 2048 + 4096, DiskGiB: 148, Networks: 1}); got.Used != want {
@@ -57,25 +57,27 @@ func TestAnInstanceThatWouldPassThePlanIsRefusedWithTheLimit(t *testing.T) {
 	e := newEnv(t)
 	withTiny(e)
 	e.networks.put("tiny", readyNetwork("net"))
-	// 1 instance allowed on the small plan
-	if code := call(t, e, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"a","image":"debian"}`); code != http.StatusAccepted {
-		t.Fatalf("the first instance: status %d", code)
+	// 2 instances allowed on the small plan
+	for _, n := range []string{"a", "b"} {
+		if code := call(t, e, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"`+n+`","image":"debian"}`); code != http.StatusAccepted {
+			t.Fatalf("instance %s: status %d", n, code)
+		}
 	}
-	rec := e.do(t, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"b","image":"debian"}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "1 instance out of 1") {
-		t.Errorf("the second: status %d: %s", rec.Code, rec.Body)
+	rec := e.do(t, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"c","image":"debian"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "2 instances out of 2") {
+		t.Errorf("the third: status %d: %s", rec.Code, rec.Body)
 	}
-	if len(e.instances.created) != 1 {
+	if len(e.instances.created) != 2 {
 		t.Errorf("the refused instance reached the store: %d created", len(e.instances.created))
 	}
 }
 
 func TestAnInstanceBiggerThanThePlanIsRefusedBeforeIncusSeesIt(t *testing.T) {
 	for name, tt := range map[string]struct{ body, want string }{
-		"a disk":                          {`{"name":"a","image":"debian","diskGiB":64}`, "64 GiB of disk and the tenant has 0 out of 20 GiB"},
-		"a profile whose disk is too big": {`{"name":"a","image":"debian","profile":"s"}`, "64 GiB of disk"},
-		"a cpu":                           {`{"name":"a","image":"debian","cpu":4}`, "4 vCPU and the tenant has 0 out of 2"},
-		"a memory":                        {`{"name":"a","image":"debian","memoryMiB":8192}`, "8 GiB of memory and the tenant has 0 B out of 4 GiB"},
+		"a disk":                    {`{"name":"a","image":"debian","diskGiB":200}`, "200 GiB of disk and the tenant has 0 out of 128 GiB"},
+		"a profile that is too big": {`{"name":"a","image":"debian","profile":"l"}`, "4 vCPU"},
+		"a cpu":                     {`{"name":"a","image":"debian","cpu":4}`, "4 vCPU and the tenant has 0 out of 2"},
+		"a memory":                  {`{"name":"a","image":"debian","memoryMiB":8192}`, "8 GiB of memory and the tenant has 0 B out of 4 GiB"},
 	} {
 		e := newEnv(t)
 		withTiny(e)
