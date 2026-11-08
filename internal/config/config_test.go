@@ -18,6 +18,7 @@ func valid() map[string]string {
 		EnvOpenFGAURL:     "https://openfga.core.phorge",
 		EnvOpenFGAAPIKey:  "s3cr3t-key",
 		EnvOpenFGAStoreID: "01M50R0P12MY8JHNKP3ATYSJC2",
+		EnvOpenFGAModelID: "01M6XYT8C5Q4R8GB5QY5DYH87B",
 		// What decides how the API behaves has no default: a deployment writes it.
 		EnvInstanceBootGrace:    "5m",
 		EnvInstanceStuckAfter:   "10m",
@@ -228,5 +229,24 @@ func TestTheTerminalSettingsAreRequiredAndChecked(t *testing.T) {
 		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), tt.key) {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
+func TestTheModelOfOpenFGAIsRequiredAndMustBeAnId(t *testing.T) {
+	m := valid()
+	delete(m, EnvOpenFGAModelID)
+	if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), EnvOpenFGAModelID+" is required") {
+		t.Errorf("without it: %v, want it named as required: the model is pinned, not guessed", err)
+	}
+	for name, v := range map[string]string{"too short": "01M6XYT8", "lowercase": "01m6xyt8c5q4r8gb5qy5dyh87b", "a forbidden letter": "01M6XYT8C5Q4R8GB5QY5DYH87U", "a name": "phorge-api-4"} {
+		m := valid()
+		m[EnvOpenFGAModelID] = v
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), EnvOpenFGAModelID) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	c, err := Load(env(valid()))
+	if err != nil || c.OpenFGAModelID != "01M6XYT8C5Q4R8GB5QY5DYH87B" {
+		t.Errorf("%+v, %v", c, err)
 	}
 }

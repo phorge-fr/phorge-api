@@ -51,6 +51,7 @@ jobs:
                     -e OPENFGA_URL=https://openfga.example.org \
                     -e OPENFGA_API_KEY=ci-key \
                     -e OPENFGA_STORE_ID=ci-store \
+                    -e OPENFGA_MODEL_ID=01ARZ3NDEKTSV4RRFFQ69G5FAV \
                     -e INSTANCE_BOOT_GRACE=60s \
                     -e INSTANCE_STUCK_AFTER=10m \
                     -e API_KEY_MAX_LIFETIME=8784h \
