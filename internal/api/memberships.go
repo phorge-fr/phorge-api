@@ -45,7 +45,7 @@ type membershipBody struct {
 
 func (m *membershipRoutes) body(ms access.Membership) membershipBody {
 	return membershipBody{
-		Name: ms.Name, Subject: ms.Subject, Role: ms.Role, Phase: ms.Status.At(m.now()), Problems: ms.Status.Problems,
+		Name: ms.Name, Subject: ms.Subject, Role: ms.Role, Phase: ms.Status.At(m.now()), Problems: ms.Status.Message(ms.Status.At(m.now())),
 		CreatedAt: ms.CreatedAt, CreatedBy: ms.CreatedBy,
 	}
 }

@@ -56,7 +56,7 @@ func (i *imageRoutes) body(im compute.Image) imageBody {
 	}
 	return imageBody{
 		Name: im.Name, Source: sourceBody{Name: im.SourceName, Remote: im.Remote}, Aliases: aliases, Fingerprint: im.Fingerprint,
-		Phase: im.Status.At(i.now()), Problems: im.Status.Problems, CreatedAt: im.CreatedAt, CreatedBy: im.CreatedBy,
+		Phase: im.Status.At(i.now()), Problems: im.Status.Message(im.Status.At(i.now())), CreatedAt: im.CreatedAt, CreatedBy: im.CreatedBy,
 	}
 }
 

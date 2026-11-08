@@ -467,8 +467,8 @@ func TestAnInstanceThatIsStuckShowsItsProblems(t *testing.T) {
 	var stuck, booting instanceBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/instances/stuck", "viewer", ""), &stuck)
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/instances/booting", "viewer", ""), &booting)
-	if stuck.Phase != status.Failed || !strings.Contains(stuck.Problems, "Reached maximum number of instances") {
-		t.Errorf("stuck: %+v: the quota refusal is shown as it is", stuck)
+	if stuck.Phase != status.Failed || !strings.Contains(stuck.Problems, "maximum number of instances") || strings.Contains(stuck.Problems, "t-demo") {
+		t.Errorf("stuck: %+v: the quota refusal is told in words, without the project", stuck)
 	}
 	if booting.Phase != status.Provisioning {
 		t.Errorf("booting: %+v: a problem at the first reconciles is not a failure", booting)
@@ -597,9 +597,9 @@ func TestAnInstanceShowsWhatItIsDoing(t *testing.T) {
 	if got.Transition != "stopping" || !strings.Contains(got.Problems, "stopping for 12m0s") {
 		t.Errorf("a stop stuck for 12 minutes: %+v", got)
 	}
-	// What Incus or Crossplane reports is never replaced.
-	got = get(compute.Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: now.Add(-12 * time.Minute), Status: status.Object{Problems: "Instance is busy"}})
-	if got.Problems != "Instance is busy" {
-		t.Errorf("a reported problem was replaced: %q", got.Problems)
+	// What Incus or Crossplane reports is never replaced by the sentence about the transition, and never shown as it is.
+	got = get(compute.Instance{Running: false, State: "Running", CreatedAt: now.Add(-24 * time.Hour), RunningChangedAt: now.Add(-12 * time.Minute), Status: status.Object{Problems: "instance Synced: Instance is busy"}})
+	if got.Problems != "The instance could not be created or changed." {
+		t.Errorf("a reported problem was replaced or shown as it is: %q", got.Problems)
 	}
 }

@@ -98,7 +98,7 @@ func (k *keyRoutes) body(key access.ApiKey) keyBody {
 	expired := key.Expired || (key.ExpiresAt != nil && !key.ExpiresAt.After(k.now()))
 	return keyBody{
 		ID: key.ID, Owner: key.Owner, DisplayName: key.DisplayName, Grants: grants, ExpiresAt: key.ExpiresAt, Expired: expired,
-		Identity: identity, Phase: key.Status.At(k.now()), Problems: key.Status.Problems, CreatedAt: key.CreatedAt,
+		Identity: identity, Phase: key.Status.At(k.now()), Problems: key.Status.Message(key.Status.At(k.now())), CreatedAt: key.CreatedAt,
 	}
 }
 

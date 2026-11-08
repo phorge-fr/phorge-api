@@ -69,6 +69,11 @@ func (t Tenant) PhaseAt(now time.Time) Phase {
 	return status.Object{Ready: t.Ready, NotReadySince: t.NotReadySince, Problems: t.Problems, Deleting: t.Deleting}.At(now)
 }
 
+// MessageAt is what a client reads about what is wrong with the tenant at now, see status.Public.
+func (t Tenant) MessageAt(now time.Time) string {
+	return status.Object{Problems: t.Problems}.Message(t.PhaseAt(now))
+}
+
 // CreateRequest is what creating a tenant asks for.
 type CreateRequest struct {
 	Name        string `json:"name"`
