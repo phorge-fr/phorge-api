@@ -49,7 +49,6 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	conn := kube.NewConnection(kubeContext)
 	store := kube.NewTenants(conn)
 	users := tokens{
-		"admin":    {Kind: auth.KindUser, Subject: "user:admin-" + name + "@example.org", Email: "admin-" + name + "@example.org", Groups: []string{adminGroup}},
 		"owner":    {Kind: auth.KindUser, Subject: "user:" + ownerEmail, Email: ownerEmail},
 		"stranger": {Kind: auth.KindUser, Subject: "user:stranger-" + name + "@example.org", Email: "stranger-" + name + "@example.org"},
 	}
@@ -58,7 +57,7 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	Register(s, Deps{
 		Settings: testSettings,
 		Auth:     &auth.Authenticator{Users: users, Log: log},
-		Authz:    authz.New(fgaClient, adminGroup),
+		Authz:    authz.New(fgaClient),
 		Tenants:  store,
 		Log:      log,
 	})
@@ -75,7 +74,7 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	})
 
 	t.Log("create", name)
-	rec := e.do(t, http.MethodPost, "/v1/tenants", "admin", `{"name":"`+name+`","owner":"`+ownerEmail+`","displayName":"created by the API tests"}`)
+	rec := e.do(t, http.MethodPost, "/v1/tenants", "owner", `{"name":"`+name+`","displayName":"created by the API tests"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create: status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -83,7 +82,7 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	started := time.Now()
 	var got tenantBody
 	waitFor(t, 5*time.Minute, "the tenant to become Ready", func() bool {
-		rec := e.do(t, http.MethodGet, "/v1/tenants/"+name, "admin", "")
+		rec := e.do(t, http.MethodGet, "/v1/tenants/"+name, "owner", "")
 		mustDecode(t, rec, &got)
 		if got.Phase == tenants.Failed {
 			t.Fatalf("the tenant failed: %s", got.Problems)
@@ -103,34 +102,31 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 		t.Errorf("a stranger gets %d, want 404", code)
 	}
 	if code := e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"plan":"large"}`).Code; code != http.StatusForbidden {
-		t.Errorf("the owner resizing the tenant gets %d, want 403", code)
-	}
-	if code := e.do(t, http.MethodDelete, "/v1/tenants/"+name, "owner", "").Code; code != http.StatusForbidden {
-		t.Errorf("the owner deleting the tenant gets %d, want 403", code)
+		t.Errorf("the owner changing the plan gets %d, want 403: it is changed where the platform is run", code)
 	}
 	if listed := names(t, e.do(t, http.MethodGet, "/v1/tenants", "owner", "")); !slices.Equal(listed, []string{name}) {
 		t.Errorf("the owner sees %v, want only %s", listed, name)
 	}
 
-	// Resize.
-	rec = e.do(t, http.MethodPatch, "/v1/tenants/"+name, "admin", `{"plan":"medium","displayName":"resized"}`)
+	// Rename.
+	rec = e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"displayName":"resized"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: status %d: %s", rec.Code, rec.Body.String())
 	}
-	waitFor(t, 3*time.Minute, "the resized tenant to be Ready again", func() bool {
-		mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/"+name, "admin", ""), &got)
-		return got.Plan == tenants.Medium && got.DisplayName == "resized" && got.Phase == tenants.Ready
+	waitFor(t, 3*time.Minute, "the renamed tenant to be Ready again", func() bool {
+		mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/"+name, "owner", ""), &got)
+		return got.Plan == tenants.Small && got.DisplayName == "resized" && got.Phase == tenants.Ready
 	})
 
 	// Delete, in the foreground: it is Deleting until everything is gone, and then it is not found.
-	rec = e.do(t, http.MethodDelete, "/v1/tenants/"+name, "admin", "")
+	rec = e.do(t, http.MethodDelete, "/v1/tenants/"+name, "owner", "")
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("delete: status %d: %s", rec.Code, rec.Body.String())
 	}
 	deleting := time.Now()
 	sawDeleting := false
 	waitFor(t, 6*time.Minute, "the tenant to be gone", func() bool {
-		rec := e.do(t, http.MethodGet, "/v1/tenants/"+name, "admin", "")
+		rec := e.do(t, http.MethodGet, "/v1/tenants/"+name, "owner", "")
 		if rec.Code == http.StatusOK {
 			mustDecode(t, rec, &got)
 			sawDeleting = sawDeleting || got.Phase == tenants.Deleting

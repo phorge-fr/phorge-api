@@ -82,21 +82,15 @@ func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 	if a, ok := ScopeAction("instances:write"); !ok || a != WriteInstances {
 		t.Errorf("ScopeAction(instances:write) = %v, %v", a, ok)
 	}
-	// tenants:write renames and deletes the tenant it is given on. Creating a tenant for someone else and choosing a plan is what
-	// WriteTenants is, and no scope gives it: a key is never a platform administrator.
+	// tenants:write renames and deletes the tenant it is given on.
 	if a, ok := ScopeAction("tenants:write"); !ok || a != WriteTenant {
 		t.Errorf("ScopeAction(tenants:write) = %v, %v", a, ok)
-	}
-	for scope, action := range keyScopes {
-		if action == WriteTenants {
-			t.Errorf("scope %s gives the platform administrators' action", scope)
-		}
 	}
 }
 
 func TestAllowedAsksTheRightQuestion(t *testing.T) {
 	f := &fake{grants: grants("user:alice@example.org can_write_instances tenant:demo")}
-	a := New(f, "")
+	a := New(f)
 
 	ok, err := a.Allowed(t.Context(), alice, WriteInstances, "demo")
 	if err != nil || !ok {
@@ -120,7 +114,7 @@ func TestAllowedAsksTheRightQuestion(t *testing.T) {
 
 func TestNothingThatIsNotATenantReachesOpenFGA(t *testing.T) {
 	f := &fake{}
-	a := New(f, "")
+	a := New(f)
 	for _, tenant := range []string{"", "x", "Demo", "demo#admin", "demo:x", "../demo", "*", "demo ", strings.Repeat("a", 40)} {
 		if ok, err := a.Allowed(t.Context(), alice, ReadTenant, tenant); err != nil || ok {
 			t.Errorf("%q: ok=%v err=%v", tenant, ok, err)
@@ -133,10 +127,10 @@ func TestNothingThatIsNotATenantReachesOpenFGA(t *testing.T) {
 
 func TestNoIdentityNoAnswer(t *testing.T) {
 	f := &fake{grants: grants(" can_read_tenant tenant:demo")}
-	if ok, _ := New(f, "").Allowed(t.Context(), auth.Identity{}, ReadTenant, "demo"); ok {
+	if ok, _ := New(f).Allowed(t.Context(), auth.Identity{}, ReadTenant, "demo"); ok {
 		t.Error("an empty identity was allowed")
 	}
-	if ok, err := New(f, "").Allowed(t.Context(), alice, Action("fly"), "demo"); ok || err == nil {
+	if ok, err := New(f).Allowed(t.Context(), alice, Action("fly"), "demo"); ok || err == nil {
 		t.Errorf("an unknown action: ok=%v err=%v", ok, err)
 	}
 }
@@ -144,7 +138,7 @@ func TestNoIdentityNoAnswer(t *testing.T) {
 func TestADecisionThatCannotBeTakenIsAnErrorAndARefusal(t *testing.T) {
 	boom := errors.New("openfga is down")
 	f := &fake{grants: grants("user:alice@example.org can_read_tenant tenant:demo"), err: boom}
-	ok, err := New(f, "").Allowed(t.Context(), alice, ReadTenant, "demo")
+	ok, err := New(f).Allowed(t.Context(), alice, ReadTenant, "demo")
 	if ok || !errors.Is(err, boom) {
 		t.Errorf("ok=%v err=%v", ok, err)
 	}
@@ -152,7 +146,7 @@ func TestADecisionThatCannotBeTakenIsAnErrorAndARefusal(t *testing.T) {
 
 func TestTenants(t *testing.T) {
 	f := &fake{objects: []string{"tenant:zeta", "tenant:demo", "tenant:Bad", "group:x", "tenant:a#b", "tenant:"}}
-	got, err := New(f, "").Tenants(t.Context(), alice)
+	got, err := New(f).Tenants(t.Context(), alice)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,34 +157,12 @@ func TestTenants(t *testing.T) {
 		t.Errorf("asked %q, want %q", f.asked[0], want)
 	}
 
-	if got, _ := New(f, "").Tenants(t.Context(), auth.Identity{}); got != nil {
+	if got, _ := New(f).Tenants(t.Context(), auth.Identity{}); got != nil {
 		t.Errorf("an empty identity sees %v", got)
 	}
 	boom := errors.New("down")
-	if _, err := New(&fake{err: boom}, "").Tenants(t.Context(), alice); !errors.Is(err, boom) {
+	if _, err := New(&fake{err: boom}).Tenants(t.Context(), alice); !errors.Is(err, boom) {
 		t.Errorf("err = %v", err)
-	}
-}
-
-func TestPlatformAdminForAUser(t *testing.T) {
-	a := New(&fake{}, "phorge-platform-admins")
-	member := auth.Identity{Kind: auth.KindUser, Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}
-	if !a.PlatformAdmin(t.Context(), member) {
-		t.Error("a member of the group was not recognised")
-	}
-	for name, id := range map[string]auth.Identity{
-		"no group":      {Kind: auth.KindUser, Email: "alice@example.org"},
-		"another group": {Kind: auth.KindUser, Groups: []string{"authentik Admins"}},
-		"another case":  {Kind: auth.KindUser, Groups: []string{"Phorge-Platform-Admins"}},
-		"a longer name": {Kind: auth.KindUser, Groups: []string{"phorge-platform-admins-ro"}},
-		"nobody":        {},
-	} {
-		if a.PlatformAdmin(t.Context(), id) {
-			t.Errorf("%s was taken for an administrator", name)
-		}
-	}
-	if New(&fake{}, "").PlatformAdmin(t.Context(), auth.Identity{Kind: auth.KindUser, Groups: []string{""}}) {
-		t.Error("with no group configured, nobody is an administrator, not even a user whose group has an empty name")
 	}
 }
 
@@ -200,7 +172,7 @@ func TestAKeyHasOnlyWhatOpenFGAHoldsForIt(t *testing.T) {
 		"apikey:apikey-0123456789abcdef can_read_tenant tenant:demo",
 		"apikey:apikey-0123456789abcdef can_write_instances tenant:demo",
 	)}
-	a := New(f, "phorge-platform-admins")
+	a := New(f)
 	for _, tt := range []struct {
 		action Action
 		tenant string
@@ -218,11 +190,5 @@ func TestAKeyHasOnlyWhatOpenFGAHoldsForIt(t *testing.T) {
 		if err != nil || got != tt.want {
 			t.Errorf("%s on %s: %v, %v, want %v", tt.action, tt.tenant, got, err, tt.want)
 		}
-	}
-	// It is never a platform administrator, even with the group in its claims: it has no groups to believe.
-	withGroup := svc
-	withGroup.Groups = []string{"phorge-platform-admins"}
-	if a.PlatformAdmin(t.Context(), svc) || a.PlatformAdmin(t.Context(), withGroup) {
-		t.Error("a key is not an administrator")
 	}
 }

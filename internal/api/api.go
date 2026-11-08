@@ -29,9 +29,7 @@ type Settings struct {
 	// KeyIssueTimeout is how long creating a key waits for Crossplane to make its service account, and KeyPollInterval how often
 	// it looks. Zero takes the defaults (a minute, a second): the values are for the tests.
 	KeyIssueTimeout, KeyPollInterval time.Duration
-	// TenantCreation is who creates a tenant: config.TenantCreationPlatformAdmins or config.TenantCreationUsers. MaxTenantsPerUser is
-	// how many tenants a person who is not a platform administrator may own, 0 is no limit.
-	TenantCreation    string
+	// MaxTenantsPerUser is how many tenants a person may own, 0 is no limit.
 	MaxTenantsPerUser int
 	// RateLimitPerMinute is how many requests that create, change or delete a caller may send a minute, in bursts of RateLimitBurst;
 	// 0 limits nothing.
@@ -39,8 +37,6 @@ type Settings struct {
 	// MaxImagesPerTenant is how many images a tenant may hold, and MaxProfilesPerTenant how many profiles its users may make; 0 is
 	// no limit.
 	MaxImagesPerTenant, MaxProfilesPerTenant int
-	// KeyCreation is who creates and changes API keys: config.KeyCreationPlatformAdmins or config.KeyCreationUsers.
-	KeyCreation string
 }
 
 // Deps is what the routes need.
@@ -95,9 +91,7 @@ type identityBody struct {
 	Email   string    `json:"email,omitempty"`
 	// Name is the id of the key.
 	Name string `json:"name,omitempty"`
-	// PlatformAdmin: the caller may create a tenant for anyone, choose its plan and act on every tenant.
-	PlatformAdmin bool `json:"platformAdmin"`
-	// CanCreateTenants: the caller may create a tenant, for themselves when they are not a platform administrator.
+	// CanCreateTenants: the caller may create a tenant for themselves: a person with an email, never a key.
 	CanCreateTenants bool `json:"canCreateTenants"`
 }
 
@@ -106,8 +100,8 @@ func whoami(a *authz.Authorizer, settings Settings) http.HandlerFunc {
 		id, _ := auth.FromContext(r.Context())
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(identityBody{
-			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Name: id.Name, PlatformAdmin: a.PlatformAdmin(r.Context(), id),
-			CanCreateTenants: a.PlatformAdmin(r.Context(), id) || canCreateOwnTenant(settings, id),
+			Kind: id.Kind, Subject: id.Subject, Email: id.Email, Name: id.Name,
+			CanCreateTenants: canCreateOwnTenant(id),
 		})
 	}
 }

@@ -22,8 +22,6 @@ func valid() map[string]string {
 		EnvInstanceBootGrace:    "5m",
 		EnvInstanceStuckAfter:   "10m",
 		EnvAPIKeyMaxLifetime:    "8784h",
-		EnvAPIKeyCreation:       KeyCreationPlatformAdmins,
-		EnvTenantCreation:       TenantCreationPlatformAdmins,
 		EnvMaxTenantsPerUser:    "3",
 		EnvRateLimitPerMinute:   "60",
 		EnvRateLimitBurst:       "10",
@@ -40,7 +38,7 @@ func TestLoadDefaults(t *testing.T) {
 	if c.ListenAddr != ":8080" {
 		t.Errorf("ListenAddr = %q, want :8080", c.ListenAddr)
 	}
-	if c.PlatformAdminGroup != "" || c.CAFile != "" {
+	if c.CAFile != "" {
 		t.Errorf("optional values should be empty: %+v", c)
 	}
 	if len(c.Audiences) != 1 || c.Audiences[0] != "client-id" {
@@ -93,16 +91,12 @@ func TestLoadAll(t *testing.T) {
 	m := valid()
 	m[EnvListenAddr] = ":9090"
 	m[EnvCAFile] = "/ca/ca.crt"
-	m[EnvPlatformAdminGroup] = " phorge-platform-admins "
 	c, err := Load(env(m))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.ListenAddr != ":9090" || c.CAFile != "/ca/ca.crt" {
 		t.Errorf("unexpected config: %+v", c)
-	}
-	if c.PlatformAdminGroup != "phorge-platform-admins" {
-		t.Errorf("PlatformAdminGroup = %q", c.PlatformAdminGroup)
 	}
 }
 
@@ -131,7 +125,7 @@ func TestKeyIsNeverPrinted(t *testing.T) {
 }
 
 func TestTheBehaviourSettingsHaveNoDefault(t *testing.T) {
-	for _, key := range []string{EnvInstanceBootGrace, EnvInstanceStuckAfter, EnvAPIKeyMaxLifetime, EnvAPIKeyCreation} {
+	for _, key := range []string{EnvInstanceBootGrace, EnvInstanceStuckAfter, EnvAPIKeyMaxLifetime} {
 		m := valid()
 		delete(m, key)
 		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key+" is required") {
@@ -142,17 +136,16 @@ func TestTheBehaviourSettingsHaveNoDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.InstanceBootGrace.String() != "5m0s" || c.InstanceStuckAfter.String() != "10m0s" || c.APIKeyMaxLifetime.Hours() != 8784 || c.APIKeyCreation != KeyCreationPlatformAdmins {
+	if c.InstanceBootGrace.String() != "5m0s" || c.InstanceStuckAfter.String() != "10m0s" || c.APIKeyMaxLifetime.Hours() != 8784 {
 		t.Errorf("%+v", c)
 	}
 }
 
 func TestTheDurationsAreChecked(t *testing.T) {
 	for name, tt := range map[string]struct{ key, value string }{
-		"not a duration":             {EnvInstanceStuckAfter, "soon"},
-		"a number with no unit":      {EnvInstanceBootGrace, "300"},
-		"a negative lifetime":        {EnvAPIKeyMaxLifetime, "-1h"},
-		"a creation that is not one": {EnvAPIKeyCreation, "everybody"},
+		"not a duration":        {EnvInstanceStuckAfter, "soon"},
+		"a number with no unit": {EnvInstanceBootGrace, "300"},
+		"a negative lifetime":   {EnvAPIKeyMaxLifetime, "-1h"},
 	} {
 		m := valid()
 		m[tt.key] = tt.value
@@ -165,10 +158,6 @@ func TestTheDurationsAreChecked(t *testing.T) {
 	m[EnvAPIKeyMaxLifetime] = "0"
 	if c, err := Load(env(m)); err != nil || c.APIKeyMaxLifetime != 0 {
 		t.Errorf("a lifetime of 0: %+v, %v", c, err)
-	}
-	m[EnvAPIKeyCreation] = KeyCreationUsers
-	if c, err := Load(env(m)); err != nil || c.APIKeyCreation != KeyCreationUsers {
-		t.Errorf("creation by users: %+v, %v", c, err)
 	}
 }
 

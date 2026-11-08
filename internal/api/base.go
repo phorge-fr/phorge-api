@@ -39,17 +39,7 @@ func (b *base) guard(action authz.Action, next http.Handler) http.Handler {
 			httperr.Write(w, http.StatusNotFound, "not_found", "no such tenant")
 			return
 		}
-		id, _ := auth.FromContext(r.Context())
-		// A platform administrator acts on every tenant.
-		if !b.authz.PlatformAdmin(r.Context(), id) {
-			require.ServeHTTP(w, r)
-			return
-		}
-		if _, err := b.tenants.Get(r.Context(), tenant); err != nil {
-			b.storeError(w, err, "tenant")
-			return
-		}
-		next.ServeHTTP(w, r)
+		require.ServeHTTP(w, r)
 	})
 }
 

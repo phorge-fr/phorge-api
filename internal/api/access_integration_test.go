@@ -45,14 +45,12 @@ func TestMembershipsOnTheRealCluster(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	conn := kube.NewConnection(kubeContext)
 	tenantStore := kube.NewTenants(conn)
-	admin := user("admin")
-	admin.Groups = []string{adminGroup}
-	users := tokens{"admin": admin, "owner": user("owner"), "bob": user("bob")}
+	users := tokens{"owner": user("owner"), "bob": user("bob")}
 	s := server.New(log)
 	Register(s, Deps{
 		Settings:    testSettings,
 		Auth:        &auth.Authenticator{Users: users, Log: log},
-		Authz:       authz.New(fga.New(url, storeID, key, nil), adminGroup),
+		Authz:       authz.New(fga.New(url, storeID, key, nil)),
 		Tenants:     tenantStore,
 		Images:      kube.NewImages(conn),
 		Instances:   kube.NewInstances(conn),
@@ -72,12 +70,12 @@ func TestMembershipsOnTheRealCluster(t *testing.T) {
 
 	base := "/v1/tenants/" + tenant
 	t.Log("tenant", tenant)
-	if code := call(t, e, "POST", "/v1/tenants", "admin", `{"name":"`+tenant+`","owner":"`+email("owner")+`"}`); code != http.StatusAccepted {
+	if code := call(t, e, "POST", "/v1/tenants", "owner", `{"name":"`+tenant+`"}`); code != http.StatusAccepted {
 		t.Fatalf("create tenant: %d", code)
 	}
 	var tn tenantBody
 	waitFor(t, 5*time.Minute, "the tenant to be Ready", func() bool {
-		mustDecode(t, e.do(t, "GET", base, "admin", ""), &tn)
+		mustDecode(t, e.do(t, "GET", base, "owner", ""), &tn)
 		return tn.Phase == status.Ready
 	})
 	waitFor(t, 2*time.Minute, "the owner to be admin", func() bool {
@@ -153,10 +151,10 @@ func TestMembershipsOnTheRealCluster(t *testing.T) {
 	t.Logf("bob revoked after %s", time.Since(revoked).Round(time.Second))
 
 	// And the tenant, with the memberships in it.
-	if code := call(t, e, "DELETE", base, "admin", ""); code != http.StatusAccepted {
+	if code := call(t, e, "DELETE", base, "owner", ""); code != http.StatusAccepted {
 		t.Fatalf("delete the tenant: %d", code)
 	}
 	waitFor(t, 8*time.Minute, "the tenant to be gone", func() bool {
-		return call(t, e, "GET", base, "admin", "") == http.StatusNotFound
+		return call(t, e, "GET", base, "owner", "") == http.StatusNotFound
 	})
 }

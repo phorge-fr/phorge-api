@@ -46,7 +46,7 @@ func main() {
 	srvAPI := server.New(log)
 	api.Register(srvAPI, api.Deps{
 		Auth:        &auth.Authenticator{Users: users, Log: log},
-		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdminGroup),
+		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP)),
 		Tenants:     kube.NewTenants(kubeConn),
 		Images:      kube.NewImages(kubeConn),
 		Networks:    kube.NewNetworks(kubeConn),
@@ -57,8 +57,8 @@ func main() {
 		Log:         log,
 		Settings: api.Settings{
 			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
-			KeyMaxLifetime: cfg.APIKeyMaxLifetime, KeyCreation: cfg.APIKeyCreation,
-			TenantCreation: cfg.TenantCreation, MaxTenantsPerUser: cfg.MaxTenantsPerUser,
+			KeyMaxLifetime:     cfg.APIKeyMaxLifetime,
+			MaxTenantsPerUser:  cfg.MaxTenantsPerUser,
 			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant, MaxProfilesPerTenant: cfg.MaxProfilesPerTenant,
 		},
 	})

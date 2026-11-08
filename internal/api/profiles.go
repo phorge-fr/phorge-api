@@ -208,7 +208,7 @@ type limitsBody struct {
 		MaxPerTenant int `json:"maxPerTenant"`
 	} `json:"image"`
 	Tenant struct {
-		// MaxPerUser is how many tenants a person who is not a platform administrator may own, 0 is no limit.
+		// MaxPerUser is how many tenants a person may own, 0 is no limit.
 		MaxPerUser int `json:"maxPerUser"`
 	} `json:"tenant"`
 }

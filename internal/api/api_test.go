@@ -32,7 +32,7 @@ func newServer(users auth.Verifier) *server.Server {
 	Register(s, Deps{
 		Settings: testSettings,
 		Auth:     &auth.Authenticator{Users: users, Log: log},
-		Authz:    authz.New(nil, "phorge-platform-admins"), // nothing here asks OpenFGA
+		Authz:    authz.New(nil), // nothing here asks OpenFGA
 		Log:      log,
 	})
 	return s
@@ -125,26 +125,19 @@ func TestEveryV1RouteRefusesAnonymousCallers(t *testing.T) {
 }
 
 func TestWhoami(t *testing.T) {
-	rec := get(newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"staff", "phorge-platform-admins"}}}).Handler(), "/v1/whoami", "Bearer a.jwt.token")
+	rec := get(newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org"}}).Handler(), "/v1/whoami", "Bearer a.jwt.token")
 	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("status %d, type %q", rec.Code, rec.Header().Get("Content-Type"))
 	}
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"user","subject":"user:alice@example.org","email":"alice@example.org","platformAdmin":true,"canCreateTenants":true}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"user","subject":"user:alice@example.org","email":"alice@example.org","canCreateTenants":true}`; got != want {
 		t.Errorf("user: %s", got)
 	}
 
-	// A key has no email, and what it claims for itself means nothing: it is nobody's administrator.
-	key := verifier{id: auth.Identity{Kind: auth.KindServiceKey, Subject: "apikey:apikey-0123456789abcdef", Name: "apikey-0123456789abcdef", Groups: []string{"phorge-platform-admins"}}}
+	// A key has no email: it creates no tenant.
+	key := verifier{id: auth.Identity{Kind: auth.KindServiceKey, Subject: "apikey:apikey-0123456789abcdef", Name: "apikey-0123456789abcdef"}}
 	rec = get(newServer(key).Handler(), "/v1/whoami", "Bearer a.jwt.token")
-	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","platformAdmin":false,"canCreateTenants":false}`; got != want {
+	if got, want := strings.TrimSpace(rec.Body.String()), `{"kind":"servicekey","subject":"apikey:apikey-0123456789abcdef","name":"apikey-0123456789abcdef","canCreateTenants":false}`; got != want {
 		t.Errorf("key: %s", got)
-	}
-}
-
-func TestWhoamiDoesNotShowTheGroups(t *testing.T) {
-	s := newServer(verifier{id: auth.Identity{Kind: auth.KindUser, Subject: "user:alice@example.org", Email: "alice@example.org", Groups: []string{"secret-group"}}})
-	if body := get(s.Handler(), "/v1/whoami", "Bearer a.jwt.token").Body.String(); strings.Contains(body, "secret-group") {
-		t.Errorf("the groups are not part of the answer: %s", body)
 	}
 }
 

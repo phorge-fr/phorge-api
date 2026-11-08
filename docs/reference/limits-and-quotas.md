@@ -29,7 +29,7 @@ The CPU, the memory and the disk of each plan hold two instances of its own prof
 
 Creating an instance or a network that would pass a limit is refused by the API before Incus is asked, and the message says which: `this tenant has 2 instances out of 2 allowed by its plan small: delete one first`, `this instance needs 200 GiB of disk and the tenant has 0 out of 128 GiB allowed by its plan small`. The count comes first, then the CPU, the memory and the disk. Incus stays the authority: a request that the API lets through can still be refused there (a `PATCH` that grows an instance is only checked by Incus), and its refusal is told in words in `problems` of the object.
 
-A platform administrator raises the limits of a tenant by changing its plan (`PATCH /v1/tenants/{t}`).
+The plan of a tenant is not changed through the API: the platform administrators raise the limits of a tenant on request, on its `Tenant` object.
 
 A profile bigger than what is left of a plan is refused with the limit it passes: a `l` on a `small` plan, or a third `s` on it. The numbers of the plans are written twice, in the Tenant composition of Hangar and in `internal/quota`, and a test of each says the same.
 

@@ -54,7 +54,7 @@ func TestAgainstTheRealModel(t *testing.T) {
 	)
 
 	client := fga.New(url, store, key, nil)
-	a := authz.New(client, "")
+	a := authz.New(client)
 
 	all := []authz.Action{authz.ReadTenant, authz.ReadInstances, authz.WriteInstances, authz.ReadImages, authz.WriteImages, authz.ReadMemberships, authz.WriteMemberships}
 	tests := []struct {

@@ -54,8 +54,6 @@ jobs:
                     -e INSTANCE_BOOT_GRACE=60s \
                     -e INSTANCE_STUCK_AFTER=10m \
                     -e API_KEY_MAX_LIFETIME=8784h \
-                    -e API_KEY_CREATION=platform-admins \
-                    -e TENANT_CREATION=platform-admins \
                     -e MAX_TENANTS_PER_USER=3 \
                     -e RATE_LIMIT_WRITES_PER_MINUTE=60 \
                     -e RATE_LIMIT_BURST=10 \

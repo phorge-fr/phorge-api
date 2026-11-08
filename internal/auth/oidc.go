@@ -114,10 +114,9 @@ func (v *OIDCVerifier) Verify(ctx context.Context, token string) (Identity, erro
 	}
 
 	var claims struct {
-		Email         string   `json:"email"`
-		EmailVerified bool     `json:"email_verified"`
-		Groups        []string `json:"groups"`
-		Username      string   `json:"preferred_username"`
+		Email         string `json:"email"`
+		EmailVerified bool   `json:"email_verified"`
+		Username      string `json:"preferred_username"`
 	}
 	if err := tok.Claims(&claims); err != nil {
 		return Identity{}, fmt.Errorf("%w: claims: %w", ErrUnauthenticated, err)
@@ -135,7 +134,7 @@ func (v *OIDCVerifier) Verify(ctx context.Context, token string) (Identity, erro
 	if !SafeEmail(claims.Email) {
 		return Identity{}, fmt.Errorf("%w: the email is not usable as an OpenFGA user", ErrUnauthenticated)
 	}
-	return Identity{Kind: KindUser, Subject: "user:" + claims.Email, Email: claims.Email, Groups: claims.Groups}, nil
+	return Identity{Kind: KindUser, Subject: "user:" + claims.Email, Email: claims.Email}, nil
 }
 
 // SafeEmail keeps what could change the meaning of "user:<email>" in OpenFGA out of it: a wildcard ("user:*"), a
