@@ -15,6 +15,7 @@ verified: 2026-11-08
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you can see (the platform administrators see all of them) |
 | `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create, resize and delete a tenant: platform administrators only |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with a role or a key tuple (`images:read`), write with `operator` or `images:write` |
+| `GET /v1/tenants/{t}/quota` | What the plan of the tenant allows (instances, vCPU, memory, disk, networks) and what it holds. Read with the right of the instances |
 | `GET /v1/tenants/{t}/profiles` | The sizes an instance can take: the profiles `s`, `m` and `l` every tenant is created with. Read with a role or a key tuple (`instances:read`) |
 | `GET`, `POST /v1/tenants/{t}/networks`, `GET`, `DELETE /v1/tenants/{t}/networks/{name}` | The networks of a tenant, which comes without one: read with a role (`viewer` and above), write with `operator`. No key scope covers them yet |
 | `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, and the keys with `memberships:read` and `memberships:write` on it |

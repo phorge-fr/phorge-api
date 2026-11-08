@@ -11,6 +11,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
+	"github.com/phorge-fr/phorge-api/internal/quota"
 	"github.com/phorge-fr/phorge-api/internal/resource"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
@@ -23,6 +24,7 @@ type imageRoutes struct {
 	base
 	store     compute.ImageStore
 	instances compute.InstanceStore
+	settings  Settings
 }
 
 func (i *imageRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -100,6 +102,18 @@ func (i *imageRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := r.PathValue("t")
+	// An image is a pull of a few hundred megabytes into the shared pool: a tenant holds a few of them, not a thousand.
+	if max := i.settings.MaxImagesPerTenant; max > 0 {
+		have, err := i.store.List(r.Context(), tenant)
+		if err != nil {
+			i.storeError(w, err, "image")
+			return
+		}
+		if e := quota.CheckCount("images", len(have), max, "this tenant holds too many images"); e != nil {
+			quotaExceeded(w, e)
+			return
+		}
+	}
 	im, err := i.store.Create(r.Context(), tenant, req)
 	if errors.Is(err, resource.ErrNotFound) {
 		// Creating in a namespace that does not exist: there is no such tenant.

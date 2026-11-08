@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,6 +42,10 @@ type Config struct {
 	// InstanceStuckAfter is how long a start or a stop may last before the API reports it in problems.
 	InstanceStuckAfter time.Duration
 
+	// RateLimitPerMinute is how many requests that create, change or delete one caller may send a minute, in bursts of
+	// RateLimitBurst. 0 limits nothing. MaxImagesPerTenant is how many images a tenant may hold, 0 is no limit.
+	RateLimitPerMinute, RateLimitBurst, MaxImagesPerTenant int
+
 	// APIKeyMaxLifetime is the longest an API key may live: its expiry is capped to it. 0 caps nothing (a key always has an
 	// expiry).
 	APIKeyMaxLifetime time.Duration
@@ -69,6 +74,9 @@ const (
 	EnvPlatformAdminGroup = "PLATFORM_ADMIN_GROUP"
 	EnvInstanceBootGrace  = "INSTANCE_BOOT_GRACE"
 	EnvInstanceStuckAfter = "INSTANCE_STUCK_AFTER"
+	EnvRateLimitPerMinute = "RATE_LIMIT_WRITES_PER_MINUTE"
+	EnvRateLimitBurst     = "RATE_LIMIT_BURST"
+	EnvMaxImagesPerTenant = "MAX_IMAGES_PER_TENANT"
 	EnvAPIKeyMaxLifetime  = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
 	EnvAPIKeyCreation     = "API_KEY_CREATION"     //nolint:gosec // the name of a variable, not a credential
 )
@@ -143,6 +151,25 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 			*dst = d
 		}
 	}
+	integer := func(key string, min int, dst *int) {
+		raw := get(key)
+		if raw == "" {
+			errs = append(errs, fmt.Errorf("%s is required (a whole number, 0 for no limit)", key))
+			return
+		}
+		n, err := strconv.Atoi(raw)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("%s: %q is not a whole number", key, raw))
+		case n < min:
+			errs = append(errs, fmt.Errorf("%s must be at least %d, not %d", key, min, n))
+		default:
+			*dst = n
+		}
+	}
+	integer(EnvRateLimitPerMinute, 0, &c.RateLimitPerMinute)
+	integer(EnvRateLimitBurst, 1, &c.RateLimitBurst)
+	integer(EnvMaxImagesPerTenant, 0, &c.MaxImagesPerTenant)
 	duration(EnvInstanceBootGrace, 0, &c.InstanceBootGrace)
 	duration(EnvInstanceStuckAfter, time.Second, &c.InstanceStuckAfter)
 	duration(EnvAPIKeyMaxLifetime, 0, &c.APIKeyMaxLifetime)
@@ -186,6 +213,9 @@ func (c Config) LogValue() slog.Value {
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
 		slog.String("platform_admin_group", c.PlatformAdminGroup),
+		slog.Int("rate_limit_writes_per_minute", c.RateLimitPerMinute),
+		slog.Int("rate_limit_burst", c.RateLimitBurst),
+		slog.Int("max_images_per_tenant", c.MaxImagesPerTenant),
 		slog.Duration("instance_boot_grace", c.InstanceBootGrace),
 		slog.Duration("instance_stuck_after", c.InstanceStuckAfter),
 		slog.Duration("api_key_max_lifetime", c.APIKeyMaxLifetime),
