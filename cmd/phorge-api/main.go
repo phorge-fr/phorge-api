@@ -57,6 +57,7 @@ func main() {
 		Settings: api.Settings{
 			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
 			KeyMaxLifetime: cfg.APIKeyMaxLifetime, KeyCreation: cfg.APIKeyCreation,
+			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant,
 		},
 	})
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}

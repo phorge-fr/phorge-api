@@ -55,6 +55,9 @@ jobs:
                     -e INSTANCE_STUCK_AFTER=10m \
                     -e API_KEY_MAX_LIFETIME=8784h \
                     -e API_KEY_CREATION=platform-admins \
+                    -e RATE_LIMIT_WRITES_PER_MINUTE=60 \
+                    -e RATE_LIMIT_BURST=10 \
+                    -e MAX_IMAGES_PER_TENANT=20 \
                     phorge-api:ci
                   for _ in $(seq 1 20); do
                     curl -fsS http://127.0.0.1:8080/healthz && break

@@ -142,6 +142,8 @@ paths:
                     $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}:
@@ -200,6 +202,8 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
         delete:
@@ -230,6 +234,8 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "404":
                     $ref: "#/components/responses/NotFound"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/images:
@@ -295,6 +301,8 @@ paths:
                     $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/images/{name}:
@@ -347,6 +355,8 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "409":
                     $ref: "#/components/responses/Conflict"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/networks:
@@ -413,6 +423,8 @@ paths:
                     $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/networks/{name}:
@@ -465,6 +477,37 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "409":
                     $ref: "#/components/responses/Conflict"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/quota:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+        get:
+            tags:
+                - Tenants
+            operationId: getQuota
+            summary: What the plan of a tenant allows and what it holds
+            description: |
+                The limits of the plan of the tenant (instances, vCPU, memory, disk, networks) and what the tenant holds. A stopped
+                instance counts, as it does for Incus. A request that would pass a limit is refused with `409` and the code
+                `quota_exceeded`, and a message that says which.
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The quota.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Quota"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/profiles:
@@ -563,6 +606,8 @@ paths:
                     $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/instances/{name}:
@@ -624,6 +669,8 @@ paths:
                     $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
         delete:
@@ -649,6 +696,8 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "404":
                     $ref: "#/components/responses/NotFound"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/memberships:
@@ -720,6 +769,8 @@ paths:
                     $ref: "#/components/responses/Conflict"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/memberships/{name}:
@@ -770,6 +821,8 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "404":
                     $ref: "#/components/responses/NotFound"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/apikeys:
@@ -843,6 +896,8 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /v1/apikeys/{id}:
@@ -903,6 +958,8 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "422":
                     $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
         delete:
@@ -927,6 +984,8 @@ paths:
                     $ref: "#/components/responses/Forbidden"
                 "404":
                     $ref: "#/components/responses/NotFound"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
     /healthz:
@@ -1042,7 +1101,9 @@ components:
                     schema:
                         $ref: "#/components/schemas/Error"
         Conflict:
-            description: A tenant of that name already exists.
+            description: |
+                The name is taken (`already_exists`), the object is still used (`in_use`), something it needs is not ready (`image_not_ready`,
+                `network_not_ready`) or a limit would be passed (`quota_exceeded`, the message says which).
             content:
                 application/json:
                     schema:
@@ -1066,6 +1127,19 @@ components:
                         $ref: "#/components/schemas/Error"
         Unavailable:
             description: The credential could not be checked, Authentik or the Kubernetes API does not answer. Try again.
+            content:
+                application/json:
+                    schema:
+                        $ref: "#/components/schemas/Error"
+        TooManyRequests:
+            description: |
+                The caller sends too many requests that create, change or delete. Try again after the number of seconds of `Retry-After`.
+                The code is `rate_limited`.
+            headers:
+                Retry-After:
+                    description: Seconds to wait.
+                    schema:
+                        type: integer
             content:
                 application/json:
                     schema:
@@ -1158,6 +1232,38 @@ components:
                     items:
                         type: string
                         pattern: '^[a-z0-9][a-z0-9._-]{0,62}$'
+        QuotaFigures:
+            type: object
+            required:
+                - instances
+                - vcpu
+                - memoryMiB
+                - diskGiB
+                - networks
+            properties:
+                instances:
+                    type: integer
+                vcpu:
+                    type: integer
+                memoryMiB:
+                    type: integer
+                diskGiB:
+                    type: integer
+                networks:
+                    type: integer
+        Quota:
+            type: object
+            required:
+                - plan
+                - limits
+                - used
+            properties:
+                plan:
+                    $ref: "#/components/schemas/Plan"
+                limits:
+                    $ref: "#/components/schemas/QuotaFigures"
+                used:
+                    $ref: "#/components/schemas/QuotaFigures"
         Profile:
             type: object
             required:

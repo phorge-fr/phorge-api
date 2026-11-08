@@ -23,6 +23,9 @@ func valid() map[string]string {
 		EnvInstanceStuckAfter: "10m",
 		EnvAPIKeyMaxLifetime:  "8784h",
 		EnvAPIKeyCreation:     KeyCreationPlatformAdmins,
+		EnvRateLimitPerMinute: "60",
+		EnvRateLimitBurst:     "10",
+		EnvMaxImagesPerTenant: "20",
 	}
 }
 
@@ -163,5 +166,33 @@ func TestTheDurationsAreChecked(t *testing.T) {
 	m[EnvAPIKeyCreation] = KeyCreationUsers
 	if c, err := Load(env(m)); err != nil || c.APIKeyCreation != KeyCreationUsers {
 		t.Errorf("creation by users: %+v, %v", c, err)
+	}
+}
+
+func TestTheRateLimitAndTheImageCapAreRequiredWholeNumbers(t *testing.T) {
+	for _, key := range []string{EnvRateLimitPerMinute, EnvRateLimitBurst, EnvMaxImagesPerTenant} {
+		m := valid()
+		delete(m, key)
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key+" is required") {
+			t.Errorf("%s missing: err = %v", key, err)
+		}
+		m[key] = "many"
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "not a whole number") {
+			t.Errorf("%s = many: err = %v", key, err)
+		}
+		m[key] = "-1"
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "must be at least") {
+			t.Errorf("%s = -1: err = %v", key, err)
+		}
+	}
+	m := valid()
+	m[EnvRateLimitBurst] = "0"
+	if _, err := Load(env(m)); err == nil {
+		t.Error("a burst of 0 would refuse everything")
+	}
+	m = valid()
+	m[EnvRateLimitPerMinute], m[EnvMaxImagesPerTenant] = "0", "0"
+	if c, err := Load(env(m)); err != nil || c.RateLimitPerMinute != 0 || c.MaxImagesPerTenant != 0 {
+		t.Errorf("0 means no limit: %+v, %v", c, err)
 	}
 }

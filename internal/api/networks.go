@@ -11,6 +11,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
+	"github.com/phorge-fr/phorge-api/internal/quota"
 	"github.com/phorge-fr/phorge-api/internal/resource"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
@@ -89,6 +90,15 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := r.PathValue("t")
+	// The plan limits how many: say it before asking, with a code, instead of leaving a network that never becomes ready.
+	plan, used, ok := holdings(w, r, &n.base, n.instances, n.store, tenant)
+	if !ok {
+		return
+	}
+	if e := quota.CheckNetwork(plan, used); e != nil {
+		quotaExceeded(w, e)
+		return
+	}
 	nw, err := n.store.Create(r.Context(), tenant, req)
 	if errors.Is(err, resource.ErrNotFound) {
 		httperr.Write(w, http.StatusNotFound, "not_found", "no such tenant")

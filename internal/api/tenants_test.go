@@ -151,7 +151,7 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	st := &store{tenants: map[string]tenants.Tenant{
-		"demo":  {Name: "demo", Owner: "alice@example.org", Plan: tenants.Small, CreatedAt: now, Ready: true, NotReadySince: now, Namespace: "t-demo", IncusProject: "t-demo"},
+		"demo":  {Name: "demo", Owner: "alice@example.org", Plan: tenants.Large, CreatedAt: now, Ready: true, NotReadySince: now, Namespace: "t-demo", IncusProject: "t-demo"},
 		"other": {Name: "other", Owner: "bob@example.org", Plan: tenants.Large, CreatedAt: now, NotReadySince: now.Add(-time.Hour), Problems: "project Synced: Reached maximum"},
 	}}
 	fga := &checker{
@@ -353,7 +353,7 @@ func TestGetShowsThePhase(t *testing.T) {
 	var ready, failed tenantBody
 	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/demo", "admin", ""), &ready)
 	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/other", "admin", ""), &failed)
-	if ready.Phase != tenants.Ready || ready.Namespace != "t-demo" || ready.Owner != "alice@example.org" || ready.Plan != tenants.Small {
+	if ready.Phase != tenants.Ready || ready.Namespace != "t-demo" || ready.Owner != "alice@example.org" || ready.Plan != tenants.Large {
 		t.Errorf("ready: %+v", ready)
 	}
 	if failed.Phase != tenants.Failed || failed.Problems != "This tenant has reached a limit of its plan." {

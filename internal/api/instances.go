@@ -12,6 +12,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
+	"github.com/phorge-fr/phorge-api/internal/quota"
 	"github.com/phorge-fr/phorge-api/internal/resource"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
@@ -161,6 +162,18 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	// A size is complete: the XRD has no defaults, so what the request left out takes the ones of the API.
 	req = req.WithDefaultSize()
+
+	// The plan limits the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
+	// that never becomes ready.
+	plan, used, ok := holdings(w, r, &i.base, i.store, i.networks, tenant)
+	if !ok {
+		return
+	}
+	cpu, mem, disk := quota.SizeAsked(req)
+	if e := quota.CheckInstance(plan, used, cpu, mem, disk); e != nil {
+		quotaExceeded(w, e)
+		return
+	}
 
 	in, err := i.store.Create(r.Context(), tenant, req)
 	if errors.Is(err, resource.ErrNotFound) {

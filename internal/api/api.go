@@ -12,6 +12,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/authz"
 	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/openapi"
+	"github.com/phorge-fr/phorge-api/internal/ratelimit"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
@@ -28,6 +29,11 @@ type Settings struct {
 	// KeyIssueTimeout is how long creating a key waits for Crossplane to make its service account, and KeyPollInterval how often
 	// it looks. Zero takes the defaults (a minute, a second): the values are for the tests.
 	KeyIssueTimeout, KeyPollInterval time.Duration
+	// RateLimitPerMinute is how many requests that create, change or delete a caller may send a minute, in bursts of RateLimitBurst;
+	// 0 limits nothing.
+	RateLimitPerMinute, RateLimitBurst int
+	// MaxImagesPerTenant is how many images a tenant may hold; 0 is no limit.
+	MaxImagesPerTenant int
 	// KeyCreation is who creates and changes API keys: config.KeyCreationPlatformAdmins or config.KeyCreationUsers.
 	KeyCreation string
 }
@@ -60,13 +66,17 @@ func Register(s *server.Server, d Deps) {
 		now = time.Now
 	}
 	b := base{authz: d.Authz, tenants: d.Tenants, log: d.Log, now: now}
-	(&tenantRoutes{base: b, store: d.Tenants}).register(s, d.Auth.Middleware)
-	(&imageRoutes{base: b, store: d.Images, instances: d.Instances}).register(s, d.Auth.Middleware)
-	(&profileRoutes{base: b}).register(s, d.Auth.Middleware)
-	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances}).register(s, d.Auth.Middleware)
-	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, settings: d.Settings}).register(s, d.Auth.Middleware)
-	(&membershipRoutes{base: b, store: d.Memberships}).register(s, d.Auth.Middleware)
-	(&keyRoutes{base: b, store: d.Keys, settings: d.Settings}).register(s, d.Auth.Middleware)
+	// Who writes too much is slowed down, after the credential is known and before anything is read or written.
+	limiter := ratelimit.New(d.Settings.RateLimitPerMinute, d.Settings.RateLimitBurst, now)
+	authn := func(h http.Handler) http.Handler { return d.Auth.Middleware(limited(limiter, h)) }
+	(&tenantRoutes{base: b, store: d.Tenants}).register(s, authn)
+	(&imageRoutes{base: b, store: d.Images, instances: d.Instances, settings: d.Settings}).register(s, authn)
+	(&profileRoutes{base: b}).register(s, authn)
+	(&quotaRoutes{base: b, instances: d.Instances, networks: d.Networks}).register(s, authn)
+	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances}).register(s, authn)
+	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, settings: d.Settings}).register(s, authn)
+	(&membershipRoutes{base: b, store: d.Memberships}).register(s, authn)
+	(&keyRoutes{base: b, store: d.Keys, settings: d.Settings}).register(s, authn)
 
 	s.Handle("GET /openapi.yaml", openapi.SpecHandler())
 	s.Handle("GET /docs", openapi.UIHandler())
