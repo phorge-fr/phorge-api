@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -35,18 +36,20 @@ func (n *networkRoutes) register(s *server.Server, authn func(http.Handler) http
 }
 
 type networkBody struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description,omitempty"`
-	Phase       status.Phase `json:"phase"`
-	Problems    string       `json:"problems,omitempty"`
-	CreatedAt   time.Time    `json:"createdAt"`
-	CreatedBy   string       `json:"createdBy,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// IPv4 is the range of the network ("10.77.1.0/24"), once it is known: when the user asked for one. Absent when Incus chose it.
+	IPv4      string       `json:"ipv4,omitempty"`
+	Phase     status.Phase `json:"phase"`
+	Problems  string       `json:"problems,omitempty"`
+	CreatedAt time.Time    `json:"createdAt"`
+	CreatedBy string       `json:"createdBy,omitempty"`
 }
 
 func (n *networkRoutes) body(nw compute.Network) networkBody {
 	phase := nw.Status.At(n.now())
 	return networkBody{
-		Name: nw.Name, Description: nw.Description, Phase: phase, Problems: nw.Status.Message(phase),
+		Name: nw.Name, Description: nw.Description, IPv4: nw.IPv4, Phase: phase, Problems: nw.Status.Message(phase),
 		CreatedAt: nw.CreatedAt, CreatedBy: nw.CreatedBy,
 	}
 }
@@ -100,6 +103,9 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 		quotaExceeded(w, e)
 		return
 	}
+	if !n.rangeFree(w, r, req.IPv4) {
+		return
+	}
 	nw, err := n.store.Create(r.Context(), tenant, req)
 	if errors.Is(err, resource.ErrNotFound) {
 		httperr.Write(w, http.StatusNotFound, "not_found", "no such tenant")
@@ -114,6 +120,35 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 	// problems.
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/networks/"+nw.Name)
 	writeJSON(w, http.StatusAccepted, n.body(nw))
+}
+
+// rangeFree answers by itself when the range the user asked for is one of the platform's, or one that a network of any tenant already
+// has: Incus accepts two networks on the same range, and their instances would not tell them apart. It does not say whose.
+func (n *networkRoutes) rangeFree(w http.ResponseWriter, r *http.Request, asked string) bool {
+	if asked == "" {
+		return true
+	}
+	want, err := compute.ParseRange(asked)
+	if err != nil {
+		n.storeError(w, err, "network")
+		return false
+	}
+	if reserved, ok := compute.ReservedOverlap(want); ok {
+		httperr.Write(w, http.StatusConflict, "range_reserved", "ipv4 "+want.String()+" overlaps "+reserved.String()+", which the platform uses: choose another range")
+		return false
+	}
+	all, err := n.store.ListAll(r.Context())
+	if err != nil {
+		n.storeError(w, err, "network")
+		return false
+	}
+	for _, other := range all {
+		if p, err := netip.ParsePrefix(other.IPv4); err == nil && p.Overlaps(want) {
+			httperr.Write(w, http.StatusConflict, "range_in_use", "ipv4 "+want.String()+" overlaps the range of another network: choose another range")
+			return false
+		}
+	}
+	return true
 }
 
 func (n *networkRoutes) delete(w http.ResponseWriter, r *http.Request) {

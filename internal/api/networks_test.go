@@ -280,3 +280,83 @@ func TestCreateInstanceCompletesItsSize(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateNetworkAcceptsTheRangeTheUserChooses(t *testing.T) {
+	e := newEnv(t)
+	rec := e.do(t, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"lan","ipv4":"10.77.1.0/24"}`)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var body networkBody
+	mustDecode(t, rec, &body)
+	if body.IPv4 != "10.77.1.0/24" {
+		t.Errorf("ipv4 = %q, want the range back", body.IPv4)
+	}
+	if got := e.networks.created[0].IPv4; got != "10.77.1.0/24" {
+		t.Errorf("the store received %q", got)
+	}
+	// Without one, Incus chooses and nothing is shown until that choice is reported back.
+	rec = e.do(t, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"auto"}`)
+	raw := rec.Body.String()
+	body = networkBody{}
+	mustDecode(t, rec, &body)
+	if body.IPv4 != "" || strings.Contains(raw, "ipv4") {
+		t.Errorf("an ipv4 is shown that nobody chose: %s", raw)
+	}
+}
+
+func TestCreateNetworkRefusesABadRange(t *testing.T) {
+	e := newEnv(t)
+	for name, ipv4 := range map[string]string{
+		"not an address":          "lan",
+		"an address, no prefix":   "10.77.1.0",
+		"a host, not the network": "10.77.1.5/24",
+		"the gateway form":        "10.77.1.1/24",
+		"IPv6":                    "fd00::/64",
+		"a public range":          "8.8.8.0/24",
+		"too big":                 "10.0.0.0/8",
+		"too small":               "10.77.1.0/30",
+	} {
+		body := `{"name":"lan","ipv4":"` + ipv4 + `"}`
+		if code := call(t, e, "POST", "/v1/tenants/demo/networks", "operator", body); code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status %d, want 422", name, code)
+		}
+	}
+	if len(e.networks.created) != 0 {
+		t.Errorf("something reached the store: %+v", e.networks.created)
+	}
+}
+
+func TestCreateNetworkKeepsTenantsAwayFromThePlatformRanges(t *testing.T) {
+	e := newEnv(t)
+	for _, ipv4 := range []string{"10.1.0.0/24", "10.10.0.0/16", "192.168.1.0/24", "10.4.0.0/22"} {
+		rec := e.do(t, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"lan","ipv4":"`+ipv4+`"}`)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "range_reserved") {
+			t.Errorf("%s: status %d: %s, want 409 range_reserved", ipv4, rec.Code, rec.Body)
+		}
+	}
+	if len(e.networks.created) != 0 {
+		t.Errorf("something reached the store: %+v", e.networks.created)
+	}
+}
+
+func TestCreateNetworkRefusesARangeAnotherTenantHas(t *testing.T) {
+	e := newEnv(t)
+	taken := readyNetwork("theirs")
+	taken.IPv4 = "10.77.0.0/16"
+	e.networks.put("other", taken)
+	rec := e.do(t, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"lan","ipv4":"10.77.5.0/24"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "range_in_use") {
+		t.Fatalf("status %d: %s, want 409 range_in_use", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "theirs") || strings.Contains(rec.Body.String(), "t-other") || strings.Contains(rec.Body.String(), "10.77.0.0/16") {
+		t.Errorf("the answer names the other tenant's network: %s", rec.Body)
+	}
+	if code := call(t, e, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"lan","ipv4":"10.78.5.0/24"}`); code != http.StatusAccepted {
+		t.Errorf("a free range: status %d, want 202", code)
+	}
+	// Without a range there is nothing to compare: Incus chooses.
+	if code := call(t, e, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"auto"}`); code != http.StatusAccepted {
+		t.Errorf("no range: status %d, want 202", code)
+	}
+}
