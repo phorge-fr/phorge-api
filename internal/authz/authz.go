@@ -35,9 +35,6 @@ const (
 	// WriteTenant is changing and deleting the tenant that the caller administers: the admin role of the tenant, which the owner
 	// holds. A key has no scope for it yet.
 	WriteTenant Action = "write_tenant"
-	// WriteTenants is creating a tenant for someone else and choosing a plan. The model has no relation for it: it is for the
-	// platform administrators, see Authorizer.PlatformAdmin.
-	WriteTenants Action = "write_tenants"
 )
 
 // relations are the relations of the OpenFGA model that Check is asked about, for each action.
@@ -57,8 +54,7 @@ var relations = map[Action]string{
 }
 
 // keyScopes are the scopes a key can be given, and the action each one lets it do: one OpenFGA tuple on a tenant each, the
-// relations key_<resource>_<action> of the model. They are the ones of the ApiKey XRD. There is none for WriteTenants (creating a
-// tenant for someone else, choosing a plan): a key is never a platform administrator. A key does not create tenants yet either.
+// relations key_<resource>_<action> of the model. They are the ones of the ApiKey XRD. A key does not create tenants.
 var keyScopes = map[string]Action{
 	"tenants:read":      ReadTenant,
 	"tenants:write":     WriteTenant,
@@ -118,14 +114,12 @@ type Checker interface {
 
 // Authorizer answers the questions of the routes.
 type Authorizer struct {
-	fga        Checker
-	adminGroup string
+	fga Checker
 }
 
-// New returns an Authorizer. The members of the Authentik group platformAdminGroup may create, resize and delete
-// tenants: the model has no relation for that, so it is read from the groups of the token. Empty group: nobody can.
-func New(fga Checker, platformAdminGroup string) *Authorizer {
-	return &Authorizer{fga: fga, adminGroup: platformAdminGroup}
+// New returns an Authorizer. There is no administrator group: what a person may do is what the roles of OpenFGA say.
+func New(fga Checker) *Authorizer {
+	return &Authorizer{fga: fga}
 }
 
 // Allowed reports whether the caller may do action on the tenant. The error is for a decision that could not be taken
@@ -163,14 +157,4 @@ func (a *Authorizer) Tenants(ctx context.Context, id auth.Identity) ([]string, e
 	}
 	slices.Sort(out)
 	return out, nil
-}
-
-// PlatformAdmin reports whether the caller belongs to the platform administrators group of Authentik, which is what lets
-// it create, resize and delete tenants and act on every tenant. The groups of a user are in its token; a key has none and is
-// never an administrator. The name of the group is compared exactly.
-func (a *Authorizer) PlatformAdmin(_ context.Context, id auth.Identity) bool {
-	if a.adminGroup == "" || id.Kind != auth.KindUser {
-		return false
-	}
-	return slices.Contains(id.Groups, a.adminGroup)
 }

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/phorge-fr/phorge-api/internal/access"
-	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
@@ -275,13 +274,12 @@ func TestApiKeysWhoMayDoWhat(t *testing.T) {
 		who                              string
 		list, get, create, patch, delete int
 	}{
-		// The owner, a platform administrator.
+		// The owner of the key.
 		{"admin", 200, 200, 201, 200, 202},
-		// Another administrator: someone else's key is not shown to exist.
-		{"admin2", 200, 404, 201, 404, 404},
-		// Anyone may look at their own keys, rename them and revoke them, so a key can always be revoked; creating is for the
-		// administrators for now.
-		{"alice", 200, 404, 403, 404, 404},
+		// Someone else's key is not shown to exist. Anyone creates keys within what they hold themselves: admin2 holds nothing on demo,
+		// alice reads it.
+		{"admin2", 200, 404, 403, 404, 404},
+		{"alice", 200, 404, 201, 404, 404},
 		{"exadmin", 200, 404, 403, 404, 404},
 		// A key never manages keys, whoever it belongs to and whatever it holds.
 		{"svc_mgr", 403, 403, 403, 403, 403},
@@ -368,9 +366,7 @@ func TestCreateApiKeyHandsOverTheKeyOnce(t *testing.T) {
 }
 
 func TestAKeyNeverGetsWhatItsCreatorDoesNotHold(t *testing.T) {
-	open := testSettings
-	open.KeyCreation = config.KeyCreationUsers
-	e := newEnvWith(t, open)
+	e := newEnv(t)
 	grant := func(tenant string, scopes ...string) string {
 		list, _ := json.Marshal(scopes)
 		return `{"displayName":"mine","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"` + tenant + `","scopes":` + string(list) + `}]}`
@@ -385,8 +381,8 @@ func TestAKeyNeverGetsWhatItsCreatorDoesNotHold(t *testing.T) {
 		"alice on a tenant that does not exist (same answer)":    {"alice", grant("ghost", "tenants:read"), http.StatusForbidden},
 		"the operator writes instances and images, and holds it": {"operator", grant("demo", "instances:write", "images:write"), http.StatusCreated},
 		"the operator manages memberships, which is not hers":    {"operator", grant("demo", "memberships:write"), http.StatusForbidden},
-		"an administrator, on a tenant it has no role on":        {"admin", grant("other", "memberships:write"), http.StatusCreated},
-		"an administrator, on a tenant that does not exist":      {"admin", grant("ghost", "tenants:read"), http.StatusForbidden},
+		"admin holds memberships on the other tenant too":        {"admin", grant("other", "memberships:write"), http.StatusCreated},
+		"admin, on a tenant that does not exist":                 {"admin", grant("ghost", "tenants:read"), http.StatusForbidden},
 		// The scopes of the networks and of the tenant: the same rule, the role of the creator decides.
 		"the operator writes networks, as she may":           {"operator", grant("demo", "networks:read", "networks:write"), http.StatusCreated},
 		"alice reads networks, as any role does":             {"alice", grant("demo", "networks:read"), http.StatusCreated},
@@ -528,23 +524,22 @@ func TestAccessRoutesWhenTheClusterIsDown(t *testing.T) {
 	}
 }
 
-func TestWhoMayCreateKeysIsADeploymentSetting(t *testing.T) {
-	// As deployed for these tests: the platform administrators only.
+func TestAnyPersonCreatesKeysAndNoKeyDoes(t *testing.T) {
 	e := newEnv(t)
-	if code := call(t, e, "POST", "/v1/apikeys", "alice", newKey); code != http.StatusForbidden {
-		t.Errorf("a person who is not an administrator: %d, want 403", code)
-	}
-	// Opened by the deployment: any person signed in creates theirs. A key never exceeds its creator, so what it can do is
-	// unchanged.
-	open := testSettings
-	open.KeyCreation = config.KeyCreationUsers
-	e = newEnvWith(t, open)
-	if code := call(t, e, "POST", "/v1/apikeys", "alice", newKey); code != http.StatusCreated {
-		t.Errorf("a person, with the creation opened: %d, want 201", code)
+	for _, who := range []string{"alice", "mallory", "viewer"} {
+		want := http.StatusCreated
+		body := newKey
+		if who == "mallory" {
+			// mallory holds nothing on demo: the rights of the creator decide, not a group.
+			want = http.StatusForbidden
+		}
+		if code := call(t, e, "POST", "/v1/apikeys", who, body); code != want {
+			t.Errorf("%s: %d, want %d", who, code, want)
+		}
 	}
 	// And a key still cannot create one.
 	if code := call(t, e, "POST", "/v1/apikeys", "svc", newKey); code != http.StatusForbidden {
-		t.Errorf("a key, with the creation opened: %d, want 403", code)
+		t.Errorf("a key: %d, want 403", code)
 	}
 }
 

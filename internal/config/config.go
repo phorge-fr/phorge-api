@@ -32,9 +32,6 @@ type Config struct {
 	// KubeContext picks a context of the kubeconfig when the API runs outside the cluster (development). In a pod
 	// the service account is used and this is ignored.
 	KubeContext string
-	// PlatformAdminGroup is the name of the Authentik group whose members may create, resize and delete tenants. The
-	// API reads it from the "groups" claim of the token. Empty: nobody can.
-	PlatformAdminGroup string
 
 	// InstanceBootGrace is how long after a creation or a start the API refuses to stop a VM: a stop sent while the guest boots
 	// is lost and then hangs. Nothing reported by Incus or Crossplane says when the system inside listens, so it is a time.
@@ -48,32 +45,13 @@ type Config struct {
 	// MaxProfilesPerTenant is how many profiles the users of a tenant may make, 0 is no limit.
 	MaxProfilesPerTenant int
 
-	// TenantCreation says who may create a tenant: TenantCreationPlatformAdmins or TenantCreationUsers (any person signed in with
-	// Authentik, for themselves). MaxTenantsPerUser is how many tenants a person who is not a platform administrator may own,
-	// 0 is no limit.
-	TenantCreation    string
+	// MaxTenantsPerUser is how many tenants a person may own, 0 is no limit. Any person signed in with Authentik creates their own.
 	MaxTenantsPerUser int
 
 	// APIKeyMaxLifetime is the longest an API key may live: its expiry is capped to it. 0 caps nothing (a key always has an
 	// expiry).
 	APIKeyMaxLifetime time.Duration
-	// APIKeyCreation says who may create API keys: KeyCreationPlatformAdmins or KeyCreationUsers (any person signed in with
-	// Authentik: a key never exceeds what its creator holds, so this only decides who gets one). Anyone lists and revokes their
-	// own.
-	APIKeyCreation string
 }
-
-// The values of TENANT_CREATION.
-const (
-	TenantCreationPlatformAdmins = "platform-admins"
-	TenantCreationUsers          = "users"
-)
-
-// The values of API_KEY_CREATION.
-const (
-	KeyCreationPlatformAdmins = "platform-admins"
-	KeyCreationUsers          = "users"
-)
 
 // Environment variables.
 const (
@@ -85,17 +63,14 @@ const (
 	EnvOpenFGAStoreID       = "OPENFGA_STORE_ID"
 	EnvCAFile               = "CA_FILE"
 	EnvKubeContext          = "KUBE_CONTEXT"
-	EnvPlatformAdminGroup   = "PLATFORM_ADMIN_GROUP"
 	EnvInstanceBootGrace    = "INSTANCE_BOOT_GRACE"
 	EnvInstanceStuckAfter   = "INSTANCE_STUCK_AFTER"
-	EnvTenantCreation       = "TENANT_CREATION"
 	EnvMaxTenantsPerUser    = "MAX_TENANTS_PER_USER"
 	EnvRateLimitPerMinute   = "RATE_LIMIT_WRITES_PER_MINUTE"
 	EnvRateLimitBurst       = "RATE_LIMIT_BURST"
 	EnvMaxImagesPerTenant   = "MAX_IMAGES_PER_TENANT"
 	EnvMaxProfilesPerTenant = "MAX_PROFILES_PER_TENANT"
 	EnvAPIKeyMaxLifetime    = "API_KEY_MAX_LIFETIME" //nolint:gosec // the name of a variable, not a credential
-	EnvAPIKeyCreation       = "API_KEY_CREATION"     //nolint:gosec // the name of a variable, not a credential
 )
 
 const defaultListenAddr = ":8080"
@@ -109,14 +84,13 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	}
 
 	c := Config{
-		ListenAddr:         get(EnvListenAddr),
-		Issuer:             get(EnvIssuer),
-		OpenFGAURL:         get(EnvOpenFGAURL),
-		OpenFGAAPIKey:      get(EnvOpenFGAAPIKey),
-		OpenFGAStoreID:     get(EnvOpenFGAStoreID),
-		CAFile:             get(EnvCAFile),
-		KubeContext:        get(EnvKubeContext),
-		PlatformAdminGroup: get(EnvPlatformAdminGroup),
+		ListenAddr:     get(EnvListenAddr),
+		Issuer:         get(EnvIssuer),
+		OpenFGAURL:     get(EnvOpenFGAURL),
+		OpenFGAAPIKey:  get(EnvOpenFGAAPIKey),
+		OpenFGAStoreID: get(EnvOpenFGAStoreID),
+		CAFile:         get(EnvCAFile),
+		KubeContext:    get(EnvKubeContext),
 	}
 	if c.ListenAddr == "" {
 		c.ListenAddr = defaultListenAddr
@@ -189,23 +163,9 @@ func Load(lookup func(string) (string, bool)) (Config, error) {
 	integer(EnvMaxImagesPerTenant, 0, &c.MaxImagesPerTenant)
 	integer(EnvMaxProfilesPerTenant, 0, &c.MaxProfilesPerTenant)
 	integer(EnvMaxTenantsPerUser, 0, &c.MaxTenantsPerUser)
-	switch c.TenantCreation = get(EnvTenantCreation); c.TenantCreation {
-	case TenantCreationPlatformAdmins, TenantCreationUsers:
-	case "":
-		errs = append(errs, fmt.Errorf("%s is required: %s or %s", EnvTenantCreation, TenantCreationPlatformAdmins, TenantCreationUsers))
-	default:
-		errs = append(errs, fmt.Errorf("%s must be %s or %s, not %q", EnvTenantCreation, TenantCreationPlatformAdmins, TenantCreationUsers, c.TenantCreation))
-	}
 	duration(EnvInstanceBootGrace, 0, &c.InstanceBootGrace)
 	duration(EnvInstanceStuckAfter, time.Second, &c.InstanceStuckAfter)
 	duration(EnvAPIKeyMaxLifetime, 0, &c.APIKeyMaxLifetime)
-	switch c.APIKeyCreation = get(EnvAPIKeyCreation); c.APIKeyCreation {
-	case KeyCreationPlatformAdmins, KeyCreationUsers:
-	case "":
-		errs = append(errs, fmt.Errorf("%s is required: %s or %s", EnvAPIKeyCreation, KeyCreationPlatformAdmins, KeyCreationUsers))
-	default:
-		errs = append(errs, fmt.Errorf("%s must be %s or %s, not %q", EnvAPIKeyCreation, KeyCreationPlatformAdmins, KeyCreationUsers, c.APIKeyCreation))
-	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
@@ -238,8 +198,6 @@ func (c Config) LogValue() slog.Value {
 		slog.String("openfga_store_id", c.OpenFGAStoreID),
 		slog.String("ca_file", c.CAFile),
 		slog.String("kube_context", c.KubeContext),
-		slog.String("platform_admin_group", c.PlatformAdminGroup),
-		slog.String("tenant_creation", c.TenantCreation),
 		slog.Int("max_tenants_per_user", c.MaxTenantsPerUser),
 		slog.Int("rate_limit_writes_per_minute", c.RateLimitPerMinute),
 		slog.Int("rate_limit_burst", c.RateLimitBurst),
@@ -248,7 +206,6 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("instance_boot_grace", c.InstanceBootGrace),
 		slog.Duration("instance_stuck_after", c.InstanceStuckAfter),
 		slog.Duration("api_key_max_lifetime", c.APIKeyMaxLifetime),
-		slog.String("api_key_creation", c.APIKeyCreation),
 	)
 }
 

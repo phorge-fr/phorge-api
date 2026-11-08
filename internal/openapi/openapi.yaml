@@ -22,8 +22,7 @@ info:
           the client exchanges them at Authentik for an access token (`client_credentials`, with `client_id`, `username`
           and `password`) and sends that token like any other. The key has only the scopes you gave it on the tenants you
           named, never more than you hold, and nothing from its date of expiry. A key cannot create, read or delete keys:
-          that takes a person signed in with Authentik. For now only the platform administrators (a group of Authentik)
-          create keys; anyone lists and revokes their own.
+          that takes a person signed in with Authentik. Any person creates their own keys, lists them and revokes them.
 
         Whatever is wrong with a credential, the answer is the same `401`, so that nothing can be probed.
 servers:
@@ -88,8 +87,7 @@ paths:
             operationId: listTenants
             summary: The tenants you can see
             description: |
-                The tenants on which you hold a role (with a key: the ones it has `tenants:read` on). The
-                platform administrators see all of them.
+                The tenants on which you hold a role (with a key: the ones it has `tenants:read` on).
             security:
                 - bearerAuth: []
             responses:
@@ -109,9 +107,9 @@ paths:
             operationId: createTenant
             summary: Create a tenant
             description: |
-                A platform administrator creates a tenant for anyone, with the plan they choose. When the deployment says so
-                (`canCreateTenants` of `GET /v1/whoami`), any person creates one for themselves: they own it, `owner` is left out
-                or is their own email, and the plan is `small` (another one is `403`). A person owns a limited number of tenants:
+                Any person creates a tenant for themselves (`canCreateTenants` of `GET /v1/whoami`): they own it, `owner` is left
+                out or is their own email, and the plan is `small` (another one is `403`: the platform administrators change a
+                plan on request, where the platform is run). A person owns a limited number of tenants:
                 past it the answer is `409` with the code `quota_exceeded`. A key never creates a tenant.
 
                 The answer is `202`: the tenant exists but Crossplane takes about a minute to make its namespace, its Incus
@@ -178,10 +176,10 @@ paths:
             tags:
                 - Tenants
             operationId: updateTenant
-            summary: Change the plan or the display name
+            summary: Change the display name
             description: |
-                The admins of the tenant, the owner among them, change its display name; only a platform administrator changes
-                its plan (`403` otherwise). The name and the owner cannot change: to hand a tenant over, give the new person the
+                The admins of the tenant, the owner among them, change its display name. The plan is not changed through the API
+                (`403`): a person who needs another one asks the platform administrators. The name and the owner cannot change: to hand a tenant over, give the new person the
                 `admin` role with a membership.
             security:
                 - bearerAuth: []
@@ -218,7 +216,7 @@ paths:
             operationId: deleteTenant
             summary: Delete a tenant and everything in it
             description: |
-                For the admins of the tenant, the owner among them, and the platform administrators. **It destroys the virtual
+                For the admins of the tenant, the owner among them. **It destroys the virtual
                 machines of the tenant**, ask for a confirmation before calling it.
 
                 The instances, the memberships and the images of the tenant are deleted first, then the tenant itself. The
@@ -978,8 +976,7 @@ paths:
 
                 If the key cannot be made in time nothing is left behind and the answer is `503`.
 
-                For now only the platform administrators may create keys, and only a person signed in with Authentik: a key
-                cannot create a key.
+                Only a person signed in with Authentik creates keys, any person: a key cannot create a key.
             security:
                 - bearerAuth: []
             requestBody:
@@ -1552,8 +1549,7 @@ components:
                         maxPerUser:
                             type: integer
                             description: |
-                                How many tenants a person who is not a platform administrator may own. `0` is no limit. The platform
-                                administrators are not bound.
+                                How many tenants a person may own. `0` is no limit.
         Network:
             type: object
             required:
@@ -1824,7 +1820,7 @@ components:
             description: |
                 What an API key may do on a tenant, named `<resource>:<verb>`. `instances:write` does not give `instances:read`.
                 `tenants:read` reads the tenant, `tenants:write` renames it and deletes it (which destroys its virtual machines).
-                A key never creates a tenant for someone else nor chooses a plan: that is for the platform administrators.
+                A key never creates a tenant.
                 The list is also `GET /v1/apikeys/scopes`.
             enum:
                 - tenants:read
@@ -2076,8 +2072,8 @@ components:
                 owner:
                     type: string
                     description: |
-                        Email of the owner, exactly as it is in Authentik (case included). Required from a platform administrator. A
-                        person who creates a tenant for themselves leaves it out: it is their own email, and another one is `403`.
+                        Email of the owner, exactly as it is in Authentik (case included). Leave it out: it is the caller's own email,
+                        and another one is `403`.
                     example: alice@example.org
                 plan:
                     $ref: "#/components/schemas/Plan"
@@ -2099,7 +2095,6 @@ components:
             required:
                 - kind
                 - subject
-                - platformAdmin
                 - canCreateTenants
             properties:
                 kind:
@@ -2122,16 +2117,10 @@ components:
                     type: string
                     description: The user name of the service account of a key. Keys only.
                     example: apikey-0123456789abcdef
-                platformAdmin:
-                    type: boolean
-                    description: |
-                        The caller may create a tenant for anyone, choose its plan and act on every tenant: a user that belongs to
-                        the platform administrators group of Authentik. A key never is.
                 canCreateTenants:
                     type: boolean
                     description: |
-                        The caller may create a tenant: a platform administrator, or a person for themselves when the deployment says
-                        so (`TENANT_CREATION`). A key never may.
+                        The caller may create a tenant for themselves: a person with an email. A key never may.
         Error:
             type: object
             required:

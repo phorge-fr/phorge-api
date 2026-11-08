@@ -8,7 +8,6 @@ import (
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
-	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
 	"github.com/phorge-fr/phorge-api/internal/quota"
 	"github.com/phorge-fr/phorge-api/internal/server"
@@ -17,11 +16,10 @@ import (
 
 // tenantRoutes are the routes of the tenants.
 //
-// Seeing a tenant takes a right on it (a role; for a key, the scope tenants:read too), and the platform administrators see all
-// of them. Creating one is for the platform administrators, who choose its owner and its plan, and, when the deployment says so
-// (TENANT_CREATION), for any person for themselves: they own it, it has the smallest plan, and the number of tenants a person
-// owns is limited (MAX_TENANTS_PER_USER). Changing the name of a tenant and deleting it is for its admins, the owner among
-// them; its plan is changed by a platform administrator only. A key never creates, changes or deletes a tenant.
+// Seeing a tenant takes a right on it (a role; for a key, the scope tenants:read too). Any person creates a tenant for themselves:
+// they own it, it has the smallest plan, and the number of tenants a person owns is limited (MAX_TENANTS_PER_USER). Changing the
+// name of a tenant and deleting it is for its admins, the owner among them. Its plan is not a thing the API changes: an
+// administrator of the platform does it on request, where the platform is run. A key never creates, changes or deletes a tenant.
 type tenantRoutes struct {
 	base
 	store    tenants.Store
@@ -41,37 +39,29 @@ func (t *tenantRoutes) visible(next http.Handler) http.Handler {
 	return t.guard(authz.ReadTenant, next)
 }
 
-// canCreateOwnTenant reports whether the deployment lets this caller create a tenant for themselves: any person, with an email, when
-// TENANT_CREATION says users. A key never does, and neither does a person without an email, which is what the tenant is owned by.
-func canCreateOwnTenant(s Settings, id auth.Identity) bool {
-	return s.TenantCreation == config.TenantCreationUsers && id.Kind == auth.KindUser && id.Email != ""
+// canCreateOwnTenant reports whether this caller creates a tenant for themselves: any person, with an email, which is what the tenant
+// is owned by. A key never does.
+func canCreateOwnTenant(id auth.Identity) bool {
+	return id.Kind == auth.KindUser && id.Email != ""
 }
 
-// mayCreate lets through who may create a tenant: a platform administrator, or a person for themselves.
+// mayCreate lets through a person, for themselves.
 func (t *tenantRoutes) mayCreate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, _ := auth.FromContext(r.Context())
-		if t.authz.PlatformAdmin(r.Context(), id) || canCreateOwnTenant(t.settings, id) {
+		if canCreateOwnTenant(id) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		t.log.Info("authorization refused", "subject", id.Subject, "key", id.Name, "route", r.Pattern)
-		httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may create a tenant on this platform")
+		httperr.Write(w, http.StatusForbidden, "forbidden", "a tenant is created by a person signed in with Authentik, not by a key")
 	})
 }
 
-// adminOfTheTenant lets through the platform administrators and the admins of the tenant of the path, the owner among them. The
-// tenant is already known to exist and to be visible to the caller, see visible.
+// adminOfTheTenant lets through the admins of the tenant of the path, the owner among them. The tenant is already known to exist and to
+// be visible to the caller, see visible.
 func (t *tenantRoutes) adminOfTheTenant(next http.Handler) http.Handler {
-	require := t.authz.Require(authz.WriteTenant, t.log, next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, _ := auth.FromContext(r.Context())
-		if t.authz.PlatformAdmin(r.Context(), id) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		require.ServeHTTP(w, r)
-	})
+	return t.authz.Require(authz.WriteTenant, t.log, next)
 }
 
 // tenantBody is how a tenant is shown.
@@ -98,14 +88,10 @@ func (t *tenantRoutes) body(tn tenants.Tenant) tenantBody {
 func (t *tenantRoutes) list(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
 
-	var visible []string
-	all := t.authz.PlatformAdmin(r.Context(), id)
-	if !all {
-		var err error
-		if visible, err = t.authz.Tenants(r.Context(), id); err != nil {
-			t.unavailable(w, "authorization", err)
-			return
-		}
+	visible, err := t.authz.Tenants(r.Context(), id)
+	if err != nil {
+		t.unavailable(w, "authorization", err)
+		return
 	}
 	found, err := t.store.List(r.Context())
 	if err != nil {
@@ -115,7 +101,7 @@ func (t *tenantRoutes) list(w http.ResponseWriter, r *http.Request) {
 
 	items := []tenantBody{}
 	for _, tn := range found {
-		if all || slices.Contains(visible, tn.Name) {
+		if slices.Contains(visible, tn.Name) {
 			items = append(items, t.body(tn))
 		}
 	}
@@ -139,28 +125,24 @@ func (t *tenantRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := auth.FromContext(r.Context())
 	req.CreatedBy = id.Subject
-	if !t.authz.PlatformAdmin(r.Context(), id) {
-		// A person creates a tenant for themselves: the owner is the caller, and the plan the smallest. A request that says
-		// otherwise is refused, not changed in silence.
-		if req.Owner != "" && !strings.EqualFold(req.Owner, id.Email) {
-			httperr.Write(w, http.StatusForbidden, "forbidden", "you can only create a tenant for yourself")
-			return
-		}
-		if req.Plan != "" && req.Plan != tenants.Small {
-			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators choose a plan other than small")
-			return
-		}
-		req.Owner, req.Plan = id.Email, tenants.Small
+	// A person creates a tenant for themselves: the owner is the caller, and the plan the smallest. A request that says otherwise
+	// is refused, not changed in silence.
+	if req.Owner != "" && !strings.EqualFold(req.Owner, id.Email) {
+		httperr.Write(w, http.StatusForbidden, "forbidden", "you can only create a tenant for yourself")
+		return
 	}
+	if req.Plan != "" && req.Plan != tenants.Small {
+		httperr.Write(w, http.StatusForbidden, "forbidden", "a new tenant has the small plan: ask the platform administrators for another one")
+		return
+	}
+	req.Owner, req.Plan = id.Email, tenants.Small
 	if err := req.Validate(); err != nil {
 		t.storeError(w, err, "tenant")
 		return
 	}
-	if !t.authz.PlatformAdmin(r.Context(), id) {
-		if e := t.checkOwnedTenants(r, id.Email); e != nil {
-			quotaExceeded(w, e)
-			return
-		}
+	if e := t.checkOwnedTenants(r, id.Email); e != nil {
+		quotaExceeded(w, e)
+		return
 	}
 	tn, err := t.store.Create(r.Context(), req)
 	if err != nil {
@@ -203,9 +185,10 @@ func (t *tenantRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		t.storeError(w, err, "tenant")
 		return
 	}
-	// The plan is what a tenant is allowed to hold: its admins rename it, a platform administrator changes the plan.
-	if id, _ := auth.FromContext(r.Context()); req.Plan != nil && !t.authz.PlatformAdmin(r.Context(), id) {
-		httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators change the plan of a tenant")
+	// The plan is what a tenant is allowed to hold: its admins rename it, and the platform administrators change the plan on request,
+	// where the platform is run.
+	if req.Plan != nil {
+		httperr.Write(w, http.StatusForbidden, "forbidden", "the plan of a tenant is changed by the platform administrators: ask them")
 		return
 	}
 	tn, err := t.store.Patch(r.Context(), r.PathValue("t"), req)

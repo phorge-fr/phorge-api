@@ -12,17 +12,14 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/access"
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/authz"
-	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/httperr"
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
-	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
 // keyRoutes are the routes of the API keys. A key is a service account of Authentik with scopes on tenants, and it belongs to
 // the user who created it: only they see it, and it never gets more than they hold. Only a person manages keys, signed in with
-// Authentik: a key cannot create, read or delete keys. For now creating one is for the platform administrators (the group of
-// Authentik); reading and deleting your own stays open to anyone, so that a key can always be revoked.
+// Authentik: a key cannot create, read or delete keys. Every person creates their own, lists them and revokes them.
 type keyRoutes struct {
 	base
 	store    access.KeyStore
@@ -33,7 +30,7 @@ func (k *keyRoutes) register(s *server.Server, authn func(http.Handler) http.Han
 	const collection, item = "/v1/apikeys", "/v1/apikeys/{id}"
 	s.Handle("GET "+collection+"/scopes", authn(k.person(http.HandlerFunc(k.scopes))))
 	s.Handle("GET "+collection, authn(k.person(http.HandlerFunc(k.list))))
-	s.Handle("POST "+collection, authn(k.person(k.admin(http.HandlerFunc(k.create)))))
+	s.Handle("POST "+collection, authn(k.person(http.HandlerFunc(k.create))))
 	s.Handle("GET "+item, authn(k.person(http.HandlerFunc(k.get))))
 	s.Handle("PATCH "+item, authn(k.person(http.HandlerFunc(k.patch))))
 	s.Handle("DELETE "+item, authn(k.person(http.HandlerFunc(k.delete))))
@@ -46,24 +43,6 @@ func (k *keyRoutes) person(next http.Handler) http.Handler {
 		if id.Kind != auth.KindUser || id.Email == "" {
 			k.log.Info("authorization refused", "subject", id.Subject, "key", id.Name, "route", r.Pattern)
 			httperr.Write(w, http.StatusForbidden, "forbidden", "API keys are managed by a person signed in with Authentik, not by a key")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// admin lets through who may create keys: the platform administrators, or any person when the deployment says so
-// (API_KEY_CREATION). A key never exceeds what its creator holds, so opening this only decides who gets one.
-func (k *keyRoutes) admin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if k.settings.KeyCreation == config.KeyCreationUsers {
-			next.ServeHTTP(w, r)
-			return
-		}
-		id, _ := auth.FromContext(r.Context())
-		if !k.authz.PlatformAdmin(r.Context(), id) {
-			k.log.Info("authorization refused", "subject", id.Subject, "route", r.Pattern)
-			httperr.Write(w, http.StatusForbidden, "forbidden", "only the platform administrators may create API keys on this platform")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -149,19 +128,7 @@ func (k *keyRoutes) get(w http.ResponseWriter, r *http.Request) {
 // holds reports whether the creator holds what a grant gives, on a tenant that exists. A key never exceeds the person who
 // makes it, and a tenant they cannot see is not told apart from one that does not exist.
 func (k *keyRoutes) holds(w http.ResponseWriter, r *http.Request, id auth.Identity, grants []access.Grant) bool {
-	admin := k.authz.PlatformAdmin(r.Context(), id)
 	for _, g := range grants {
-		if admin {
-			if _, err := k.tenants.Get(r.Context(), g.Tenant); err != nil {
-				if errors.Is(err, tenants.ErrNotFound) {
-					httperr.Write(w, http.StatusForbidden, "forbidden", "a key cannot be given what you do not hold on tenant "+g.Tenant)
-				} else {
-					k.storeError(w, err, "tenant")
-				}
-				return false
-			}
-			continue
-		}
 		for _, scope := range g.Scopes {
 			action, _ := authz.ScopeAction(scope)
 			ok, err := k.authz.Allowed(r.Context(), id, action, g.Tenant)

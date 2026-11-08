@@ -6,7 +6,7 @@ verified: 2026-11-08
 
 # Images and instances
 
-Both live in the namespace `t-<tenant>` of the `phorge.fr` group; the platform administrators may act on any tenant that exists.
+Both live in the namespace `t-<tenant>` of the `phorge.fr` group.
 
 - **An instance starts from an image of its tenant**, never from a bare image name: the API refuses an image that does not exist in the tenant (`422`) and one that is not `Ready` yet (`409`, `image_not_ready`). While it is pulled (a few minutes) an instance would report problems that are not one and be called `Failed` after three minutes.
 - **Images** are pulled from the `images` server (linuxcontainers.org) only, as virtual machines for the architecture of the compute nodes. The Image kind is the only gate to the image servers, so the API restricts the remote. An image cannot be changed, only deleted, and pulled again.

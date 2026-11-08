@@ -39,8 +39,6 @@ type Identity struct {
 	Email string
 	// Name is the user name of the service account of a key.
 	Name string
-	// Groups are the names of the Authentik groups of the user, from the "groups" claim. Users only.
-	Groups []string
 }
 
 type ctxKey struct{}
