@@ -18,6 +18,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/compute"
 	"github.com/phorge-fr/phorge-api/internal/config"
 	"github.com/phorge-fr/phorge-api/internal/server"
+	"github.com/phorge-fr/phorge-api/internal/status"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
@@ -137,6 +138,7 @@ type env struct {
 	store       *store
 	fga         *checker
 	images      *imageStore
+	networks    *networkStore
 	instances   *instanceStore
 	memberships *membershipStore
 	keys        *keyStore
@@ -169,16 +171,20 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 
 			// What the roles of the model give, written out (the model itself is tested against OpenFGA in authz).
 			"user:viewer@example.org can_read_images tenant:demo":    true,
+			"user:viewer@example.org can_read_networks tenant:demo":  true,
 			"user:viewer@example.org can_read_instances tenant:demo": true,
 
 			"user:user@example.org can_read_tenant tenant:demo":     true,
 			"user:user@example.org can_read_images tenant:demo":     true,
+			"user:user@example.org can_read_networks tenant:demo":   true,
 			"user:user@example.org can_read_instances tenant:demo":  true,
 			"user:user@example.org can_write_instances tenant:demo": true,
 
 			"user:operator@example.org can_read_tenant tenant:demo":     true,
 			"user:operator@example.org can_read_images tenant:demo":     true,
 			"user:operator@example.org can_write_images tenant:demo":    true,
+			"user:operator@example.org can_read_networks tenant:demo":   true,
+			"user:operator@example.org can_write_networks tenant:demo":  true,
 			"user:operator@example.org can_read_instances tenant:demo":  true,
 			"user:operator@example.org can_write_instances tenant:demo": true,
 
@@ -186,6 +192,8 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 			"user:tadmin@example.org can_read_tenant tenant:demo":       true,
 			"user:tadmin@example.org can_read_images tenant:demo":       true,
 			"user:tadmin@example.org can_write_images tenant:demo":      true,
+			"user:tadmin@example.org can_read_networks tenant:demo":     true,
+			"user:tadmin@example.org can_write_networks tenant:demo":    true,
 			"user:tadmin@example.org can_read_instances tenant:demo":    true,
 			"user:tadmin@example.org can_write_instances tenant:demo":   true,
 			"user:tadmin@example.org can_read_memberships tenant:demo":  true,
@@ -221,6 +229,9 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 		"svc_none": {Kind: auth.KindServiceKey, Subject: "apikey:apikey-00000000000000a3", Name: "apikey-00000000000000a3"},
 	}
 	images := &imageStore{data: map[string]map[string]compute.Image{}}
+	networks := &networkStore{data: map[string]map[string]compute.Network{}}
+	// The one network of the tenant, which an instance is attached to when its request names none.
+	networks.put("demo", compute.Network{Name: "net", CreatedAt: now, Status: status.Object{Ready: true, NotReadySince: now}})
 	instances := &instanceStore{data: map[string]map[string]compute.Instance{}}
 	memberships := &membershipStore{data: map[string]map[string]access.Membership{}}
 	apikeys := &keyStore{data: map[string]access.ApiKey{}, secrets: map[string]string{}}
@@ -231,13 +242,14 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 		Authz:       authz.New(fga, adminGroup),
 		Tenants:     st,
 		Images:      images,
+		Networks:    networks,
 		Instances:   instances,
 		Memberships: memberships,
 		Keys:        apikeys,
 		Log:         log,
 		Now:         func() time.Time { return now },
 	})
-	return &env{srv: s, store: st, fga: fga, images: images, instances: instances, memberships: memberships, keys: apikeys}
+	return &env{srv: s, store: st, fga: fga, images: images, networks: networks, instances: instances, memberships: memberships, keys: apikeys}
 }
 
 func (e *env) do(t *testing.T, method, path, token, body string) *httptest.ResponseRecorder {

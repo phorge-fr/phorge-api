@@ -239,3 +239,49 @@ func TestStuckFor(t *testing.T) {
 		t.Errorf("a VM without any date is never stuck: %v", got)
 	}
 }
+
+func TestCreateNetworkValidate(t *testing.T) {
+	for name, tt := range map[string]struct {
+		req CreateNetwork
+		ok  bool
+	}{
+		"a name":                {CreateNetwork{Name: "lan"}, true},
+		"one character":         {CreateNetwork{Name: "a"}, true},
+		"15 characters":         {CreateNetwork{Name: "abcdefghijklmno"}, true},
+		"16 characters":         {CreateNetwork{Name: "abcdefghijklmnop"}, false},
+		"a hyphen inside":       {CreateNetwork{Name: "my-lan"}, true},
+		"a hyphen at the end":   {CreateNetwork{Name: "lan-"}, false},
+		"a digit first":         {CreateNetwork{Name: "1lan"}, false},
+		"uppercase":             {CreateNetwork{Name: "Lan"}, false},
+		"an underscore":         {CreateNetwork{Name: "my_lan"}, false},
+		"empty":                 {CreateNetwork{}, false},
+		"a 200 characters text": {CreateNetwork{Name: "lan", Description: strings.Repeat("x", 200)}, true},
+		"a 201 characters text": {CreateNetwork{Name: "lan", Description: strings.Repeat("x", 201)}, false},
+	} {
+		if err := tt.req.Validate(); (err == nil) != tt.ok {
+			t.Errorf("%s: err = %v, want ok = %v", name, err, tt.ok)
+		}
+	}
+}
+
+func TestWithDefaultSizeCompletesWhatIsMissing(t *testing.T) {
+	two := 2
+	got := CreateInstance{CPU: &two}.WithDefaultSize()
+	if *got.CPU != 2 || *got.MemoryMiB != DefaultMemoryMiB || *got.DiskGiB != DefaultDiskGiB {
+		t.Errorf("size = %d/%d/%d", *got.CPU, *got.MemoryMiB, *got.DiskGiB)
+	}
+	if two != 2 {
+		t.Error("the request's own value was changed")
+	}
+}
+
+func TestCreateInstanceChecksItsNetworkName(t *testing.T) {
+	r := CreateInstance{Name: "web", Image: "debian", Network: "Bad_Name"}
+	if r.Validate() == nil {
+		t.Error("a bad network name was accepted")
+	}
+	r.Network = ""
+	if err := r.Validate(); err != nil {
+		t.Errorf("no network named is the route's to resolve: %v", err)
+	}
+}

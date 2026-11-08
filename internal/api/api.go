@@ -37,8 +37,9 @@ type Deps struct {
 	Auth    *auth.Authenticator
 	Authz   *authz.Authorizer
 	Tenants tenants.Store
-	// Images and Instances are the stores of the tenant routes.
+	// Images, Networks and Instances are the stores of the tenant routes.
 	Images      compute.ImageStore
+	Networks    compute.NetworkStore
 	Instances   compute.InstanceStore
 	Memberships access.MembershipStore
 	Keys        access.KeyStore
@@ -60,7 +61,8 @@ func Register(s *server.Server, d Deps) {
 	b := base{authz: d.Authz, tenants: d.Tenants, log: d.Log, now: now}
 	(&tenantRoutes{base: b, store: d.Tenants}).register(s, d.Auth.Middleware)
 	(&imageRoutes{base: b, store: d.Images, instances: d.Instances}).register(s, d.Auth.Middleware)
-	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, settings: d.Settings}).register(s, d.Auth.Middleware)
+	(&networkRoutes{base: b, store: d.Networks, instances: d.Instances}).register(s, d.Auth.Middleware)
+	(&instanceRoutes{base: b, store: d.Instances, images: d.Images, networks: d.Networks, settings: d.Settings}).register(s, d.Auth.Middleware)
 	(&membershipRoutes{base: b, store: d.Memberships}).register(s, d.Auth.Middleware)
 	(&keyRoutes{base: b, store: d.Keys, settings: d.Settings}).register(s, d.Auth.Middleware)
 

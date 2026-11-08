@@ -184,6 +184,9 @@ func (s *Instances) Create(ctx context.Context, tenant string, req compute.Creat
 	}
 	// Only what was asked for: the rest is the defaults of the XRD.
 	spec := map[string]any{"imageRef": map[string]any{"name": req.Image}}
+	if req.Network != "" {
+		spec["network"] = req.Network
+	}
 	setInt := func(key string, v *int) {
 		if v != nil {
 			spec[key] = int64(*v)
@@ -263,6 +266,7 @@ func (s *Instances) Delete(ctx context.Context, tenant, name string) error {
 
 func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	image, _, _ := unstructured.NestedString(obj.Object, "spec", "imageRef", "name")
+	network, _, _ := unstructured.NestedString(obj.Object, "spec", "network")
 	running, _, _ := unstructured.NestedBool(obj.Object, "spec", "running")
 	nesting, _, _ := unstructured.NestedBool(obj.Object, "spec", "nesting")
 	secureBoot, _, _ := unstructured.NestedBool(obj.Object, "spec", "secureBoot")
@@ -273,6 +277,7 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 
 	ready, since := readyOf(obj)
 	return compute.Instance{
+		Network:          network,
 		Name:             obj.GetName(),
 		Image:            image,
 		CPU:              intOf(obj, "cpu"),

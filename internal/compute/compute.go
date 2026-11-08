@@ -22,7 +22,7 @@ var (
 // InvalidError lists what is wrong with a request, field by field.
 type InvalidError = resource.InvalidError
 
-// InUseError is a refusal to delete an image that instances still start from.
+// InUseError is a refusal to delete an image that instances still start from, or a network they are attached to.
 type InUseError = resource.InUseError
 
 var (
@@ -145,6 +145,7 @@ const (
 type Instance struct {
 	Name          string
 	Image         string
+	Network       string
 	CPU           int
 	MemoryMiB     int
 	DiskGiB       int
@@ -218,10 +219,20 @@ func (in Instance) StopRefusedFor(now time.Time, grace time.Duration) time.Durat
 	return 0
 }
 
-// CreateInstance is what creating an instance asks for. What is not given is left to the defaults of the XRD.
+// The size of an instance that was given no size at all, or only some of the three values: the XRD has no defaults, a size is
+// complete, so the API fills in what is missing.
+const (
+	DefaultCPU       = 1
+	DefaultMemoryMiB = 1024
+	DefaultDiskGiB   = 10
+)
+
+// CreateInstance is what creating an instance asks for. What is not given is left to the defaults of the XRD, except the size
+// (see WithDefaultSize) and the network (the route picks the only one of the tenant).
 type CreateInstance struct {
 	Name          string   `json:"name"`
 	Image         string   `json:"image"`
+	Network       string   `json:"network"`
 	CPU           *int     `json:"cpu"`
 	MemoryMiB     *int     `json:"memoryMiB"`
 	DiskGiB       *int     `json:"diskGiB"`
@@ -262,11 +273,28 @@ func (r CreateInstance) Validate() error {
 	if !ValidImageName(r.Image) {
 		p.add("image must be the name of an image of the tenant")
 	}
+	if r.Network != "" && !ValidNetworkName(r.Network) {
+		p.add("network must be the name of a network of the tenant")
+	}
 	checkBounds(&p, "cpu", r.CPU, MinCPU, MaxCPU)
 	checkBounds(&p, "memoryMiB", r.MemoryMiB, MinMemory, MaxMemory)
 	checkBounds(&p, "diskGiB", r.DiskGiB, MinDisk, MaxDisk)
 	checkKeys(&p, r.SSHPublicKeys)
 	return p.err()
+}
+
+// WithDefaultSize returns the request with the three values of a size, the missing ones taking the defaults.
+func (r CreateInstance) WithDefaultSize() CreateInstance {
+	def := func(v *int, d int) *int {
+		if v != nil {
+			return v
+		}
+		return &d
+	}
+	r.CPU = def(r.CPU, DefaultCPU)
+	r.MemoryMiB = def(r.MemoryMiB, DefaultMemoryMiB)
+	r.DiskGiB = def(r.DiskGiB, DefaultDiskGiB)
+	return r
 }
 
 // Validate checks the patch.

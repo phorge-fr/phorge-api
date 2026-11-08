@@ -26,6 +26,8 @@ const (
 	WriteInstances   Action = "write_instances"
 	ReadImages       Action = "read_images"
 	WriteImages      Action = "write_images"
+	ReadNetworks     Action = "read_networks"
+	WriteNetworks    Action = "write_networks"
 	ReadMemberships  Action = "read_memberships"
 	WriteMemberships Action = "write_memberships"
 	// WriteTenants is creating, resizing and deleting a tenant. The model has no relation for it: it is for the platform
@@ -40,6 +42,8 @@ var relations = map[Action]string{
 	WriteInstances:   "can_write_instances",
 	ReadImages:       "can_read_images",
 	WriteImages:      "can_write_images",
+	ReadNetworks:     "can_read_networks",
+	WriteNetworks:    "can_write_networks",
 	ReadMemberships:  "can_read_memberships",
 	WriteMemberships: "can_write_memberships",
 }
