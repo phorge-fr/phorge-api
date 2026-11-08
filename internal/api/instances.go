@@ -60,7 +60,7 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 	if keys == nil {
 		keys = []string{}
 	}
-	problems := in.Status.Problems
+	problems := in.Status.Message(in.Status.At(i.now()))
 	transition := in.Transition()
 	var since *time.Time
 	if transition != "" && !in.Since().IsZero() {

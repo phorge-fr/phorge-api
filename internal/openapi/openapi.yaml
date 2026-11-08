@@ -89,7 +89,7 @@ paths:
             description: |
                 Reserved to the platform administrators. The answer is `202`: the tenant exists but Crossplane takes about a
                 minute to make its namespace, its Incus project and its network. Poll the `Location` until `phase` is
-                `Ready`. A `phase` of `Failed` comes with `problems`, the error of Incus or OpenFGA as it is.
+                `Ready`. A `phase` of `Failed` comes with `problems`, what is wrong in words made for you; the details of the platform are not shown.
             security:
                 - bearerAuth: []
             requestBody:
@@ -241,7 +241,7 @@ paths:
             description: |
                 Instances start from an image of their tenant, never from a bare image name. The answer is `202`: pulling a VM
                 image takes a few minutes. Poll the `Location` until `phase` is `Ready`. An image that does not exist on its server
-                never becomes ready, `problems` says so as Incus does.
+                never becomes ready, `problems` says that it could not be pulled.
             security:
                 - bearerAuth: []
             requestBody:
@@ -360,7 +360,7 @@ paths:
                 `Location` until `phase` is `Ready`.
 
                 The quota of the tenant's plan is enforced by Incus, not by this request: a refusal such as `Reached maximum number
-                of instances` comes back as `problems` of the instance, which then becomes `Failed`. Stopped VMs count.
+                of instances` comes back as `problems` of the instance, in words, and the instance then becomes `Failed`. Stopped VMs count.
 
                 An instance whose first start failed is stuck (the cause is in `problems`): delete it and create it again.
             security:
@@ -952,7 +952,10 @@ components:
                     $ref: "#/components/schemas/Phase"
                 problems:
                     type: string
-                    description: What is wrong, as Incus says it. Absent when all is well.
+                    description: |
+                        What is wrong, in a sentence made for the user: a limit of the plan that is reached, an image that does not
+                        boot, or that the platform could not complete a step yet. Never a Crossplane condition or a provider error.
+                        Absent when all is well.
                 createdAt:
                     type: string
                     format: date-time
@@ -1047,7 +1050,9 @@ components:
                     $ref: "#/components/schemas/Phase"
                 problems:
                     type: string
-                    description: What is wrong, as Incus says it (a quota that is reached, an image that does not boot). Absent when all is well.
+                    description: |
+                        What is wrong, in a sentence made for the user (a quota that is reached, an image that does not boot). Never a
+                        Crossplane condition or a provider error. Absent when all is well.
                 createdAt:
                     type: string
                     format: date-time

@@ -65,7 +65,7 @@ type tenantBody struct {
 func (t *tenantRoutes) body(tn tenants.Tenant) tenantBody {
 	return tenantBody{
 		Name: tn.Name, DisplayName: tn.DisplayName, Owner: tn.Owner, Plan: tn.Plan, Phase: tn.PhaseAt(t.now()),
-		Problems: tn.Problems, Namespace: tn.Namespace, IncusProject: tn.IncusProject, CreatedAt: tn.CreatedAt, CreatedBy: tn.CreatedBy,
+		Problems: tn.MessageAt(t.now()), Namespace: tn.Namespace, IncusProject: tn.IncusProject, CreatedAt: tn.CreatedAt, CreatedBy: tn.CreatedBy,
 	}
 }
 
