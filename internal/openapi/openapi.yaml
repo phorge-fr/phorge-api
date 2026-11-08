@@ -189,7 +189,8 @@ paths:
                 Reserved to the platform administrators. **It destroys the virtual machines of the tenant**, ask for a
                 confirmation before calling it.
 
-                The deletion is done in the foreground: the answer is `202` and the tenant stays, with the phase `Deleting`,
+                The instances, the memberships and the images of the tenant are deleted first, then the tenant itself. The
+                deletion is done in the foreground: the answer is `202` and the tenant stays, with the phase `Deleting`,
                 until everything it is made of is gone, up to a couple of minutes. A `404` on a later get is what tells it
                 is really done.
             security:

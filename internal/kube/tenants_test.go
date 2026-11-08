@@ -18,7 +18,9 @@ import (
 
 func newTenantStore() (*Tenants, *fake.FakeDynamicClient) {
 	client := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
-		map[schema.GroupVersionResource]string{tenantsGVR: "TenantList"})
+		map[schema.GroupVersionResource]string{
+			tenantsGVR: "TenantList", imagesGVR: "ImageList", instancesGVR: "InstanceList", membershipsGVR: "MembershipList",
+		})
 	return NewTenants(Static(client)), client
 }
 
@@ -149,6 +151,87 @@ func TestDeleteIsInTheForeground(t *testing.T) {
 	}
 	if !found {
 		t.Error("no delete was sent")
+	}
+}
+
+// The namespace of a tenant must not be deleted while an Incus image, instance or tuple still has to be: they go first,
+// leaf first, and the Tenant last (phorge-fr/Hangar#185).
+func TestDeleteRemovesWhatTheTenantHoldsBeforeTheTenant(t *testing.T) {
+	s, client := newTenantStore()
+	if _, err := s.Create(t.Context(), tenants.CreateRequest{Name: "demo", Owner: "a@b"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range []struct {
+		gvr  schema.GroupVersionResource
+		kind string
+		name string
+		ns   string
+	}{
+		{imagesGVR, "Image", "debian", "t-demo"},
+		{instancesGVR, "Instance", "vm1", "t-demo"},
+		{membershipsGVR, "Membership", "m1", "t-demo"},
+		{instancesGVR, "Instance", "other-tenant", "t-other"},
+	} {
+		obj := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "phorge.fr/v1alpha1", "kind": o.kind, "metadata": map[string]any{"name": o.name, "namespace": o.ns},
+		}}
+		if _, err := client.Resource(o.gvr).Namespace(o.ns).Create(t.Context(), obj, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	client.ClearActions()
+
+	if err := s.Delete(t.Context(), "demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	var order []string
+	for _, a := range client.Actions() {
+		del, ok := a.(ktesting.DeleteActionImpl)
+		if !ok {
+			continue
+		}
+		order = append(order, del.GetResource().Resource+"/"+del.GetNamespace()+"/"+del.GetName())
+		if del.DeleteOptions.PropagationPolicy == nil || *del.DeleteOptions.PropagationPolicy != metav1.DeletePropagationForeground {
+			t.Errorf("%s was not deleted in the foreground", del.GetName())
+		}
+	}
+	want := []string{"instances/t-demo/vm1", "memberships/t-demo/m1", "images/t-demo/debian", "tenants/phorge-system/demo"}
+	if len(order) != len(want) {
+		t.Fatalf("deleted %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Errorf("delete %d = %s, want %s (all: %v)", i, order[i], want[i], order)
+		}
+	}
+	if _, err := client.Resource(instancesGVR).Namespace("t-other").Get(t.Context(), "other-tenant", metav1.GetOptions{}); err != nil {
+		t.Errorf("an instance of another tenant was touched: %v", err)
+	}
+}
+
+// An image that an instance still uses is refused by Crossplane and deleted again by it once the instance is gone: it must
+// not stop the deletion of the tenant.
+func TestDeleteGoesOnWhenAnImageIsInUse(t *testing.T) {
+	s, client := newTenantStore()
+	if _, err := s.Create(t.Context(), tenants.CreateRequest{Name: "demo", Owner: "a@b"}); err != nil {
+		t.Fatal(err)
+	}
+	img := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "phorge.fr/v1alpha1", "kind": "Image", "metadata": map[string]any{"name": "debian", "namespace": "t-demo"},
+	}}
+	if _, err := client.Resource(imagesGVR).Namespace("t-demo").Create(t.Context(), img, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	client.PrependReactor("delete", "images", func(ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, errors.New("admission webhook refused: in-use by 1 usage(s)")
+	})
+
+	if err := s.Delete(t.Context(), "demo"); err != nil {
+		t.Fatalf("an image in use stopped the deletion: %v", err)
+	}
+	if _, err := client.Resource(tenantsGVR).Namespace(TenantNamespace).Get(t.Context(), "demo", metav1.GetOptions{}); err == nil {
+		t.Error("the tenant was not deleted")
 	}
 }
 
