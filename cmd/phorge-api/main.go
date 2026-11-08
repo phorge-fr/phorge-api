@@ -19,6 +19,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/fga"
 	"github.com/phorge-fr/phorge-api/internal/kube"
 	"github.com/phorge-fr/phorge-api/internal/server"
+	"github.com/phorge-fr/phorge-api/internal/terminal"
 )
 
 // drainDelay is how long /readyz fails before the listener closes, so that the endpoints of the Service are removed first.
@@ -39,6 +40,10 @@ func main() {
 		os.Exit(2)
 	}
 
+	// The websockets of a terminal outlive any timeout of a client: their limits are the ones of the settings.
+	incusHTTP := *fgaHTTP
+	incusHTTP.Timeout = 0
+
 	users := auth.NewOIDCVerifier(cfg.Issuer, cfg.Audiences, nil)
 	users.AcceptKeys(access.AccountPrefix)
 
@@ -54,7 +59,15 @@ func main() {
 		Instances:   kube.NewInstances(kubeConn),
 		Memberships: kube.NewMemberships(kubeConn),
 		Keys:        kube.NewApiKeys(kubeConn),
-		Log:         log,
+		Terminal: &api.Terminal{
+			Incus:     &terminal.Client{URL: cfg.IncusURL, HTTP: &incusHTTP},
+			Exchanger: &terminal.Authentik{URL: cfg.OIDCTokenURL, ClientID: cfg.OIDCClientID, Audience: cfg.IncusClientID, HTTP: fgaHTTP},
+			Settings: terminal.Settings{
+				MaxPerUser: cfg.TerminalMaxPerUser, MaxPerTenant: cfg.TerminalMaxPerTenant,
+				Idle: cfg.TerminalIdle, MaxDuration: cfg.TerminalMaxDuration, Recheck: cfg.TerminalRecheck,
+			},
+		},
+		Log: log,
 		Settings: api.Settings{
 			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
 			KeyMaxLifetime:     cfg.APIKeyMaxLifetime,

@@ -59,6 +59,15 @@ jobs:
                     -e RATE_LIMIT_BURST=10 \
                     -e MAX_IMAGES_PER_TENANT=20 \
                     -e MAX_PROFILES_PER_TENANT=20 \
+                    -e INCUS_URL=https://incus.example.org \
+                    -e INCUS_CLIENT_ID=ci-incus \
+                    -e OIDC_TOKEN_URL=https://auth.example.org/application/o/token/ \
+                    -e OIDC_CLIENT_ID=ci \
+                    -e TERMINAL_MAX_PER_USER=5 \
+                    -e TERMINAL_MAX_PER_TENANT=10 \
+                    -e TERMINAL_IDLE_TIMEOUT=15m \
+                    -e TERMINAL_MAX_DURATION=1h \
+                    -e TERMINAL_RECHECK_INTERVAL=30s \
                     phorge-api:ci
                   for _ in $(seq 1 20); do
                     curl -fsS http://127.0.0.1:8080/healthz && break

@@ -39,7 +39,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			unauthenticated(w)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), id)))
+		next.ServeHTTP(w, r.WithContext(WithToken(WithIdentity(r.Context(), id), token)))
 	})
 }
 

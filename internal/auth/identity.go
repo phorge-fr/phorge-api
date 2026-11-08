@@ -48,6 +48,21 @@ func WithIdentity(ctx context.Context, id Identity) context.Context {
 	return context.WithValue(ctx, ctxKey{}, id)
 }
 
+type tokenKey struct{}
+
+// WithToken returns a context that carries the access token of the caller, as it was sent. Only what has to act as the caller on
+// another system (the exchange of the terminal) reads it: it is never logged, and Identity does not hold it, so that printing an
+// Identity cannot print a credential.
+func WithToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, tokenKey{}, token)
+}
+
+// TokenFromContext returns the access token of the caller.
+func TokenFromContext(ctx context.Context) (string, bool) {
+	t, ok := ctx.Value(tokenKey{}).(string)
+	return t, ok && t != ""
+}
+
 // FromContext returns the identity that the middleware authenticated.
 func FromContext(ctx context.Context) (Identity, bool) {
 	id, ok := ctx.Value(ctxKey{}).(Identity)

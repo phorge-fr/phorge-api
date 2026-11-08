@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,6 +219,8 @@ func (s *profileStore) put(tenant string, p compute.Profile) {
 }
 
 type instanceStore struct {
+	// mu guards data for the tests where an instance changes while a terminal is open and the server reads it.
+	mu      sync.Mutex
 	data    map[string]map[string]compute.Instance
 	err     error
 	created []compute.CreateInstance
@@ -237,6 +240,8 @@ func (s *instanceStore) List(_ context.Context, tenant string) ([]compute.Instan
 }
 
 func (s *instanceStore) Get(_ context.Context, tenant, name string) (compute.Instance, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.err != nil {
 		return compute.Instance{}, s.err
 	}
@@ -298,6 +303,8 @@ func (s *instanceStore) Delete(_ context.Context, tenant, name string) error {
 }
 
 func (s *instanceStore) put(tenant string, in compute.Instance) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.data[tenant] == nil {
 		s.data[tenant] = map[string]compute.Instance{}
 	}

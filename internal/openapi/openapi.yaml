@@ -809,6 +809,74 @@ paths:
                     $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/instances/{name}/console:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+            - $ref: "#/components/parameters/name"
+        get:
+            tags:
+                - Instances
+            operationId: openTerminal
+            summary: Open a terminal on a running virtual machine
+            description: |
+                A websocket: send an `Upgrade: websocket` request, authenticated by the `Authorization: Bearer` header, **never by a
+                token in the URL**. For a person signed in with Authentik who may write instances in the tenant; a key gets `403`.
+                The instance must be running (`409`, code `instance_not_running`) and run the Incus agent, so a `cloud` image.
+
+                The API opens the terminal in Incus as that person: it trades their token at Authentik for a token of Incus, so Incus
+                decides, from its own store, whether they may. The API holds no credential of Incus.
+
+                The protocol: binary frames carry the bytes of the terminal in both directions (what is typed, what is shown). Text
+                frames from the client are JSON controls; today `{"type":"resize","cols":N,"rows":M}`, with N and M from 1 to 1000.
+                Anything else is ignored. `cols` and `rows` in the query give the first size (80 by 24 otherwise).
+
+                The connection closes with a code and a sentence to show: `1000` the session ended (the shell exited), `4001` idle
+                for too long, `4002` open for the longest time allowed, `4003` the person lost the right, `4004` the instance is no
+                longer running, `4005` the platform could not check the rights, `4006` the platform is restarting. A person has a
+                limited number of terminals open, so has a tenant (`429`, code `too_many_terminals`), and opening them is
+                rate limited (`429`, code `rate_limited`). What is typed or shown is never logged.
+            security:
+                - bearerAuth: []
+            parameters:
+                - name: cols
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                      minimum: 1
+                      maximum: 1000
+                      default: 80
+                - name: rows
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                      minimum: 1
+                      maximum: 1000
+                      default: 24
+            responses:
+                "101":
+                    description: Switching protocols. The websocket is the terminal.
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "426":
+                    description: Not a websocket upgrade request.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
     /v1/tenants/{t}/memberships:
         parameters:
             - $ref: "#/components/parameters/tenant"

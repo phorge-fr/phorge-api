@@ -3,12 +3,12 @@ package api
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +19,7 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/server"
 	"github.com/phorge-fr/phorge-api/internal/status"
 	"github.com/phorge-fr/phorge-api/internal/tenants"
+	"github.com/phorge-fr/phorge-api/internal/terminal"
 )
 
 var now = time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
@@ -100,17 +101,29 @@ func (s *store) Delete(_ context.Context, name string) error {
 
 // checker is the OpenFGA of these tests: a set of "user relation object" lines.
 type checker struct {
+	mu      sync.Mutex
 	grants  map[string]bool
 	objects map[string][]string // ListObjects by user
 	err     error
 }
 
 func (c *checker) Check(_ context.Context, user, relation, object string) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.grants[user+" "+relation+" "+object], c.err
 }
 
 func (c *checker) ListObjects(_ context.Context, user, _, _ string) ([]string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.objects[user], c.err
+}
+
+// set gives or takes a right while the server runs.
+func (c *checker) set(tuple string, v bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.grants[tuple] = v
 }
 
 type tokens map[string]auth.Identity
@@ -139,6 +152,9 @@ type env struct {
 	instances   *instanceStore
 	memberships *membershipStore
 	keys        *keyStore
+	// exchange and incus are the fake Authentik exchange and the fake Incus behind the terminal route.
+	exchange *fakeExchange
+	incus    *fakeIncus
 }
 
 func newEnv(t *testing.T) *env { return newEnvWith(t, testSettings) }
@@ -146,7 +162,9 @@ func newEnv(t *testing.T) *env { return newEnvWith(t, testSettings) }
 // newEnvWith is newEnv with the settings a deployment would give.
 func newEnvWith(t *testing.T, settings Settings) *env {
 	t.Helper()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := slog.New(slog.NewTextHandler(logSink, nil))
+	exchange := &fakeExchange{}
+	incus := newFakeIncus(t)
 	st := &store{tenants: map[string]tenants.Tenant{
 		"demo":  {Name: "demo", Owner: "alice@example.org", Plan: tenants.Large, CreatedAt: now, Ready: true, NotReadySince: now, Namespace: "t-demo", IncusProject: "t-demo"},
 		"other": {Name: "other", Owner: "bob@example.org", Plan: tenants.Large, CreatedAt: now, NotReadySince: now.Add(-time.Hour), Problems: "project Synced: Reached maximum"},
@@ -277,10 +295,11 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 		Instances:   instances,
 		Memberships: memberships,
 		Keys:        apikeys,
+		Terminal:    &Terminal{Incus: &terminal.Client{URL: incus.srv.URL}, Exchanger: exchange, Settings: terminalSettings},
 		Log:         log,
 		Now:         func() time.Time { return now },
 	})
-	return &env{srv: s, store: st, fga: fga, images: images, networks: networks, profiles: profiles, instances: instances, memberships: memberships, keys: apikeys}
+	return &env{srv: s, store: st, fga: fga, images: images, networks: networks, profiles: profiles, instances: instances, memberships: memberships, keys: apikeys, exchange: exchange, incus: incus}
 }
 
 func (e *env) do(t *testing.T, method, path, token, body string) *httptest.ResponseRecorder {
