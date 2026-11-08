@@ -1282,7 +1282,8 @@ components:
             type: string
             description: |
                 `Provisioning`: being made or changed. `Ready`: everything is up. `Failed`: not ready for more than 3 minutes
-                with `problems`. `Deleting`.
+                with `problems`, or because the platform cannot apply what makes the object for more than 3 minutes (`problems` then
+                says that the platform administrators can see why). `Deleting`.
             enum:
                 - Provisioning
                 - Ready

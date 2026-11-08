@@ -13,7 +13,6 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
-	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
 var (
@@ -134,7 +133,6 @@ func imageOf(obj *unstructured.Unstructured) compute.Image {
 	fingerprint, _, _ := unstructured.NestedString(obj.Object, "status", "fingerprint")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 
-	ready, since := readyOf(obj)
 	return compute.Image{
 		Name:        obj.GetName(),
 		Remote:      remote,
@@ -143,7 +141,7 @@ func imageOf(obj *unstructured.Unstructured) compute.Image {
 		Fingerprint: fingerprint,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
 		CreatedBy:   obj.GetAnnotations()[CreatedByAnnotation],
-		Status:      status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Status:      statusOf(obj, problems),
 	}
 }
 
@@ -289,7 +287,6 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	ipv4, _, _ := unstructured.NestedString(obj.Object, "status", "ipv4")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 
-	ready, since := readyOf(obj)
 	return compute.Instance{
 		Network:          network,
 		Profile:          profile,
@@ -307,7 +304,7 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 		CreatedAt:        obj.GetCreationTimestamp().Time,
 		CreatedBy:        obj.GetAnnotations()[CreatedByAnnotation],
 		RunningChangedAt: timeOfAnnotation(obj, RunningChangedAtAnnotation),
-		Status:           status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Status:           statusOf(obj, problems),
 	}
 }
 

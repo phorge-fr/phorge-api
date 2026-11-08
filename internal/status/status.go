@@ -30,7 +30,10 @@ type Object struct {
 	NotReadySince time.Time
 	// Problems is status.problems: the Incus or OpenFGA error of a composed resource, empty when everything is up.
 	Problems string
-	Deleting bool
+	// SyncFailedSince is when Crossplane could not apply the composition of the object (the Synced condition is false), the zero time when it
+	// can. Nothing writes Problems then, as the composition is the one that does: without this the object would stay Provisioning forever.
+	SyncFailedSince time.Time
+	Deleting        bool
 }
 
 // At is the phase of the object at now.
@@ -41,6 +44,8 @@ func (o Object) At(now time.Time) Phase {
 	case o.Ready:
 		return Ready
 	case o.Problems != "" && now.Sub(o.NotReadySince) >= FailedAfter:
+		return Failed
+	case !o.SyncFailedSince.IsZero() && now.Sub(o.SyncFailedSince) >= FailedAfter:
 		return Failed
 	default:
 		return Provisioning

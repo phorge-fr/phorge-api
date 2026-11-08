@@ -16,7 +16,6 @@ import (
 	"k8s.io/client-go/dynamic"
 
 	"github.com/phorge-fr/phorge-api/internal/access"
-	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
 var membershipsGVR = schema.GroupVersionResource{Group: "phorge.fr", Version: "v1alpha1", Resource: "memberships"}
@@ -94,14 +93,13 @@ func membershipOf(obj *unstructured.Unstructured) access.Membership {
 	role, _, _ := unstructured.NestedString(obj.Object, "spec", "role")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 
-	ready, since := readyOf(obj)
 	return access.Membership{
 		Name:      obj.GetName(),
 		Subject:   access.Subject{Kind: kind, Name: name},
 		Role:      access.Role(role),
 		CreatedAt: obj.GetCreationTimestamp().Time,
 		CreatedBy: obj.GetAnnotations()[CreatedByAnnotation],
-		Status:    status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Status:    statusOf(obj, problems),
 	}
 }
 
@@ -275,7 +273,6 @@ func apiKeyOf(obj *unstructured.Unstructured) access.ApiKey {
 		grants = append(grants, access.Grant{Tenant: tenant, Scopes: scopes})
 	}
 
-	ready, since := readyOf(obj)
 	k := access.ApiKey{
 		ID:          obj.GetName(),
 		Owner:       owner,
@@ -284,7 +281,7 @@ func apiKeyOf(obj *unstructured.Unstructured) access.ApiKey {
 		Identity:    identity,
 		Expired:     expired,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
-		Status:      status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Status:      statusOf(obj, problems),
 	}
 	if at, err := time.Parse(time.RFC3339, expiresAt); err == nil {
 		k.ExpiresAt = &at

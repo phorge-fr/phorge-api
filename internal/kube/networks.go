@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
-	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
 var networksGVR = schema.GroupVersionResource{Group: "phorge.fr", Version: "v1alpha1", Resource: "networks"}
@@ -119,16 +118,19 @@ func (s *Networks) Delete(ctx context.Context, tenant, name string) error {
 func networkOf(obj *unstructured.Unstructured) compute.Network {
 	description, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
+	// The status has the range after the first reconcile: until then, the one that was asked for.
 	gateway, _, _ := unstructured.NestedString(obj.Object, "status", "ipv4")
+	if gateway == "" {
+		gateway, _, _ = unstructured.NestedString(obj.Object, "spec", "ipv4")
+	}
 	ipv4, _ := compute.RangeOfGateway(gateway)
 
-	ready, since := readyOf(obj)
 	return compute.Network{
 		Name:        obj.GetName(),
 		Description: description,
 		IPv4:        ipv4,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
 		CreatedBy:   obj.GetAnnotations()[CreatedByAnnotation],
-		Status:      status.Object{Ready: ready, NotReadySince: since, Problems: problems, Deleting: obj.GetDeletionTimestamp() != nil},
+		Status:      statusOf(obj, problems),
 	}
 }

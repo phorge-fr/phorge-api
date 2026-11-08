@@ -3,6 +3,7 @@ package kube
 import (
 	"errors"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -150,9 +151,9 @@ func TestNetworkReadsItsRangeFromTheStatusAndListsAllTenants(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Nothing reports the range back until the composition writes status.ipv4.
-	if n, _ := s.Get(t.Context(), "demo", "lan"); n.IPv4 != "" {
-		t.Errorf("ipv4 = %q before the status has it", n.IPv4)
+	// Until the composition writes status.ipv4, the range is the one that was asked for.
+	if n, _ := s.Get(t.Context(), "demo", "lan"); n.IPv4 != "10.77.1.0/24" {
+		t.Errorf("ipv4 = %q before the status has it, want the range asked for", n.IPv4)
 	}
 	obj, _ := client.Resource(networksGVR).Namespace("t-demo").Get(t.Context(), "lan", metav1.GetOptions{})
 	_ = unstructured.SetNestedField(obj.Object, "10.77.1.1/24", "status", "ipv4")
@@ -165,5 +166,23 @@ func TestNetworkReadsItsRangeFromTheStatusAndListsAllTenants(t *testing.T) {
 	all, err := s.ListAll(t.Context())
 	if err != nil || len(all) != 2 {
 		t.Errorf("ListAll = %v, %v, want the networks of both tenants", all, err)
+	}
+}
+
+func TestAStatusReadsWhenTheCompositionStoppedSyncing(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{"status": map[string]any{"conditions": []any{
+		map[string]any{"type": "Synced", "status": "False", "reason": "ReconcileError", "lastTransitionTime": "2026-11-08T12:00:00Z"},
+		map[string]any{"type": "Ready", "status": "False", "lastTransitionTime": "2026-11-08T11:00:00Z"},
+	}}}}
+	st := statusOf(obj, "")
+	if want := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC); !st.SyncFailedSince.Equal(want) {
+		t.Errorf("SyncFailedSince = %v, want %v", st.SyncFailedSince, want)
+	}
+	if got := st.At(time.Date(2026, 11, 8, 12, 10, 0, 0, time.UTC)); got != "Failed" {
+		t.Errorf("phase = %s, want Failed", got)
+	}
+	obj.Object["status"].(map[string]any)["conditions"].([]any)[0].(map[string]any)["status"] = "True"
+	if st := statusOf(obj, ""); !st.SyncFailedSince.IsZero() {
+		t.Errorf("SyncFailedSince = %v for a synced object", st.SyncFailedSince)
 	}
 }
