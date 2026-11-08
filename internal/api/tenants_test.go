@@ -168,7 +168,17 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 			"apikey:apikey-00000000000000a2 can_read_instances tenant:demo":    true,
 			"apikey:apikey-00000000000000a2 can_read_memberships tenant:demo":  true,
 			"apikey:apikey-00000000000000a2 can_write_memberships tenant:demo": true,
-			"user:viewer@example.org can_read_tenant tenant:demo":              true,
+			// A key that holds the scopes of the networks, the profiles and the tenant, and one that only reads the networks: the tuples
+			// the ApiKey composition writes, one per scope and tenant.
+			"apikey:apikey-00000000000000b1 can_read_tenant tenant:demo":    true,
+			"apikey:apikey-00000000000000b1 can_write_tenant tenant:demo":   true,
+			"apikey:apikey-00000000000000b1 can_read_networks tenant:demo":  true,
+			"apikey:apikey-00000000000000b1 can_write_networks tenant:demo": true,
+			"apikey:apikey-00000000000000b1 can_read_profiles tenant:demo":  true,
+			"apikey:apikey-00000000000000b1 can_write_profiles tenant:demo": true,
+			"apikey:apikey-00000000000000b2 can_read_tenant tenant:demo":    true,
+			"apikey:apikey-00000000000000b2 can_read_networks tenant:demo":  true,
+			"user:viewer@example.org can_read_tenant tenant:demo":           true,
 
 			// What the roles of the model give, written out (the model itself is tested against OpenFGA in authz).
 			"user:viewer@example.org can_read_images tenant:demo":    true,
@@ -239,6 +249,9 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 		"svc_mgr":    {Kind: auth.KindServiceKey, Subject: "apikey:apikey-00000000000000a2", Name: "apikey-00000000000000a2"},
 		// A key whose tuples expired, or that has none: OpenFGA says no to everything.
 		"svc_none": {Kind: auth.KindServiceKey, Subject: "apikey:apikey-00000000000000a3", Name: "apikey-00000000000000a3"},
+		// Keys with the scopes of the networks, the profiles and the tenant, and with the one that reads the networks.
+		"svc_net":   {Kind: auth.KindServiceKey, Subject: "apikey:apikey-00000000000000b1", Name: "apikey-00000000000000b1"},
+		"svc_netro": {Kind: auth.KindServiceKey, Subject: "apikey:apikey-00000000000000b2", Name: "apikey-00000000000000b2"},
 	}
 	images := &imageStore{data: map[string]map[string]compute.Image{}}
 	networks := &networkStore{data: map[string]map[string]compute.Network{}}
