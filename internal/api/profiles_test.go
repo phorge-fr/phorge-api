@@ -43,6 +43,22 @@ func TestTheBuiltinProfilesDescribeTheirOwnNumbers(t *testing.T) {
 	}
 }
 
+func TestLimitsPublishTheCeilingsOfTheDeployment(t *testing.T) {
+	set := testSettings
+	set.MaxProfilesPerTenant, set.MaxImagesPerTenant, set.MaxTenantsPerUser = 7, 9, 3
+	e := newEnvWith(t, set)
+	var body limitsBody
+	mustDecode(t, e.do(t, "GET", "/v1/limits", "mallory", ""), &body)
+	if body.Profile.MaxPerTenant != 7 || body.Image.MaxPerTenant != 9 || body.Tenant.MaxPerUser != 3 {
+		t.Errorf("ceilings = %+v %+v %+v", body.Profile, body.Image, body.Tenant)
+	}
+	// 0 is no limit and is said as 0
+	mustDecode(t, newEnv(t).do(t, "GET", "/v1/limits", "mallory", ""), &body)
+	if body.Profile.MaxPerTenant != 0 || body.Image.MaxPerTenant != 0 || body.Tenant.MaxPerUser != 0 {
+		t.Errorf("no limit set, got %+v %+v %+v", body.Profile, body.Image, body.Tenant)
+	}
+}
+
 func TestLimitsNeedACredentialAndSayWhatTheAPIEnforces(t *testing.T) {
 	e := newEnv(t)
 	if code := call(t, e, "GET", "/v1/limits", "", ""); code != http.StatusUnauthorized {
