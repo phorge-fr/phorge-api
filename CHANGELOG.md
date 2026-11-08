@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/phorge-fr/phorge-api/compare/v0.8.1...v0.9.0) (2026-11-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **tenants:** the API has no platform administrators group any more. PLATFORM_ADMIN_GROUP, TENANT_CREATION and API_KEY_CREATION are no longer read (and no longer required): any person signed in with Authentik creates their own tenant (small plan, at most MAX_TENANTS_PER_USER) and their own API keys. GET /v1/tenants lists only the tenants the caller holds a role on. The plan of a tenant is not changed through the API: PATCH with plan answers 403, a platform administrator changes it on the Tenant object. GET /v1/whoami loses platformAdmin; canCreateTenants stays. The groups claim of the token is no longer read.
+
+### Features
+
+* **tenants:** remove the platform administrators group, tenants and keys are self-service ([ac4817f](https://github.com/phorge-fr/phorge-api/commit/ac4817fe250228ce4207168f671ba6bf30486f9c)), closes [#98](https://github.com/phorge-fr/phorge-api/issues/98)
+
 ## [0.8.1](https://github.com/phorge-fr/phorge-api/compare/v0.8.0...v0.8.1) (2026-11-08)
 
 
