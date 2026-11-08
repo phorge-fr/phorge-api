@@ -49,6 +49,7 @@ func main() {
 		Authz:       authz.New(fga.New(cfg.OpenFGAURL, cfg.OpenFGAStoreID, cfg.OpenFGAAPIKey, fgaHTTP), cfg.PlatformAdminGroup),
 		Tenants:     kube.NewTenants(kubeConn),
 		Images:      kube.NewImages(kubeConn),
+		Networks:    kube.NewNetworks(kubeConn),
 		Instances:   kube.NewInstances(kubeConn),
 		Memberships: kube.NewMemberships(kubeConn),
 		Keys:        kube.NewApiKeys(kubeConn),

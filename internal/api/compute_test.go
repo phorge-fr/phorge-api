@@ -81,6 +81,67 @@ func (s *imageStore) put(tenant string, im compute.Image) {
 	s.data[tenant][im.Name] = im
 }
 
+// networkStore is an in-memory store of networks, per tenant.
+type networkStore struct {
+	data    map[string]map[string]compute.Network
+	err     error
+	created []compute.CreateNetwork
+	deleted []string
+}
+
+func (s *networkStore) List(_ context.Context, tenant string) ([]compute.Network, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	var out []compute.Network
+	for _, n := range s.data[tenant] {
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+func (s *networkStore) Get(_ context.Context, tenant, name string) (compute.Network, error) {
+	if s.err != nil {
+		return compute.Network{}, s.err
+	}
+	n, ok := s.data[tenant][name]
+	if !ok {
+		return compute.Network{}, compute.ErrNotFound
+	}
+	return n, nil
+}
+
+func (s *networkStore) Create(_ context.Context, tenant string, r compute.CreateNetwork) (compute.Network, error) {
+	if s.err != nil {
+		return compute.Network{}, s.err
+	}
+	if _, ok := s.data[tenant][r.Name]; ok {
+		return compute.Network{}, compute.ErrExists
+	}
+	s.created = append(s.created, r)
+	n := compute.Network{Name: r.Name, Description: r.Description, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
+	s.put(tenant, n)
+	return n, nil
+}
+
+func (s *networkStore) Delete(_ context.Context, tenant, name string) error {
+	n, err := s.Get(context.Background(), tenant, name)
+	if err != nil {
+		return err
+	}
+	n.Status.Deleting = true
+	s.data[tenant][name] = n
+	s.deleted = append(s.deleted, tenant+"/"+name)
+	return nil
+}
+
+func (s *networkStore) put(tenant string, n compute.Network) {
+	if s.data[tenant] == nil {
+		s.data[tenant] = map[string]compute.Network{}
+	}
+	s.data[tenant][n.Name] = n
+}
+
 type instanceStore struct {
 	data    map[string]map[string]compute.Instance
 	err     error
@@ -119,7 +180,7 @@ func (s *instanceStore) Create(_ context.Context, tenant string, r compute.Creat
 		return compute.Instance{}, compute.ErrExists
 	}
 	s.created = append(s.created, r)
-	in := compute.Instance{Name: r.Name, Image: r.Image, CPU: 1, MemoryMiB: 1024, DiskGiB: 10, Running: true, SecureBoot: true,
+	in := compute.Instance{Name: r.Name, Image: r.Image, Network: r.Network, CPU: *r.CPU, MemoryMiB: *r.MemoryMiB, DiskGiB: *r.DiskGiB, Running: true, SecureBoot: true,
 		SSHPublicKeys: r.SSHPublicKeys, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
 	s.put(tenant, in)
 	return in, nil

@@ -22,6 +22,7 @@ type instanceRoutes struct {
 	base
 	store    compute.InstanceStore
 	images   compute.ImageStore
+	networks compute.NetworkStore
 	settings Settings
 }
 
@@ -37,6 +38,7 @@ func (i *instanceRoutes) register(s *server.Server, authn func(http.Handler) htt
 type instanceBody struct {
 	Name          string   `json:"name"`
 	Image         string   `json:"image"`
+	Network       string   `json:"network"`
 	CPU           int      `json:"cpu"`
 	MemoryMiB     int      `json:"memoryMiB"`
 	DiskGiB       int      `json:"diskGiB"`
@@ -74,7 +76,7 @@ func (i *instanceRoutes) body(in compute.Instance) instanceBody {
 			" (it was still booting, or it is stuck)", transition, stuck.Round(time.Minute))
 	}
 	return instanceBody{
-		Name: in.Name, Image: in.Image, CPU: in.CPU, MemoryMiB: in.MemoryMiB, DiskGiB: in.DiskGiB, Running: in.Running,
+		Name: in.Name, Image: in.Image, Network: in.Network, CPU: in.CPU, MemoryMiB: in.MemoryMiB, DiskGiB: in.DiskGiB, Running: in.Running,
 		Nesting: in.Nesting, SecureBoot: in.SecureBoot, SSHPublicKeys: keys, State: in.State, IPv4: in.IPv4,
 		Transition: transition, TransitionSince: since,
 		Phase: in.Status.At(i.now()), Problems: problems, CreatedAt: in.CreatedAt, CreatedBy: in.CreatedBy,
@@ -138,6 +140,16 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The network is one of this tenant. A tenant comes without one, so the instance cannot be reached until its user has made
+	// one: with a single network the choice is made for them, with none or several it is theirs.
+	nw, ok := i.pickNetwork(w, r, tenant, req.Network)
+	if !ok {
+		return
+	}
+	req.Network = nw
+	// A size is complete: the XRD has no defaults, so what the request left out takes the ones of the API.
+	req = req.WithDefaultSize()
+
 	in, err := i.store.Create(r.Context(), tenant, req)
 	if errors.Is(err, resource.ErrNotFound) {
 		httperr.Write(w, http.StatusNotFound, "not_found", "no such tenant")
@@ -151,6 +163,51 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 	// Accepted, not created: it takes about a minute. The quota of the plan is Incus's, its refusal comes back in problems.
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/instances/"+in.Name)
 	writeJSON(w, http.StatusAccepted, i.body(in))
+}
+
+// pickNetwork returns the network an instance is attached to, or answers and returns false. A network that is not Ready yet is
+// refused for the reason an image is: the instance would report problems that are not one.
+func (i *instanceRoutes) pickNetwork(w http.ResponseWriter, r *http.Request, tenant, asked string) (string, bool) {
+	if asked != "" {
+		nw, err := i.networks.Get(r.Context(), tenant, asked)
+		if errors.Is(err, resource.ErrNotFound) {
+			i.storeError(w, &resource.InvalidError{Problems: []string{"network " + asked + " does not exist in this tenant: create it first"}}, "instance")
+			return "", false
+		}
+		if err != nil {
+			i.storeError(w, err, "network")
+			return "", false
+		}
+		if phase := nw.Status.At(i.now()); phase != status.Ready {
+			httperr.Write(w, http.StatusConflict, "network_not_ready", "network "+asked+" is "+strings.ToLower(string(phase))+": wait until it is Ready")
+			return "", false
+		}
+		return asked, true
+	}
+	all, err := i.networks.List(r.Context(), tenant)
+	if err != nil {
+		i.storeError(w, err, "network")
+		return "", false
+	}
+	switch len(all) {
+	case 0:
+		i.storeError(w, &resource.InvalidError{Problems: []string{"the tenant has no network: create one first (POST /v1/tenants/" + tenant + "/networks)"}}, "instance")
+		return "", false
+	case 1:
+		only := all[0]
+		if phase := only.Status.At(i.now()); phase != status.Ready {
+			httperr.Write(w, http.StatusConflict, "network_not_ready", "network "+only.Name+" is "+strings.ToLower(string(phase))+": wait until it is Ready")
+			return "", false
+		}
+		return only.Name, true
+	}
+	names := make([]string, 0, len(all))
+	for _, n := range all {
+		names = append(names, n.Name)
+	}
+	slices.Sort(names)
+	i.storeError(w, &resource.InvalidError{Problems: []string{"network is required, the tenant has several: " + strings.Join(names, ", ")}}, "instance")
+	return "", false
 }
 
 func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,7 @@
 ---
 type: reference
 audience: developer calling the API
-verified: 2026-10-28
+verified: 2026-11-08
 ---
 
 # Endpoints
@@ -14,6 +14,7 @@ verified: 2026-10-28
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you can see (the platform administrators see all of them) |
 | `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create, resize and delete a tenant: platform administrators only |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with a role or a key tuple (`images:read`), write with `operator` or `images:write` |
+| `GET`, `POST /v1/tenants/{t}/networks`, `GET`, `DELETE /v1/tenants/{t}/networks/{name}` | The networks of a tenant, which comes without one: read with a role (`viewer` and above), write with `operator`. No key scope covers them yet |
 | `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, and the keys with `memberships:read` and `memberships:write` on it |
 | `GET`, `POST /v1/apikeys`, `GET`, `PATCH`, `DELETE /v1/apikeys/{id}` | Your own API keys, with a token of Authentik (a key cannot manage keys). Creating: platform administrators for now. `PATCH` only renames |
 | `GET`, `POST /v1/tenants/{t}/instances`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/instances/{name}` | The virtual machines: read with a role or a key tuple (`instances:read`), write with `user` or `instances:write` |

@@ -19,6 +19,7 @@ Pages are grouped by what the reader wants, following [the organization's docume
 | [Authentication](reference/authentication.md) | Accepted credentials |
 | [Tenants](reference/tenants.md) | Behavior of the tenant routes |
 | [Images and instances](reference/images-and-instances.md) | Behavior of the image and instance routes |
+| [Networks](reference/networks.md) | Behavior of the network routes |
 | [Memberships and API keys](reference/memberships-and-api-keys.md) | Roles and personal keys |
 
 ## Explanation

@@ -32,6 +32,7 @@ tags:
     - name: Identity
     - name: Tenants
     - name: Images
+    - name: Networks
     - name: Instances
     - name: Memberships
     - name: API keys
@@ -317,6 +318,124 @@ paths:
                         application/json:
                             schema:
                                 $ref: "#/components/schemas/Image"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/networks:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+        get:
+            tags:
+                - Networks
+            operationId: listNetworks
+            summary: The networks of a tenant
+            description: A tenant comes without a network, its users deploy the ones they need.
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The networks, by name.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/NetworkList"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        post:
+            tags:
+                - Networks
+            operationId: createNetwork
+            summary: Deploy a network in a tenant
+            description: |
+                An OVN network of the tenant, NATed: its instances reach the Internet and are not reachable from it. Its addresses
+                are chosen by Incus. The answer is `202`: poll the `Location` until `phase` is `Ready`. The number of networks is
+                limited by the plan of the tenant: the next one never becomes ready, and `problems` says that a limit is reached.
+            security:
+                - bearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/NetworkCreate"
+            responses:
+                "202":
+                    description: Accepted, being deployed.
+                    headers:
+                        Location:
+                            schema:
+                                type: string
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Network"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+    /v1/tenants/{t}/networks/{name}:
+        parameters:
+            - $ref: "#/components/parameters/tenant"
+            - $ref: "#/components/parameters/name"
+        get:
+            tags:
+                - Networks
+            operationId: getNetwork
+            summary: One network
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The network.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Network"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
+        delete:
+            tags:
+                - Networks
+            operationId: deleteNetwork
+            summary: Delete a network
+            description: |
+                A network that an instance is attached to cannot be deleted: the answer is `409` and says which instances. Delete
+                them first. For a few seconds after the last one is gone Crossplane still refuses, with a `409` that names nobody:
+                try again.
+            security:
+                - bearerAuth: []
+            responses:
+                "202":
+                    description: Being deleted.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Network"
                 "401":
                     $ref: "#/components/responses/Unauthenticated"
                 "403":
@@ -989,6 +1108,53 @@ components:
                     items:
                         type: string
                         pattern: '^[a-z0-9][a-z0-9._-]{0,62}$'
+        Network:
+            type: object
+            required:
+                - name
+                - phase
+                - createdAt
+            properties:
+                name:
+                    type: string
+                    example: net
+                description:
+                    type: string
+                phase:
+                    $ref: "#/components/schemas/Phase"
+                problems:
+                    type: string
+                    description: |
+                        What is wrong, in a sentence made for the user: a limit of the plan that is reached, or that the platform could
+                        not complete a step yet. Never a Crossplane condition or a provider error. Absent when all is well.
+                createdAt:
+                    type: string
+                    format: date-time
+                createdBy:
+                    type: string
+        NetworkList:
+            type: object
+            required:
+                - items
+            properties:
+                items:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/Network"
+        NetworkCreate:
+            type: object
+            additionalProperties: false
+            required:
+                - name
+            properties:
+                name:
+                    type: string
+                    pattern: '^[a-z]([a-z0-9-]{0,13}[a-z0-9])?$'
+                    description: 1 to 15 characters, the limit of Incus.
+                    example: net
+                description:
+                    type: string
+                    maxLength: 200
         Instance:
             type: object
             required:
@@ -1011,6 +1177,10 @@ components:
                     type: string
                     description: The image of the tenant it started from.
                     example: debian
+                network:
+                    type: string
+                    description: The network the instance is attached to (`eth0`).
+                    example: net
                 cpu:
                     type: integer
                 memoryMiB:
@@ -1082,6 +1252,13 @@ components:
                     type: string
                     description: An image of the tenant, `Ready`.
                     example: debian
+                network:
+                    type: string
+                    pattern: '^[a-z]([a-z0-9-]{0,13}[a-z0-9])?$'
+                    description: |
+                        A network of the tenant, `Ready`. It can be left out when the tenant has exactly one, which is then used: with
+                        none or several the request is refused (`422`) and says so.
+                    example: net
                 cpu:
                     type: integer
                     minimum: 1

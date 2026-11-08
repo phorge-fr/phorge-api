@@ -131,7 +131,7 @@ func (s *Tenants) Patch(ctx context.Context, name string, req tenants.PatchReque
 	return tenantOf(obj), nil
 }
 
-// Delete deletes a tenant. What it holds goes first: the instances, then the memberships, then the images, each in the
+// Delete deletes a tenant. What it holds goes first: the instances, then the memberships, the networks, then the images, each in the
 // foreground and without waiting for it, and then the Tenant itself, in the foreground too: the object stays, with a deletion
 // timestamp, until every resource it composed is gone (a Tenant was gone after 1 s in the background mode, its resources
 // after 58 s).
@@ -154,7 +154,7 @@ func (s *Tenants) Delete(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	for _, gvr := range []schema.GroupVersionResource{instancesGVR, membershipsGVR, imagesGVR} {
+	for _, gvr := range []schema.GroupVersionResource{instancesGVR, membershipsGVR, networksGVR, imagesGVR} {
 		if err := deleteAll(ctx, client.Resource(gvr).Namespace(NamespaceOf(name))); err != nil {
 			return err
 		}
