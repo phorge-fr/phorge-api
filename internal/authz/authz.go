@@ -53,17 +53,38 @@ var relations = map[Action]string{
 }
 
 // keyScopes are the scopes a key can be given, and the action each one lets it do: one OpenFGA tuple on a tenant each, the
-// relations key_<resource>_<action> of the model. They are the ones of the ApiKey XRD. There is none for WriteTenants: a key
-// is never a platform administrator.
+// relations key_<resource>_<action> of the model. They are the ones of the ApiKey XRD. There is none for WriteTenants (creating a
+// tenant for someone else, choosing a plan): a key is never a platform administrator. A key does not create tenants yet either.
 var keyScopes = map[string]Action{
 	"tenants:read":      ReadTenant,
+	"tenants:write":     WriteTenant,
 	"instances:read":    ReadInstances,
 	"instances:write":   WriteInstances,
 	"images:read":       ReadImages,
 	"images:write":      WriteImages,
+	"networks:read":     ReadNetworks,
+	"networks:write":    WriteNetworks,
 	"memberships:read":  ReadMemberships,
 	"memberships:write": WriteMemberships,
 }
+
+// scopeDescriptions say what each scope lets a key do, in a sentence for the person who gives it. Scopes are named
+// <resource>:<verb>, and a console groups them by resource.
+var scopeDescriptions = map[string]string{
+	"tenants:read":      "See the tenant and what it holds",
+	"tenants:write":     "Rename the tenant and delete it, which destroys its virtual machines",
+	"instances:read":    "See the instances",
+	"instances:write":   "Create, change, start, stop and delete instances",
+	"images:read":       "See the images",
+	"images:write":      "Pull and delete images",
+	"networks:read":     "See the networks",
+	"networks:write":    "Deploy and delete networks",
+	"memberships:read":  "See who has a role on the tenant",
+	"memberships:write": "Give and take away roles on the tenant",
+}
+
+// ScopeDescription says what a scope lets a key do.
+func ScopeDescription(scope string) string { return scopeDescriptions[scope] }
 
 // Scopes lists the scopes of an API key, sorted.
 func Scopes() []string {

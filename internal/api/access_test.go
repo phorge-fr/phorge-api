@@ -387,13 +387,19 @@ func TestAKeyNeverGetsWhatItsCreatorDoesNotHold(t *testing.T) {
 		"the operator manages memberships, which is not hers":    {"operator", grant("demo", "memberships:write"), http.StatusForbidden},
 		"an administrator, on a tenant it has no role on":        {"admin", grant("other", "memberships:write"), http.StatusCreated},
 		"an administrator, on a tenant that does not exist":      {"admin", grant("ghost", "tenants:read"), http.StatusForbidden},
+		// The scopes of the networks and of the tenant: the same rule, the role of the creator decides.
+		"the operator writes networks, as she may":           {"operator", grant("demo", "networks:read", "networks:write"), http.StatusCreated},
+		"alice reads networks, as any role does":             {"alice", grant("demo", "networks:read"), http.StatusCreated},
+		"alice writes networks, which she does not hold":     {"alice", grant("demo", "networks:write"), http.StatusForbidden},
+		"the owner of a tenant deletes it, so a key may":     {"tadmin", grant("demo", "tenants:write"), http.StatusCreated},
+		"the operator deletes the tenant, which is not hers": {"operator", grant("demo", "tenants:write"), http.StatusForbidden},
 	} {
 		if code := call(t, e, "POST", "/v1/apikeys", tt.token, tt.body); code != tt.want {
 			t.Errorf("%s: status %d, want %d", name, code, tt.want)
 		}
 	}
-	if len(e.keys.data) != 3 {
-		t.Errorf("%d keys exist, want only the 3 that were allowed", len(e.keys.data))
+	if len(e.keys.data) != 6 {
+		t.Errorf("%d keys exist, want only the 6 that were allowed", len(e.keys.data))
 	}
 }
 
@@ -405,19 +411,19 @@ func TestCreateApiKeyRefusesABadRequest(t *testing.T) {
 		body string
 		want int
 	}{
-		"no display name":              {`{"expiresAt":"2026-12-31T00:00:00Z",` + g + `}`, http.StatusUnprocessableEntity},
-		"no grant":                     {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusUnprocessableEntity},
-		"no scope":                     {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":[]}]}`, http.StatusUnprocessableEntity},
-		"a scope that does not exist":  {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":["tenants:delete"]}]}`, http.StatusUnprocessableEntity},
-		"tenants:write, never a key's": {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":["tenants:write"]}]}`, http.StatusUnprocessableEntity},
-		"a tenant that is not a name":  {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"Demo#admin","scopes":["tenants:read"]}]}`, http.StatusUnprocessableEntity},
-		"no expiry, a key expires":     {`{"displayName":"ci",` + g + `}`, http.StatusUnprocessableEntity},
-		"a date that passed":           {`{"displayName":"ci","expiresAt":"2020-01-01T00:00:00Z",` + g + `}`, http.StatusUnprocessableEntity},
-		"a date too far":               {`{"displayName":"ci","expiresAt":"` + long + `",` + g + `}`, http.StatusUnprocessableEntity},
-		"a date that is not one":       {`{"displayName":"ci","expiresAt":"tomorrow",` + g + `}`, http.StatusBadRequest},
-		"the former scopes field":      {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","scopes":["tenants:read"],` + g + `}`, http.StatusBadRequest},
-		"a hash given by the caller":   {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z",` + g + `,"hash":"` + strings.Repeat("a", 64) + `"}`, http.StatusBadRequest},
-		"an owner given by the caller": {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z",` + g + `,"owner":"x@y"}`, http.StatusBadRequest},
+		"no display name":               {`{"expiresAt":"2026-12-31T00:00:00Z",` + g + `}`, http.StatusUnprocessableEntity},
+		"no grant":                      {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z"}`, http.StatusUnprocessableEntity},
+		"no scope":                      {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":[]}]}`, http.StatusUnprocessableEntity},
+		"a scope that does not exist":   {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":["tenants:delete"]}]}`, http.StatusUnprocessableEntity},
+		"tenants:create, no key has it": {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":["tenants:create"]}]}`, http.StatusUnprocessableEntity},
+		"a tenant that is not a name":   {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"Demo#admin","scopes":["tenants:read"]}]}`, http.StatusUnprocessableEntity},
+		"no expiry, a key expires":      {`{"displayName":"ci",` + g + `}`, http.StatusUnprocessableEntity},
+		"a date that passed":            {`{"displayName":"ci","expiresAt":"2020-01-01T00:00:00Z",` + g + `}`, http.StatusUnprocessableEntity},
+		"a date too far":                {`{"displayName":"ci","expiresAt":"` + long + `",` + g + `}`, http.StatusUnprocessableEntity},
+		"a date that is not one":        {`{"displayName":"ci","expiresAt":"tomorrow",` + g + `}`, http.StatusBadRequest},
+		"the former scopes field":       {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z","scopes":["tenants:read"],` + g + `}`, http.StatusBadRequest},
+		"a hash given by the caller":    {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z",` + g + `,"hash":"` + strings.Repeat("a", 64) + `"}`, http.StatusBadRequest},
+		"an owner given by the caller":  {`{"displayName":"ci","expiresAt":"2026-12-31T00:00:00Z",` + g + `,"owner":"x@y"}`, http.StatusBadRequest},
 	} {
 		if code := call(t, e, "POST", "/v1/apikeys", "admin", tt.body); code != tt.want {
 			t.Errorf("%s: status %d, want %d", name, code, tt.want)
@@ -557,5 +563,34 @@ func TestTheKeyLifetimeIsADeploymentSetting(t *testing.T) {
 	// A key always expires: OpenFGA refuses it from that date, whatever the deployment says.
 	if code := call(t, e, "POST", "/v1/apikeys", "admin", `{"displayName":"forever","grants":[{"tenant":"demo","scopes":["tenants:read"]}]}`); code != http.StatusUnprocessableEntity {
 		t.Errorf("no expiry with no maximum: %d, want 422", code)
+	}
+}
+
+func TestTheScopesOfAKeyAreListed(t *testing.T) {
+	e := newEnv(t)
+	var body struct {
+		Items []scopeBody `json:"items"`
+	}
+	mustDecode(t, e.do(t, "GET", "/v1/apikeys/scopes", "alice", ""), &body)
+	var got []string
+	for _, s := range body.Items {
+		got = append(got, s.Scope)
+		if s.Description == "" || !strings.Contains(s.Scope, ":") {
+			t.Errorf("%+v: a scope is <resource>:<verb> and says what it does", s)
+		}
+	}
+	want := "images:read images:write instances:read instances:write memberships:read memberships:write networks:read networks:write tenants:read tenants:write"
+	if strings.Join(got, " ") != want {
+		t.Errorf("scopes = %v, want %s", got, want)
+	}
+	// It is part of managing keys: for a person, never for a key, and never without a credential.
+	for who, code := range map[string]int{"svc": http.StatusForbidden, "": http.StatusUnauthorized} {
+		if got := call(t, e, "GET", "/v1/apikeys/scopes", who, ""); got != code {
+			t.Errorf("%q: status %d, want %d", who, got, code)
+		}
+	}
+	// and the path of a key called "scopes" is not this list
+	if got := call(t, e, "GET", "/v1/apikeys/scopes", "alice", ""); got != http.StatusOK {
+		t.Errorf("status %d", got)
 	}
 }

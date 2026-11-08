@@ -81,22 +81,22 @@ func TestCreateKey(t *testing.T) {
 	past, tooFar := now.Add(-time.Second), now.Add(max+time.Second)
 	scopes := func(s ...string) []Grant { return []Grant{{Tenant: "demo", Scopes: s}} }
 	for name, req := range map[string]CreateKey{
-		"no display name":                      {Grants: one, ExpiresAt: &later},
-		"a display name too long":              {DisplayName: strings.Repeat("a", 101), Grants: one, ExpiresAt: &later},
-		"no grant":                             {DisplayName: "ci", ExpiresAt: &later},
-		"an empty list":                        {DisplayName: "ci", Grants: []Grant{}, ExpiresAt: &later},
-		"no scope":                             {DisplayName: "ci", Grants: scopes(), ExpiresAt: &later},
-		"a scope that does not exist":          {DisplayName: "ci", Grants: scopes("tenants:delete"), ExpiresAt: &later},
-		"tenants:write, which a key never has": {DisplayName: "ci", Grants: scopes("tenants:write"), ExpiresAt: &later},
-		"the old scope name":                   {DisplayName: "ci", Grants: scopes("tenant:read"), ExpiresAt: &later},
-		"a scope twice":                        {DisplayName: "ci", Grants: scopes("tenants:read", "tenants:read"), ExpiresAt: &later},
-		"a tenant that is not a name":          {DisplayName: "ci", Grants: []Grant{{Tenant: "Demo#admin", Scopes: []string{"tenants:read"}}}, ExpiresAt: &later},
-		"a tenant twice":                       {DisplayName: "ci", Grants: []Grant{two[0], two[0]}, ExpiresAt: &later},
-		"too many tenants":                     {DisplayName: "ci", Grants: tooMany(), ExpiresAt: &later},
-		"no expiry: a key expires":             {DisplayName: "ci", Grants: one},
-		"an expiry that passed":                {DisplayName: "ci", Grants: one, ExpiresAt: &past},
-		"an expiry now":                        {DisplayName: "ci", Grants: one, ExpiresAt: &now},
-		"an expiry too far":                    {DisplayName: "ci", Grants: one, ExpiresAt: &tooFar},
+		"no display name":                  {Grants: one, ExpiresAt: &later},
+		"a display name too long":          {DisplayName: strings.Repeat("a", 101), Grants: one, ExpiresAt: &later},
+		"no grant":                         {DisplayName: "ci", ExpiresAt: &later},
+		"an empty list":                    {DisplayName: "ci", Grants: []Grant{}, ExpiresAt: &later},
+		"no scope":                         {DisplayName: "ci", Grants: scopes(), ExpiresAt: &later},
+		"a scope that does not exist":      {DisplayName: "ci", Grants: scopes("tenants:delete"), ExpiresAt: &later},
+		"tenants:create, which no key has": {DisplayName: "ci", Grants: scopes("tenants:create"), ExpiresAt: &later},
+		"the old scope name":               {DisplayName: "ci", Grants: scopes("tenant:read"), ExpiresAt: &later},
+		"a scope twice":                    {DisplayName: "ci", Grants: scopes("tenants:read", "tenants:read"), ExpiresAt: &later},
+		"a tenant that is not a name":      {DisplayName: "ci", Grants: []Grant{{Tenant: "Demo#admin", Scopes: []string{"tenants:read"}}}, ExpiresAt: &later},
+		"a tenant twice":                   {DisplayName: "ci", Grants: []Grant{two[0], two[0]}, ExpiresAt: &later},
+		"too many tenants":                 {DisplayName: "ci", Grants: tooMany(), ExpiresAt: &later},
+		"no expiry: a key expires":         {DisplayName: "ci", Grants: one},
+		"an expiry that passed":            {DisplayName: "ci", Grants: one, ExpiresAt: &past},
+		"an expiry now":                    {DisplayName: "ci", Grants: one, ExpiresAt: &now},
+		"an expiry too far":                {DisplayName: "ci", Grants: one, ExpiresAt: &tooFar},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var invalid *InvalidError
