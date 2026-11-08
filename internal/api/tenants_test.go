@@ -193,6 +193,7 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 			"user:tadmin@example.org can_write_tenant tenant:demo": true,
 			// alice owns demo: she is its admin.
 			"user:alice@example.org can_write_tenant tenant:demo":       true,
+			"user:alice@example.org can_read_networks tenant:demo":      true,
 			"user:tadmin@example.org can_read_images tenant:demo":       true,
 			"user:tadmin@example.org can_write_images tenant:demo":      true,
 			"user:tadmin@example.org can_read_networks tenant:demo":     true,

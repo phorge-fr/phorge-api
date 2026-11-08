@@ -64,27 +64,33 @@ func TestEveryActionAndScopeIsInTheTables(t *testing.T) {
 			t.Errorf("scope %s gives %s, which is not a relation of the model", scope, action)
 		}
 	}
-	// The networks are for users until the scopes of a key cover them (phorge-fr/phorge-api#74): the model has the relations
-	// can_read_networks and can_write_networks for a role and no key_networks_* yet.
-	if len(keyScopes) != len(actions)-3 {
-		t.Errorf("%d scopes for %d actions, three of them (the networks and writing the tenant) are not given to a key yet", len(keyScopes), len(actions))
+	if len(keyScopes) != len(actions) {
+		t.Errorf("%d scopes for %d actions", len(keyScopes), len(actions))
 	}
-	for _, a := range []Action{ReadNetworks, WriteNetworks, WriteTenant} {
-		for scope, action := range keyScopes {
-			if action == a {
-				t.Errorf("scope %s gives %s: the model has no key relation for it yet", scope, a)
-			}
+	for scope := range keyScopes {
+		if ScopeDescription(scope) == "" {
+			t.Errorf("scope %s has no description", scope)
+		}
+		if !strings.Contains(scope, ":") {
+			t.Errorf("scope %s is not <resource>:<verb>: the console groups them by resource", scope)
 		}
 	}
-	want := "images:read,images:write,instances:read,instances:write,memberships:read,memberships:write,tenants:read"
+	want := "images:read,images:write,instances:read,instances:write,memberships:read,memberships:write,networks:read,networks:write,tenants:read,tenants:write"
 	if got := strings.Join(Scopes(), ","); got != want {
 		t.Errorf("Scopes() = %s, want the ones of the ApiKey XRD: %s", got, want)
 	}
 	if a, ok := ScopeAction("instances:write"); !ok || a != WriteInstances {
 		t.Errorf("ScopeAction(instances:write) = %v, %v", a, ok)
 	}
-	if _, ok := ScopeAction("tenants:write"); ok {
-		t.Error("tenants:write is a scope of a key: it must not exist")
+	// tenants:write renames and deletes the tenant it is given on. Creating a tenant for someone else and choosing a plan is what
+	// WriteTenants is, and no scope gives it: a key is never a platform administrator.
+	if a, ok := ScopeAction("tenants:write"); !ok || a != WriteTenant {
+		t.Errorf("ScopeAction(tenants:write) = %v, %v", a, ok)
+	}
+	for scope, action := range keyScopes {
+		if action == WriteTenants {
+			t.Errorf("scope %s gives the platform administrators' action", scope)
+		}
 	}
 }
 

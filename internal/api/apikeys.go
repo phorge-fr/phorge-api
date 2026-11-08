@@ -31,6 +31,7 @@ type keyRoutes struct {
 
 func (k *keyRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
 	const collection, item = "/v1/apikeys", "/v1/apikeys/{id}"
+	s.Handle("GET "+collection+"/scopes", authn(k.person(http.HandlerFunc(k.scopes))))
 	s.Handle("GET "+collection, authn(k.person(http.HandlerFunc(k.list))))
 	s.Handle("POST "+collection, authn(k.person(k.admin(http.HandlerFunc(k.create)))))
 	s.Handle("GET "+item, authn(k.person(http.HandlerFunc(k.get))))
@@ -287,4 +288,19 @@ func (k *keyRoutes) delete(w http.ResponseWriter, r *http.Request) {
 		key.Status = status.Object{Deleting: true}
 	}
 	writeJSON(w, http.StatusAccepted, k.body(key))
+}
+
+type scopeBody struct {
+	Scope       string `json:"scope"`
+	Description string `json:"description"`
+}
+
+// scopes lists what a key can be given, so that a client does not copy the list: <resource>:<verb>, sorted. Every credential of a
+// person is welcome to read it; a key is not, as it does not manage keys.
+func (k *keyRoutes) scopes(w http.ResponseWriter, _ *http.Request) {
+	items := []scopeBody{}
+	for _, s := range authz.Scopes() {
+		items = append(items, scopeBody{Scope: s, Description: authz.ScopeDescription(s)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }

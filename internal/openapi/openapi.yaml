@@ -906,6 +906,28 @@ paths:
                     $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
+    /v1/apikeys/scopes:
+        get:
+            tags:
+                - API keys
+            operationId: listApiKeyScopes
+            summary: What a key can be given
+            description: |
+                The scopes of a key, named `<resource>:<verb>` and sorted, with what each lets a key do. A key never exceeds what
+                its creator holds. Like the other routes of the keys, it is for a person: a key does not manage keys.
+            security:
+                - bearerAuth: []
+            responses:
+                "200":
+                    description: The scopes.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/ScopeList"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
     /v1/apikeys/{id}:
         parameters:
             - $ref: "#/components/parameters/keyId"
@@ -1585,17 +1607,41 @@ components:
                 - operator
                 - user
                 - viewer
+        ScopeInfo:
+            type: object
+            required:
+                - scope
+                - description
+            properties:
+                scope:
+                    $ref: "#/components/schemas/Scope"
+                description:
+                    type: string
+        ScopeList:
+            type: object
+            required:
+                - items
+            properties:
+                items:
+                    type: array
+                    items:
+                        $ref: "#/components/schemas/ScopeInfo"
         Scope:
             type: string
             description: |
-                What an API key may do on a tenant. `instances:write` does not give `instances:read`. `tenants:read` reads the
-                tenant. A key never creates, resizes or deletes tenants: that is for the platform administrators.
+                What an API key may do on a tenant, named `<resource>:<verb>`. `instances:write` does not give `instances:read`.
+                `tenants:read` reads the tenant, `tenants:write` renames it and deletes it (which destroys its virtual machines).
+                A key never creates a tenant for someone else nor chooses a plan: that is for the platform administrators.
+                The list is also `GET /v1/apikeys/scopes`.
             enum:
                 - tenants:read
+                - tenants:write
                 - instances:read
                 - instances:write
                 - images:read
                 - images:write
+                - networks:read
+                - networks:write
                 - memberships:read
                 - memberships:write
         Grant:
