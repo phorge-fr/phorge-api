@@ -34,13 +34,14 @@ func TestPublicSaysNothingWhileThingsAreSimplyNotReady(t *testing.T) {
 
 func TestPublicTranslatesWhatTheUserCanActOn(t *testing.T) {
 	for raw, want := range map[string]string{
-		"instance Synced: create failed: Failed creating instance: Reached maximum number of instances in project \"t-demo\"": "maximum number of instances",
-		"instance LastAsyncOperation: Reached maximum aggregate value \"100GiB\" for \"limits.disk\" in project \"t-x\"":      "disk limit",
-		"instance Synced: Reached maximum aggregate value \"8GiB\" for \"limits.memory\" in project \"t-x\"":                  "memory limit",
-		"instance Synced: Reached maximum aggregate value \"4\" for \"limits.cpu\" in project \"t-x\"":                        "CPU limit",
-		"instance Synced: start failed: the image is incompatible with secureboot":                                            "secure boot",
-		"image Synced: delete failed: in-use by 1 usage(s)":                                                                   "used by an instance",
-		"instance Synced: update failed: prevent_destroy is set":                                                              "delete it and create it again",
+		"instance Synced: create failed: Failed creating instance: Reached maximum number of instances in project \"t-demo\"":      "maximum number of instances",
+		"instance LastAsyncOperation: Reached maximum aggregate value \"100GiB\" for \"limits.disk\" in project \"t-x\"":           "disk limit",
+		"instance Synced: Reached maximum aggregate value \"8GiB\" for \"limits.memory\" in project \"t-x\"":                       "memory limit",
+		"instance Synced: Reached maximum aggregate value \"4\" for \"limits.cpu\" in project \"t-x\"":                             "CPU limit",
+		"network Synced: create failed: apply failed: Failed to create network \"x\": Networks limit has been reached for project": "maximum number of networks",
+		"instance Synced: start failed: the image is incompatible with secureboot":                                                 "secure boot",
+		"image Synced: delete failed: in-use by 1 usage(s)":                                                                        "used by an instance",
+		"instance Synced: update failed: prevent_destroy is set":                                                                   "delete it and create it again",
 	} {
 		got := Public(raw)
 		if !strings.Contains(got, want) {

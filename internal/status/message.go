@@ -21,7 +21,9 @@ var actionable = []struct {
 	say string
 }{
 	{regexp.MustCompile(`Reached maximum number of instances`), "This tenant has reached the maximum number of instances of its plan."},
-	{regexp.MustCompile(`Reached maximum number of networks`), "This tenant has reached the maximum number of networks of its plan."},
+	// Incus says it either way: "Reached maximum number of networks" for a count, "Networks limit has been reached for project" for a
+	// network (verified on the cluster, 2026-11-08).
+	{regexp.MustCompile(`Reached maximum number of networks|Networks limit has been reached`), "This tenant has reached the maximum number of networks of its plan."},
 	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.disk`), "This tenant has reached the disk limit of its plan."},
 	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.memory`), "This tenant has reached the memory limit of its plan."},
 	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.cpu`), "This tenant has reached the CPU limit of its plan."},
