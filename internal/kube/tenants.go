@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -130,15 +131,53 @@ func (s *Tenants) Patch(ctx context.Context, name string, req tenants.PatchReque
 	return tenantOf(obj), nil
 }
 
-// Delete deletes a tenant in the foreground: the object stays, with a deletion timestamp, until every resource it
-// composed is gone (a Tenant was gone after 1 s in the background mode, its resources after 58 s).
+// Delete deletes a tenant. What it holds goes first: the instances, then the memberships, then the images, each in the
+// foreground and without waiting for it, and then the Tenant itself, in the foreground too: the object stays, with a deletion
+// timestamp, until every resource it composed is gone (a Tenant was gone after 1 s in the background mode, its resources
+// after 58 s).
+//
+// The order matters. The namespace of the tenant is deleted with the Tenant, and Kubernetes then deletes what is in it,
+// including what provider-incus and provider-openfga need to reach Incus and OpenFGA: an image, an instance or a membership
+// still there at that moment is never deleted and holds the Tenant for ever (phorge-fr/Hangar#185). The platform makes the
+// namespace wait for them (a Usage on the namespace for each), so the Tenant stays Deleting until they are gone, and then
+// goes. An image that an instance still uses refuses to go: Crossplane remembers it and deletes it again once the instance
+// is gone.
 func (s *Tenants) Delete(ctx context.Context, name string) error {
 	r, err := s.resource()
 	if err != nil {
 		return err
 	}
+	if _, err := r.Get(ctx, name, metav1.GetOptions{}); err != nil {
+		return mapError(err)
+	}
+	client, err := s.conn.Dynamic()
+	if err != nil {
+		return err
+	}
+	for _, gvr := range []schema.GroupVersionResource{instancesGVR, membershipsGVR, imagesGVR} {
+		if err := deleteAll(ctx, client.Resource(gvr).Namespace(NamespaceOf(name))); err != nil {
+			return err
+		}
+	}
 	foreground := metav1.DeletePropagationForeground
 	return mapError(r.Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &foreground}))
+}
+
+// deleteAll deletes every object of a namespace in the foreground. An object that is already gone, or that Crossplane refuses
+// to delete yet because another one uses it ("in-use", replayed by Crossplane), is not a failure.
+func deleteAll(ctx context.Context, r dynamic.ResourceInterface) error {
+	list, err := r.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return mapError(err)
+	}
+	foreground := metav1.DeletePropagationForeground
+	for _, obj := range list.Items {
+		err := r.Delete(ctx, obj.GetName(), metav1.DeleteOptions{PropagationPolicy: &foreground})
+		if err != nil && !apierrors.IsNotFound(err) && !strings.Contains(err.Error(), "in-use") {
+			return mapError(err)
+		}
+	}
+	return nil
 }
 
 func mapError(err error) error {
