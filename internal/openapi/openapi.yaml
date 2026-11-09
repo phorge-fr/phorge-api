@@ -221,8 +221,9 @@ paths:
 
                 The instances, the memberships and the images of the tenant are deleted first, then the tenant itself. The
                 deletion is done in the foreground: the answer is `202` and the tenant stays, with the phase `Deleting`,
-                until everything it is made of is gone, up to a couple of minutes. A `404` on a later get is what tells it
-                is really done.
+                until everything it is made of is gone, up to a couple of minutes. A `404` on a later get means the person no
+                longer sees the tenant: it is gone or about to be, because the rights of the person go with it a little before its
+                last resources do. It is the signal to stop polling.
             security:
                 - bearerAuth: []
             responses:
