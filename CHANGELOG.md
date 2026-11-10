@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/phorge-fr/phorge-api/compare/v0.11.1...v0.12.0) (2026-11-10)
+
+
+### Features
+
+* Attach an instance to several networks ([13d842f](https://github.com/phorge-fr/phorge-api/commit/13d842f45ae9f8b646f03b12ad8f7747c6eed295))
+
 ## [0.11.1](https://github.com/phorge-fr/phorge-api/compare/v0.11.0...v0.11.1) (2026-11-10)
 
 
