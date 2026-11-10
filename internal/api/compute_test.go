@@ -693,6 +693,49 @@ func TestAnInstanceCannotBeStoppedWhileItBoots(t *testing.T) {
 	}
 }
 
+func TestTheMemoryOfARunningInstanceCanOnlyBeRaised(t *testing.T) {
+	e := newEnv(t)
+	patch := func(body string) *httptest.ResponseRecorder {
+		return e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", body)
+	}
+	refused := func(what, body string) {
+		t.Helper()
+		before := len(e.instances.patched)
+		rec := patch(body)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"running"`) || !strings.Contains(rec.Body.String(), "stop the instance") {
+			t.Errorf("%s: %d %s, want 409 running that says to stop the instance", what, rec.Code, rec.Body.String())
+		}
+		if len(e.instances.patched) != before {
+			t.Errorf("%s: the refused change was sent to the cluster", what)
+		}
+	}
+	running := compute.Instance{Name: "web", Image: "debian", CPU: 2, MemoryMiB: 4096, DiskGiB: 64, Running: true, State: "Running", CreatedAt: now.Add(-time.Hour)}
+	e.instances.put("demo", running)
+	refused("a lower memory", `{"memoryMiB":2048}`)
+	// A size given together leaves the memory lower all the same.
+	refused("a lower memory with the rest of a size", `{"cpu":2,"memoryMiB":1024,"diskGiB":64}`)
+	// A profile that comes to less is a lower memory too.
+	refused("a smaller profile", `{"profile":"s"}`)
+	// What does not lower the memory goes through: the same, a higher one, the CPU, the disk, a profile that comes to more.
+	for _, body := range []string{`{"memoryMiB":4096}`, `{"memoryMiB":8192}`, `{"cpu":4}`, `{"diskGiB":100}`, `{"profile":"m"}`, `{"profile":"l"}`} {
+		if rec := patch(body); rec.Code != http.StatusOK {
+			t.Errorf("%s on a running instance: %d %s, want 200", body, rec.Code, rec.Body.String())
+		}
+	}
+	// An instance with a profile has the memory of the profile, not the one of its object.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Profile: "m", Running: true, State: "Running", CreatedAt: now.Add(-time.Hour)})
+	refused("a lower memory under a profile", `{"cpu":1,"memoryMiB":2048,"diskGiB":64}`)
+	// A stopped instance, and one that is not created yet, take any value.
+	for _, state := range []string{"Stopped", ""} {
+		stopped := running
+		stopped.Running, stopped.State = state != "Stopped", state
+		e.instances.put("demo", stopped)
+		if rec := patch(`{"memoryMiB":1024}`); rec.Code != http.StatusOK {
+			t.Errorf("a lower memory on an instance in state %q: %d %s, want 200", state, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestAChangeOfRunningIsRememberedAndTheStopThatFollowsWaits(t *testing.T) {
 	e := newEnv(t)
 	patch := func(body string) compute.PatchInstance {
