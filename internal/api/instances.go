@@ -278,10 +278,17 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sizeGiven := req.CPU != nil || req.MemoryMiB != nil || req.DiskGiB != nil
-	if req.Running != nil || sizeGiven {
+	if req.Running != nil || sizeGiven || req.Profile != nil {
 		current, err := i.store.Get(r.Context(), tenant, name)
 		if err != nil {
 			i.storeError(w, err, "instance")
+			return
+		}
+		// Incus applies a higher memory to a running VM live and refuses a lower one (failed to resize memfd): the Instance would
+		// stay in error until the VM is stopped. Said here, with what to do, instead of the raw error afterwards.
+		if lowersMemoryWhileRunning(current, req, made) {
+			httperr.Write(w, http.StatusConflict, "running", "the memory of a running instance can only be raised: to lower it, stop the "+
+				"instance, change its memory (or its profile), then start it again")
 			return
 		}
 		// An instance with a profile has no size of its own: a value alone would sit next to the profile, which the XRD refuses.
@@ -316,6 +323,25 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 	id, _ := auth.FromContext(r.Context())
 	i.log.Info("instance changed", "tenant", tenant, "instance", name, "by", id.Subject)
 	writeJSON(w, http.StatusOK, i.body(in, made))
+}
+
+// lowersMemoryWhileRunning reports whether the patch gives a running VM less memory than it has: by memoryMiB, or by a profile
+// that comes to less. A stop in the same patch does not count, the VM is still running when the memory is applied.
+func lowersMemoryWhileRunning(current compute.Instance, req compute.PatchInstance, made []compute.Profile) bool {
+	// Measured on Running only: a VM in another state (Stopped, Error, not created yet) keeps the behaviour it had.
+	if current.State != "Running" {
+		return false
+	}
+	_, have, _ := quota.SizeOf(current, made)
+	switch {
+	case req.MemoryMiB != nil:
+		return *req.MemoryMiB < have
+	case req.Profile != nil:
+		if p, ok := compute.Find(made, *req.Profile); ok && *req.Profile != "" {
+			return p.MemoryMiB < have
+		}
+	}
+	return false
 }
 
 func (i *instanceRoutes) delete(w http.ResponseWriter, r *http.Request) {

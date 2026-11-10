@@ -750,7 +750,7 @@ paths:
             operationId: updateInstance
             summary: Start, stop or resize a virtual machine
             description: |
-                `running` starts and stops the same VM. A VM that was created or started a moment ago cannot be stopped yet (`409`, code `starting`, with the time left): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. How long the API waits is a setting of the deployment. The CPU, the memory, the disk and the SSH keys are applied live. The image,
+                `running` starts and stops the same VM. A VM that was created or started a moment ago cannot be stopped yet (`409`, code `starting`, with the time left): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. How long the API waits is a setting of the deployment. The CPU, the memory, the disk and the SSH keys are applied live, except that the memory of a running VM can only be raised: a lower one (by `memoryMiB`, or by a profile that comes to less) is refused with `409`, code `running`, and not sent, because Incus refuses it. Stop the VM, change the memory, then start it again: a change of size never starts or stops a VM by itself, `running` is the only way to change the power state. The image,
                 nesting and secure boot cannot change: delete the instance and create another.
             security:
                 - bearerAuth: []
