@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.1](https://github.com/phorge-fr/phorge-api/compare/v0.11.0...v0.11.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* Refuse to lower the memory of a running instance and say what to do ([02c00b3](https://github.com/phorge-fr/phorge-api/commit/02c00b38eb3f273c51fbeb0e93f7ce5095a27c78))
+
 ## [0.11.0](https://github.com/phorge-fr/phorge-api/compare/v0.10.1...v0.11.0) (2026-11-08)
 
 
