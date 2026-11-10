@@ -2,6 +2,8 @@ package api
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -135,9 +137,9 @@ func TestDeleteNetwork(t *testing.T) {
 func TestDeleteNetworkInUseNamesTheInstances(t *testing.T) {
 	e := newEnv(t)
 	e.networks.put("demo", readyNetwork("lan"))
-	e.instances.put("demo", compute.Instance{Name: "web", Network: "lan"})
-	e.instances.put("demo", compute.Instance{Name: "db", Network: "lan"})
-	e.instances.put("demo", compute.Instance{Name: "elsewhere", Network: "net"})
+	e.instances.put("demo", compute.Instance{Name: "web", Networks: []string{"lan"}})
+	e.instances.put("demo", compute.Instance{Name: "db", Networks: []string{"lan"}})
+	e.instances.put("demo", compute.Instance{Name: "elsewhere", Networks: []string{"net"}})
 	rec := e.do(t, "DELETE", "/v1/tenants/demo/networks/lan", "operator", "")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -179,13 +181,13 @@ func TestCreateInstanceTakesTheOnlyNetworkOfTheTenant(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
-	if len(e.instances.created) != 1 || e.instances.created[0].Network != "net" {
+	if len(e.instances.created) != 1 || !slices.Equal(e.instances.created[0].Networks, []string{"net"}) {
 		t.Fatalf("created %+v: the only network is used", e.instances.created)
 	}
 	var body instanceBody
 	mustDecode(t, rec, &body)
-	if body.Network != "net" {
-		t.Errorf("body network = %q", body.Network)
+	if body.Network != "net" || len(body.Networks) != 1 || body.Networks[0].Name != "net" {
+		t.Errorf("body network = %q, networks = %+v", body.Network, body.Networks)
 	}
 }
 
@@ -196,8 +198,8 @@ func TestCreateInstanceNamesItsNetwork(t *testing.T) {
 	if code := call(t, e, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web","image":"debian","network":"lan"}`); code != http.StatusAccepted {
 		t.Fatalf("status %d", code)
 	}
-	if got := e.instances.created[0].Network; got != "lan" {
-		t.Errorf("network = %q, want the one asked for", got)
+	if got := e.instances.created[0].Networks; !slices.Equal(got, []string{"lan"}) || e.instances.created[0].Network != "" {
+		t.Errorf("networks = %v, want the one asked for in the list", got)
 	}
 }
 
@@ -358,5 +360,111 @@ func TestCreateNetworkRefusesARangeAnotherTenantHas(t *testing.T) {
 	// Without a range there is nothing to compare: Incus chooses.
 	if code := call(t, e, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"auto"}`); code != http.StatusAccepted {
 		t.Errorf("no range: status %d, want 202", code)
+	}
+}
+
+func TestAnInstanceJoinsSeveralNetworks(t *testing.T) {
+	newTenant := func(t *testing.T) *env {
+		e := newEnv(t)
+		e.images.put("demo", readyImage("debian"))
+		e.networks.put("demo", readyNetwork("lan"))
+		return e
+	}
+	t.Run("created with a list, in order", func(t *testing.T) {
+		e := newTenant(t)
+		rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web","image":"debian","networks":["net","lan"]}`)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		if got := e.instances.created[0].Networks; !slices.Equal(got, []string{"net", "lan"}) {
+			t.Errorf("created with %v", got)
+		}
+		var body instanceBody
+		mustDecode(t, rec, &body)
+		if body.Network != "net" || len(body.Networks) != 2 || body.Networks[1].Name != "lan" {
+			t.Errorf("body = %q %+v: the first network is the deprecated single one, the list is in order", body.Network, body.Networks)
+		}
+	})
+	t.Run("each network has its address", func(t *testing.T) {
+		e := newTenant(t)
+		e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Networks: []string{"net", "lan"}, Addresses: []compute.InstanceNetwork{
+			{Network: "lan", IPv4: "10.1.0.2", IPv6: "fd00::2"}, {Network: "net", IPv4: "10.0.0.2"}}})
+		rec := e.do(t, "GET", "/v1/tenants/demo/instances/web", "user", "")
+		var body instanceBody
+		mustDecode(t, rec, &body)
+		if len(body.Networks) != 2 || body.Networks[0] != (instanceNetwork{Name: "net", IPv4: "10.0.0.2"}) || body.Networks[1] != (instanceNetwork{Name: "lan", IPv4: "10.1.0.2", IPv6: "fd00::2"}) {
+			t.Errorf("networks = %+v: the order is the one of the NICs, the addresses are matched by network", body.Networks)
+		}
+	})
+	t.Run("a second network that does not exist", func(t *testing.T) {
+		e := newTenant(t)
+		rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web","image":"debian","networks":["lan","ghost"]}`)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "network ghost does not exist") || len(e.instances.created) != 0 {
+			t.Errorf("status %d: %s (created %d)", rec.Code, rec.Body, len(e.instances.created))
+		}
+	})
+	t.Run("a second network that is not ready", func(t *testing.T) {
+		e := newTenant(t)
+		e.networks.put("demo", compute.Network{Name: "slow", CreatedAt: now, Status: status.Object{NotReadySince: now}})
+		rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web","image":"debian","networks":["lan","slow"]}`)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "network_not_ready") {
+			t.Errorf("status %d: %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("the same network twice, both forms, too many", func(t *testing.T) {
+		e := newTenant(t)
+		for _, body := range []string{
+			`{"name":"web","image":"debian","networks":["lan","lan"]}`,
+			`{"name":"web","image":"debian","network":"lan","networks":["net"]}`,
+			`{"name":"web","image":"debian","networks":["a","b","c","d","e","f","g","h","i"]}`,
+		} {
+			if code := call(t, e, "POST", "/v1/tenants/demo/instances", "user", body); code != http.StatusUnprocessableEntity {
+				t.Errorf("%s: status %d, want 422", body, code)
+			}
+		}
+	})
+}
+
+func TestTheNetworksOfARunningInstanceCanChange(t *testing.T) {
+	e := newEnv(t)
+	e.networks.put("demo", readyNetwork("lan"))
+	e.networks.put("demo", compute.Network{Name: "slow", CreatedAt: now, Status: status.Object{NotReadySince: now}})
+	// The instance is running, and attached to a network that is not Ready at the moment: it is left alone.
+	e.instances.put("demo", compute.Instance{Name: "web", Image: "debian", Running: true, State: "Running", Networks: []string{"slow"}, CreatedAt: now.Add(-time.Hour)})
+	patch := func(body string) *httptest.ResponseRecorder {
+		return e.do(t, "PATCH", "/v1/tenants/demo/instances/web", "user", body)
+	}
+	if rec := patch(`{"networks":["slow","lan"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("adding a network to a running instance: %d %s", rec.Code, rec.Body)
+	}
+	if got := e.instances.patched[len(e.instances.patched)-1]; got.Networks == nil || !slices.Equal(*got.Networks, []string{"slow", "lan"}) || got.Running != nil {
+		t.Errorf("patched %+v: the networks change, the power state is not part of it", got)
+	}
+	if rec := patch(`{"networks":["lan"]}`); rec.Code != http.StatusOK {
+		t.Errorf("taking a network out: %d %s", rec.Code, rec.Body)
+	}
+	before := len(e.instances.patched)
+	for what, body := range map[string]string{
+		"a network that does not exist": `{"networks":["lan","ghost"]}`,
+		"a network that is not ready":   `{"networks":["lan","slow"]}`,
+		"none":                          `{"networks":[]}`,
+		"the same network twice":        `{"networks":["lan","lan"]}`,
+	} {
+		if rec := patch(body); rec.Code < 400 {
+			t.Errorf("%s was accepted: %d", what, rec.Code)
+		}
+	}
+	if len(e.instances.patched) != before {
+		t.Errorf("a refused change was sent to the cluster")
+	}
+}
+
+func TestANetworkThatIsTheSecondOfAnInstanceCannotBeDeleted(t *testing.T) {
+	e := newEnv(t)
+	e.networks.put("demo", readyNetwork("lan"))
+	e.instances.put("demo", compute.Instance{Name: "web", Networks: []string{"net", "lan"}})
+	rec := e.do(t, "DELETE", "/v1/tenants/demo/networks/lan", "operator", "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "web") || len(e.networks.deleted) != 0 {
+		t.Errorf("status %d: %s (deleted %v): any of the networks of an instance keeps it", rec.Code, rec.Body, e.networks.deleted)
 	}
 }

@@ -38,18 +38,20 @@ func (i *instanceRoutes) register(s *server.Server, authn func(http.Handler) htt
 }
 
 type instanceBody struct {
-	Name          string   `json:"name"`
-	Image         string   `json:"image"`
-	Network       string   `json:"network"`
-	Profile       string   `json:"profile,omitempty"`
-	CPU           int      `json:"cpu"`
-	MemoryMiB     int      `json:"memoryMiB"`
-	DiskGiB       int      `json:"diskGiB"`
-	Running       bool     `json:"running"`
-	Nesting       bool     `json:"nesting"`
-	SecureBoot    bool     `json:"secureBoot"`
-	SSHPublicKeys []string `json:"sshPublicKeys"`
-	State         string   `json:"state,omitempty"`
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	// Network is the first of Networks, kept for the callers that read one: deprecated.
+	Network       string            `json:"network"`
+	Networks      []instanceNetwork `json:"networks"`
+	Profile       string            `json:"profile,omitempty"`
+	CPU           int               `json:"cpu"`
+	MemoryMiB     int               `json:"memoryMiB"`
+	DiskGiB       int               `json:"diskGiB"`
+	Running       bool              `json:"running"`
+	Nesting       bool              `json:"nesting"`
+	SecureBoot    bool              `json:"secureBoot"`
+	SSHPublicKeys []string          `json:"sshPublicKeys"`
+	State         string            `json:"state,omitempty"`
 	// Transition is what the VM is doing while its state is not the one that was asked for: "starting" or "stopping".
 	Transition      string       `json:"transition,omitempty"`
 	TransitionSince *time.Time   `json:"transitionSince,omitempty"`
@@ -58,6 +60,30 @@ type instanceBody struct {
 	Problems        string       `json:"problems,omitempty"`
 	CreatedAt       time.Time    `json:"createdAt"`
 	CreatedBy       string       `json:"createdBy,omitempty"`
+}
+
+// instanceNetwork is a network of an instance, in the order of its NICs, with the addresses Incus reports on it (empty until the VM
+// has them).
+type instanceNetwork struct {
+	Name string `json:"name"`
+	IPv4 string `json:"ipv4,omitempty"`
+	IPv6 string `json:"ipv6,omitempty"`
+}
+
+// networksOf lists the networks of an instance with their addresses.
+func networksOf(in compute.Instance) []instanceNetwork {
+	out := make([]instanceNetwork, 0, len(in.Networks))
+	for _, n := range in.Networks {
+		item := instanceNetwork{Name: n}
+		for _, a := range in.Addresses {
+			if a.Network == n {
+				item.IPv4, item.IPv6 = a.IPv4, a.IPv6
+				break
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // userProfiles reads the profiles the users made in a tenant, for what an instance that has one comes to. When they cannot be read the
@@ -94,7 +120,7 @@ func (i *instanceRoutes) body(in compute.Instance, user []compute.Profile) insta
 		cpu, mem, disk = p.CPU, p.MemoryMiB, p.DiskGiB
 	}
 	return instanceBody{
-		Name: in.Name, Image: in.Image, Network: in.Network, Profile: in.Profile, CPU: cpu, MemoryMiB: mem, DiskGiB: disk, Running: in.Running,
+		Name: in.Name, Image: in.Image, Network: first(in.Networks), Networks: networksOf(in), Profile: in.Profile, CPU: cpu, MemoryMiB: mem, DiskGiB: disk, Running: in.Running,
 		Nesting: in.Nesting, SecureBoot: in.SecureBoot, SSHPublicKeys: keys, State: in.State, IPv4: in.IPv4,
 		Transition: transition, TransitionSince: since,
 		Phase: in.Status.At(i.now()), Problems: problems, CreatedAt: in.CreatedAt, CreatedBy: in.CreatedBy,
@@ -161,11 +187,15 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 
 	// The network is one of this tenant. A tenant comes without one, so the instance cannot be reached until its user has made
 	// one: with a single network the choice is made for them, with none or several it is theirs.
-	nw, ok := i.pickNetwork(w, r, tenant, req.Network)
+	asked := req.Networks
+	if len(asked) == 0 && req.Network != "" {
+		asked = []string{req.Network}
+	}
+	nws, ok := i.pickNetworks(w, r, tenant, asked)
 	if !ok {
 		return
 	}
-	req.Network = nw
+	req.Networks, req.Network = nws, ""
 	// The plan limits the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
 	// that never becomes ready. The profiles the users made are read for it, an instance counts what its profile comes to.
 	plan, used, made, ok := holdings(w, r, &i.base, i.store, i.networks, i.profiles, tenant)
@@ -210,49 +240,68 @@ func unknownProfile(user []compute.Profile, name string) string {
 	return "profile " + name + " does not exist in this tenant: " + strings.Join(names, ", ")
 }
 
-// pickNetwork returns the network an instance is attached to, or answers and returns false. A network that is not Ready yet is
-// refused for the reason an image is: the instance would report problems that are not one.
-func (i *instanceRoutes) pickNetwork(w http.ResponseWriter, r *http.Request, tenant, asked string) (string, bool) {
-	if asked != "" {
-		nw, err := i.networks.Get(r.Context(), tenant, asked)
-		if errors.Is(err, resource.ErrNotFound) {
-			i.storeError(w, &resource.InvalidError{Problems: []string{"network " + asked + " does not exist in this tenant: create it first"}}, "instance")
-			return "", false
-		}
-		if err != nil {
-			i.storeError(w, err, "network")
-			return "", false
-		}
-		if phase := nw.Status.At(i.now()); phase != status.Ready {
-			httperr.Write(w, http.StatusConflict, "network_not_ready", "network "+asked+" is "+strings.ToLower(string(phase))+": wait until it is Ready")
-			return "", false
+// pickNetworks returns the networks an instance is attached to, or answers and returns false. A network that is not Ready yet is
+// refused for the reason an image is: the instance would report problems that are not one. With none asked and a tenant that has
+// exactly one, that one is used.
+func (i *instanceRoutes) pickNetworks(w http.ResponseWriter, r *http.Request, tenant string, asked []string) ([]string, bool) {
+	if len(asked) > 0 {
+		for _, name := range asked {
+			if !i.networkIsUsable(w, r, tenant, name) {
+				return nil, false
+			}
 		}
 		return asked, true
 	}
 	all, err := i.networks.List(r.Context(), tenant)
 	if err != nil {
 		i.storeError(w, err, "network")
-		return "", false
+		return nil, false
 	}
 	switch len(all) {
 	case 0:
 		i.storeError(w, &resource.InvalidError{Problems: []string{"the tenant has no network: create one first (POST /v1/tenants/" + tenant + "/networks)"}}, "instance")
-		return "", false
+		return nil, false
 	case 1:
 		only := all[0]
 		if phase := only.Status.At(i.now()); phase != status.Ready {
 			httperr.Write(w, http.StatusConflict, "network_not_ready", "network "+only.Name+" is "+strings.ToLower(string(phase))+": wait until it is Ready")
-			return "", false
+			return nil, false
 		}
-		return only.Name, true
+		return []string{only.Name}, true
 	}
 	names := make([]string, 0, len(all))
 	for _, n := range all {
 		names = append(names, n.Name)
 	}
 	slices.Sort(names)
-	i.storeError(w, &resource.InvalidError{Problems: []string{"network is required, the tenant has several: " + strings.Join(names, ", ")}}, "instance")
-	return "", false
+	i.storeError(w, &resource.InvalidError{Problems: []string{"networks is required, the tenant has several: " + strings.Join(names, ", ")}}, "instance")
+	return nil, false
+}
+
+// networkIsUsable answers and returns false when the network does not exist in the tenant or is not Ready.
+func (i *instanceRoutes) networkIsUsable(w http.ResponseWriter, r *http.Request, tenant, name string) bool {
+	nw, err := i.networks.Get(r.Context(), tenant, name)
+	if errors.Is(err, resource.ErrNotFound) {
+		i.storeError(w, &resource.InvalidError{Problems: []string{"network " + name + " does not exist in this tenant: create it first"}}, "instance")
+		return false
+	}
+	if err != nil {
+		i.storeError(w, err, "network")
+		return false
+	}
+	if phase := nw.Status.At(i.now()); phase != status.Ready {
+		httperr.Write(w, http.StatusConflict, "network_not_ready", "network "+name+" is "+strings.ToLower(string(phase))+": wait until it is Ready")
+		return false
+	}
+	return true
+}
+
+// first returns the first element, or "" for an empty list.
+func first(list []string) string {
+	if len(list) == 0 {
+		return ""
+	}
+	return list[0]
 }
 
 func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
@@ -278,11 +327,19 @@ func (i *instanceRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sizeGiven := req.CPU != nil || req.MemoryMiB != nil || req.DiskGiB != nil
-	if req.Running != nil || sizeGiven || req.Profile != nil {
+	if req.Running != nil || sizeGiven || req.Profile != nil || req.Networks != nil {
 		current, err := i.store.Get(r.Context(), tenant, name)
 		if err != nil {
 			i.storeError(w, err, "instance")
 			return
+		}
+		// A network the instance already has is left alone, whatever its state: only the ones that join must exist and be Ready.
+		if req.Networks != nil {
+			for _, name := range *req.Networks {
+				if !slices.Contains(current.Networks, name) && !i.networkIsUsable(w, r, tenant, name) {
+					return
+				}
+			}
 		}
 		// Incus applies a higher memory to a running VM live and refuses a lower one (failed to resize memfd): the Instance would
 		// stay in error until the VM is stopped. Said here, with what to do, instead of the raw error afterwards.

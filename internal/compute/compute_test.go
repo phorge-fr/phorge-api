@@ -394,3 +394,35 @@ func TestAllAndFindKnowTheThreeAndTheOnesTheUserMade(t *testing.T) {
 		t.Error("All must not change the three of the tenant")
 	}
 }
+
+func TestTheNetworksOfAnInstanceAreChecked(t *testing.T) {
+	create := func(networks ...string) error {
+		return CreateInstance{Name: "web", Image: "debian", Networks: networks}.Validate()
+	}
+	if err := create("net", "lan"); err != nil {
+		t.Errorf("two networks: %v", err)
+	}
+	for what, networks := range map[string][]string{
+		"a network twice":     {"net", "net"},
+		"a bad name":          {"net", "Bad_Name"},
+		"more than the bound": {"a", "b", "c", "d", "e", "f", "g", "h", "i"},
+	} {
+		if create(networks...) == nil {
+			t.Errorf("%s was accepted", what)
+		}
+	}
+	if (CreateInstance{Name: "web", Image: "debian", Network: "net", Networks: []string{"lan"}}).Validate() == nil {
+		t.Error("network and networks together were accepted")
+	}
+	// A patch needs at least one network, as an instance without one cannot be reached.
+	none, one, dup := []string{}, []string{"net"}, []string{"net", "net"}
+	if (PatchInstance{Networks: &none}).Validate() == nil {
+		t.Error("a patch that empties the networks was accepted")
+	}
+	if err := (PatchInstance{Networks: &one}).Validate(); err != nil {
+		t.Errorf("a patch with one network: %v", err)
+	}
+	if (PatchInstance{Networks: &dup}).Validate() == nil {
+		t.Error("a patch with a network twice was accepted")
+	}
+}

@@ -182,7 +182,10 @@ func (s *Instances) Create(ctx context.Context, tenant string, req compute.Creat
 	}
 	// Only what was asked for: the rest is the defaults of the XRD.
 	spec := map[string]any{"imageRef": map[string]any{"name": req.Image}}
-	if req.Network != "" {
+	// The route names the networks in the list; the deprecated single network is still passed on when a caller of the store gives it.
+	if len(req.Networks) > 0 {
+		spec["networks"] = toAny(req.Networks)
+	} else if req.Network != "" {
 		spec["network"] = req.Network
 	}
 	setInt := func(key string, v *int) {
@@ -251,6 +254,12 @@ func (s *Instances) Patch(ctx context.Context, tenant, name string, req compute.
 	if req.SSHPublicKeys != nil {
 		spec["sshPublicKeys"] = *req.SSHPublicKeys
 	}
+	// The XRD takes networks or the deprecated network, one of the two: the list replaces the single one, which a merge patch removes
+	// with a null (harmless when it is not there).
+	if req.Networks != nil {
+		spec["networks"] = *req.Networks
+		spec["network"] = nil
+	}
 	doc := map[string]any{"spec": spec}
 	if req.MarkChange {
 		doc["metadata"] = map[string]any{"annotations": map[string]any{RunningChangedAtAnnotation: time.Now().UTC().Format(time.RFC3339)}}
@@ -277,7 +286,21 @@ func (s *Instances) Delete(ctx context.Context, tenant, name string) error {
 
 func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	image, _, _ := unstructured.NestedString(obj.Object, "spec", "imageRef", "name")
-	network, _, _ := unstructured.NestedString(obj.Object, "spec", "network")
+	networks, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "networks")
+	if single, _, _ := unstructured.NestedString(obj.Object, "spec", "network"); len(networks) == 0 && single != "" {
+		networks = []string{single}
+	}
+	var addresses []compute.InstanceNetwork
+	if list, _, _ := unstructured.NestedSlice(obj.Object, "status", "networks"); len(list) > 0 {
+		for _, item := range list {
+			m, _ := item.(map[string]any)
+			a := compute.InstanceNetwork{}
+			a.Network, _ = m["network"].(string)
+			a.IPv4, _ = m["ipv4"].(string)
+			a.IPv6, _ = m["ipv6"].(string)
+			addresses = append(addresses, a)
+		}
+	}
 	profile, _, _ := unstructured.NestedString(obj.Object, "spec", "profile")
 	running, _, _ := unstructured.NestedBool(obj.Object, "spec", "running")
 	nesting, _, _ := unstructured.NestedBool(obj.Object, "spec", "nesting")
@@ -288,7 +311,8 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 
 	return compute.Instance{
-		Network:          network,
+		Networks:         networks,
+		Addresses:        addresses,
 		Profile:          profile,
 		Name:             obj.GetName(),
 		Image:            image,

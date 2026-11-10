@@ -216,7 +216,7 @@ func (n *networkRoutes) delete(w http.ResponseWriter, r *http.Request) {
 	}
 	var users []string
 	for _, in := range instances {
-		if in.Network == name {
+		if slices.Contains(in.Networks, name) {
 			users = append(users, in.Name)
 		}
 	}

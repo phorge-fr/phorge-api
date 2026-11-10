@@ -750,7 +750,7 @@ paths:
             operationId: updateInstance
             summary: Start, stop or resize a virtual machine
             description: |
-                `running` starts and stops the same VM. A VM that was created or started a moment ago cannot be stopped yet (`409`, code `starting`, with the time left): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. How long the API waits is a setting of the deployment. The CPU, the memory, the disk and the SSH keys are applied live, except that the memory of a running VM can only be raised: a lower one (by `memoryMiB`, or by a profile that comes to less) is refused with `409`, code `running`, and not sent, because Incus refuses it. Stop the VM, change the memory, then start it again: a change of size never starts or stops a VM by itself, `running` is the only way to change the power state. The image,
+                `running` starts and stops the same VM. `networks` replaces the networks of the instance, live. A VM that was created or started a moment ago cannot be stopped yet (`409`, code `starting`, with the time left): the system inside does not listen to the shutdown request before it has booted, and the stop would hang. How long the API waits is a setting of the deployment. The CPU, the memory, the disk and the SSH keys are applied live, except that the memory of a running VM can only be raised: a lower one (by `memoryMiB`, or by a profile that comes to less) is refused with `409`, code `running`, and not sent, because Incus refuses it. Stop the VM, change the memory, then start it again: a change of size never starts or stops a VM by itself, `running` is the only way to change the power state. The image,
                 nesting and secure boot cannot change: delete the instance and create another.
             security:
                 - bearerAuth: []
@@ -1701,8 +1701,28 @@ components:
                     example: debian
                 network:
                     type: string
-                    description: The network the instance is attached to (`eth0`).
+                    deprecated: true
+                    description: The first of `networks` (`eth0`). Read `networks`.
                     example: net
+                networks:
+                    type: array
+                    description: |
+                        The networks the instance is attached to, one NIC each in this order (`eth0`, `eth1`, ...), with the addresses
+                        Incus reports on each of them (absent until the VM has them).
+                    items:
+                        type: object
+                        required:
+                            - name
+                        properties:
+                            name:
+                                type: string
+                                example: net
+                            ipv4:
+                                type: string
+                                example: 10.57.158.2
+                            ipv6:
+                                type: string
+                                example: fd42:27c9:4317:7db0:1266:6aff:fe94:b69c
                 profile:
                     type: string
                     description: The profile the instance has for its size, when it has one. Then `cpu`, `memoryMiB` and `diskGiB` are what the profile comes to.
@@ -1741,7 +1761,7 @@ components:
                     description: When the change was asked for (the creation, or the last patch of `running`).
                 ipv4:
                     type: string
-                    description: The address on the network of the tenant.
+                    description: The address on the first network. Read `networks` for the others.
                 phase:
                     $ref: "#/components/schemas/Phase"
                 problems:
@@ -1778,12 +1798,25 @@ components:
                     type: string
                     description: An image of the tenant, `Ready`.
                     example: debian
+                networks:
+                    type: array
+                    minItems: 1
+                    maxItems: 8
+                    uniqueItems: true
+                    description: |
+                        The networks of the tenant the instance joins, `Ready`, one NIC each in this order (`eth0`, `eth1`, ...). It can be
+                        left out when the tenant has exactly one, which is then used: with none or several the request is refused (`422`)
+                        and says so. Not with `network`.
+                    items:
+                        type: string
+                        pattern: '^[a-z]([a-z0-9-]{0,13}[a-z0-9])?$'
+                    example:
+                        - net
                 network:
                     type: string
+                    deprecated: true
                     pattern: '^[a-z]([a-z0-9-]{0,13}[a-z0-9])?$'
-                    description: |
-                        A network of the tenant, `Ready`. It can be left out when the tenant has exactly one, which is then used: with
-                        none or several the request is refused (`422`) and says so.
+                    description: The same as `networks` with this one name. Give `networks`.
                     example: net
                 profile:
                     type: string
@@ -1836,6 +1869,19 @@ components:
                     description: |
                         Move the instance to a profile: its own size is removed. Not with `cpu`, `memoryMiB` or `diskGiB`. An instance that has
                         a profile leaves it by being given the three values together.
+                networks:
+                    type: array
+                    minItems: 1
+                    maxItems: 8
+                    uniqueItems: true
+                    description: |
+                        Replace the networks of the instance, one NIC each in this order. Incus plugs and unplugs the NICs on a running VM,
+                        which is **not** stopped or restarted. The NIC that is plugged in is `down` in the guest until the guest configures it
+                        (a restart does). A network that joins must exist and be `Ready`. Taking a network out of the list renames the NICs that
+                        follow it at the next boot, as they are named after their position.
+                    items:
+                        type: string
+                        pattern: '^[a-z]([a-z0-9-]{0,13}[a-z0-9])?$'
                 running:
                     type: boolean
                 cpu:
