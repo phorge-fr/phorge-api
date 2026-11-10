@@ -56,7 +56,7 @@ func TestAKeyWithTheScopesOfTheNetworksTheProfilesAndTheTenantPassesTheirRoutes(
 func TestAKeyThatOnlyReadsTheNetworksCannotWriteThem(t *testing.T) {
 	e := newEnv(t)
 	e.networks.put("demo", readyNetwork("lan"))
-	e.instances.put("demo", compute.Instance{Name: "vm", Network: "other"})
+	e.instances.put("demo", compute.Instance{Name: "vm", Networks: []string{"other"}})
 	for _, c := range []struct {
 		method, path, body string
 		want               int

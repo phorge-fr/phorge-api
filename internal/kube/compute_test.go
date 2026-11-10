@@ -230,7 +230,7 @@ func TestInstanceCreateWithAProfileSendsNoSize(t *testing.T) {
 		}
 	}
 	got := instanceOf(obj)
-	if got.Profile != "m" || got.Network != "net" {
+	if got.Profile != "m" || len(got.Networks) != 1 || got.Networks[0] != "net" {
 		t.Errorf("instanceOf = %+v", got)
 	}
 }
@@ -276,5 +276,66 @@ func TestInstancePatchMovesBetweenAProfileAndItsOwnSize(t *testing.T) {
 	}
 	if got["network"] != "net" || got["imageRef"] == nil {
 		t.Errorf("spec = %v: a change of size touched something else", got)
+	}
+}
+
+// The XRD takes networks or the deprecated network, one of the two: the store writes the list, and a patch of the list removes the
+// single network of an instance that was made with it.
+func TestInstanceNetworksAreAListAndReplaceTheSingleNetwork(t *testing.T) {
+	client := newClient()
+	s := NewInstances(Static(client))
+	if _, err := s.Create(t.Context(), "demo", compute.CreateInstance{Name: "web", Image: "debian", Networks: []string{"net", "lan"}, Profile: "s"}); err != nil {
+		t.Fatal(err)
+	}
+	get := func() *unstructured.Unstructured {
+		obj, err := client.Resource(instancesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return obj
+	}
+	spec, _, _ := unstructured.NestedMap(get().Object, "spec")
+	if _, ok := spec["network"]; ok {
+		t.Errorf("the single network was sent next to the list: %v", spec)
+	}
+	if got := instanceOf(get()).Networks; len(got) != 2 || got[0] != "net" || got[1] != "lan" {
+		t.Errorf("networks = %v, want the list in order", got)
+	}
+
+	// An instance made with the deprecated field reads as a list of one, and a patch of the list drops the field.
+	old := get()
+	_ = unstructured.SetNestedField(old.Object, "net", "spec", "network")
+	unstructured.RemoveNestedField(old.Object, "spec", "networks")
+	if got := instanceOf(old).Networks; len(got) != 1 || got[0] != "net" {
+		t.Errorf("an instance with the single network reads %v, want [net]", got)
+	}
+	if _, err := client.Resource(instancesGVR).Namespace("t-demo").Update(t.Context(), old, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	both := []string{"net", "lan"}
+	if _, err := s.Patch(t.Context(), "demo", "web", compute.PatchInstance{Networks: &both}); err != nil {
+		t.Fatal(err)
+	}
+	spec, _, _ = unstructured.NestedMap(get().Object, "spec")
+	if _, ok := spec["network"]; ok {
+		t.Errorf("the single network stayed next to the list: %v", spec)
+	}
+	if got := instanceOf(get()).Networks; len(got) != 2 {
+		t.Errorf("networks after the patch = %v", got)
+	}
+}
+
+func TestInstanceOfReadsTheAddressOnEachNetwork(t *testing.T) {
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"metadata": map[string]any{"name": "web"},
+		"spec":     map[string]any{"networks": []any{"net", "lan"}},
+		"status": map[string]any{"networks": []any{
+			map[string]any{"network": "net", "ipv4": "10.0.0.2", "ipv6": "fd00::2"},
+			map[string]any{"network": "lan", "ipv4": "10.1.0.2", "ipv6": ""},
+		}},
+	}}
+	got := instanceOf(obj).Addresses
+	if len(got) != 2 || got[0] != (compute.InstanceNetwork{Network: "net", IPv4: "10.0.0.2", IPv6: "fd00::2"}) || got[1].IPv4 != "10.1.0.2" {
+		t.Errorf("addresses = %+v", got)
 	}
 }

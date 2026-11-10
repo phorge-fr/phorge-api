@@ -139,13 +139,26 @@ const (
 	MinMemory, MaxMemory = 256, 65536
 	MinDisk, MaxDisk     = 1, 500
 	MaxSSHKeys           = 20
+	// MaxInstanceNetworks is the number of networks one instance joins, the bound of the XRD. The plan limits how many networks a
+	// tenant has, not how many an instance is attached to.
+	MaxInstanceNetworks = 8
 )
+
+// InstanceNetwork is the address of an instance on one of its networks, as Incus reports it.
+type InstanceNetwork struct {
+	Network string
+	IPv4    string
+	IPv6    string
+}
 
 // Instance is an Instance object as the API presents it.
 type Instance struct {
-	Name    string
-	Image   string
-	Network string
+	Name  string
+	Image string
+	// Networks are the networks the instance is attached to, in order: the first is its eth0. Addresses says what the instance has on
+	// each of them, empty until the VM exists.
+	Networks  []string
+	Addresses []InstanceNetwork
 	// Profile is the size the instance was given, when it was given one: then CPU, MemoryMiB and DiskGiB are empty on the object,
 	// the profile decides them.
 	Profile       string
@@ -233,8 +246,11 @@ const (
 // CreateInstance is what creating an instance asks for. What is not given is left to the defaults of the XRD, except the size
 // (see WithDefaultSize) and the network (the route picks the only one of the tenant).
 type CreateInstance struct {
-	Name          string   `json:"name"`
-	Image         string   `json:"image"`
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	// Networks are the networks of the tenant the instance joins, one NIC each in this order. Network is the deprecated way to give
+	// one. With neither, the route picks the only network of the tenant.
+	Networks      []string `json:"networks"`
 	Network       string   `json:"network"`
 	Profile       string   `json:"profile"`
 	CPU           *int     `json:"cpu"`
@@ -260,12 +276,33 @@ type PatchInstance struct {
 	DropProfile bool `json:"-"`
 	// MarkChange records that this patch changes running, with the time of the request: it is what tells a VM that is still
 	// booting from one that is stuck, and how long a transition has lasted. Set by the route, never by the caller.
-	MarkChange    bool      `json:"-"`
+	MarkChange bool `json:"-"`
+	// Networks replaces the networks of the instance. Incus plugs and unplugs the NICs on a running VM, and the VM is not restarted.
+	Networks      *[]string `json:"networks"`
 	Running       *bool     `json:"running"`
 	CPU           *int      `json:"cpu"`
 	MemoryMiB     *int      `json:"memoryMiB"`
 	DiskGiB       *int      `json:"diskGiB"`
 	SSHPublicKeys *[]string `json:"sshPublicKeys"`
+}
+
+// checkNetworks checks a list of networks given by the caller: names of networks of the tenant, none twice, at most the bound of the
+// XRD. Whether they exist and are Ready is the route's to answer.
+func checkNetworks(p *problems, networks []string) {
+	if len(networks) > MaxInstanceNetworks {
+		p.add("networks holds at most %d networks, %d were given", MaxInstanceNetworks, len(networks))
+	}
+	seen := map[string]bool{}
+	for _, n := range networks {
+		if !ValidNetworkName(n) {
+			p.add("networks must be names of networks of the tenant, %q is not one", n)
+			continue
+		}
+		if seen[n] {
+			p.add("network %s is given twice: one NIC for each network", n)
+		}
+		seen[n] = true
+	}
 }
 
 func checkBounds(p *problems, name string, v *int, lo, hi int) {
@@ -283,9 +320,13 @@ func (r CreateInstance) Validate() error {
 	if !ValidImageName(r.Image) {
 		p.add("image must be the name of an image of the tenant")
 	}
+	if r.Network != "" && len(r.Networks) > 0 {
+		p.add("give networks, or the deprecated network, not both")
+	}
 	if r.Network != "" && !ValidNetworkName(r.Network) {
 		p.add("network must be the name of a network of the tenant")
 	}
+	checkNetworks(&p, r.Networks)
 	if r.Profile != "" {
 		if !ValidProfileName(r.Profile) {
 			p.add("profile must be the name of a profile of the tenant")
@@ -322,8 +363,14 @@ func (r CreateInstance) WithDefaultSize() CreateInstance {
 // Validate checks the patch.
 func (r PatchInstance) Validate() error {
 	var p problems
-	if r.Running == nil && r.Profile == nil && r.CPU == nil && r.MemoryMiB == nil && r.DiskGiB == nil && r.SSHPublicKeys == nil {
-		p.add("nothing to change: give running, profile, cpu, memoryMiB, diskGiB or sshPublicKeys")
+	if r.Running == nil && r.Profile == nil && r.Networks == nil && r.CPU == nil && r.MemoryMiB == nil && r.DiskGiB == nil && r.SSHPublicKeys == nil {
+		p.add("nothing to change: give running, profile, networks, cpu, memoryMiB, diskGiB or sshPublicKeys")
+	}
+	if r.Networks != nil {
+		if len(*r.Networks) == 0 {
+			p.add("networks needs at least one network: an instance without a network cannot be reached")
+		}
+		checkNetworks(&p, *r.Networks)
 	}
 	if r.Profile != nil {
 		if !ValidProfileName(*r.Profile) {
