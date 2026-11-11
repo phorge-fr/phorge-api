@@ -406,7 +406,7 @@ func TestGetShowsThePhase(t *testing.T) {
 	if ready.Phase != tenants.Ready || ready.Namespace != "t-demo" || ready.Owner != "alice@example.org" || ready.Plan != tenants.Large {
 		t.Errorf("ready: %+v", ready)
 	}
-	if failed.Phase != tenants.Failed || failed.Problems != "This tenant has reached a limit of its plan." {
+	if failed.Phase != tenants.Failed || failed.Problems != "This tenant has reached one of its limits." {
 		t.Errorf("failed: %+v, the problem is told in words once it has lasted", failed)
 	}
 }

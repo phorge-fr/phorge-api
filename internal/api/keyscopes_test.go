@@ -10,8 +10,7 @@ import (
 // What the scopes of a key let it do on the routes, with the tuples the ApiKey composition writes for them (one per scope and tenant):
 // the key passes the routes of its scopes and only those.
 func TestAKeyWithTheScopesOfTheNetworksTheProfilesAndTheTenantPassesTheirRoutes(t *testing.T) {
-	e := newEnv(t)
-	e.networks.put("demo", readyNetwork("lan"))
+	e := newEnv(t) // the tenant has a network, net: the key makes a second one, the most there is room for
 	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
 	e.images.put("demo", readyImage("debian"))
 	for _, c := range []struct {
@@ -20,7 +19,7 @@ func TestAKeyWithTheScopesOfTheNetworksTheProfilesAndTheTenantPassesTheirRoutes(
 	}{
 		// the networks
 		{"GET", "/v1/tenants/demo/networks", "", http.StatusOK},
-		{"GET", "/v1/tenants/demo/networks/lan", "", http.StatusOK},
+		{"GET", "/v1/tenants/demo/networks/net", "", http.StatusOK},
 		{"POST", "/v1/tenants/demo/networks", `{"name":"two"}`, http.StatusAccepted},
 		{"DELETE", "/v1/tenants/demo/networks/two", "", http.StatusAccepted},
 		// the profiles

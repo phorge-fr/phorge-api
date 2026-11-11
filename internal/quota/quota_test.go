@@ -5,68 +5,52 @@ import (
 	"testing"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
-	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
-// The plans are written twice, here and in the Tenant composition of Hangar: this is the table the composition says.
-func TestThePlansAreTheOnesOfTheTenantComposition(t *testing.T) {
-	want := map[tenants.Plan]Limits{
-		tenants.Small:  {2, 2, 4096, 128, 1},
-		tenants.Medium: {4, 4, 8192, 256, 2},
-		tenants.Large:  {6, 8, 16384, 512, 3},
+// The limits are written twice, here and in the Tenant composition of Hangar (composition-tenant.yml): this is what the composition
+// says. Its project limit for the disk is the 128 GiB plus 512 MiB for the state of each of the 2 VMs, 132096 MiB. The profiles are
+// the API's own: Incus has no limit for them.
+func TestTheLimitsAreTheOnesOfTheTenantComposition(t *testing.T) {
+	want := Limits{Instances: 2, VCPU: 2, MemoryMiB: 4096, DiskGiB: 128, Networks: 2, Profiles: 2}
+	if PerTenant != want {
+		t.Errorf("PerTenant = %+v, want %+v", PerTenant, want)
 	}
-	for plan, w := range want {
-		if got := LimitsOf(plan); got != w {
-			t.Errorf("%s = %+v, want %+v", plan, got, w)
-		}
-	}
-	if (LimitsOf("xl") != Limits{}) {
-		t.Error("an unknown plan holds something")
+	if project := PerTenant.DiskGiB*1024 + 512*PerTenant.Instances; project != 132096 {
+		t.Errorf("the project limit for the disk would be %d MiB, the composition has 132096", project)
 	}
 }
 
-// The CPU, the memory and the disk of a plan hold two instances of the size of its own profile, and nothing that is bigger: this is
-// what the alignment says. The count of instances is the plan's own, 2, 4 and 6.
-func TestEachPlanHoldsTwoOfItsOwnProfile(t *testing.T) {
-	counts := map[tenants.Plan]int{tenants.Small: 2, tenants.Medium: 4, tenants.Large: 6}
-	for plan, name := range map[tenants.Plan]string{tenants.Small: "s", tenants.Medium: "m", tenants.Large: "l"} {
-		p, ok := compute.ProfileNamed(name)
-		if !ok {
-			t.Fatalf("no profile %s", name)
-		}
-		l := LimitsOf(plan)
-		if l.Instances != counts[plan] {
-			t.Errorf("plan %s allows %d instances, want %d", plan, l.Instances, counts[plan])
-		}
-		if l.VCPU != 2*p.CPU || l.MemoryMiB < 2*p.MemoryMiB || l.DiskGiB < 2*p.DiskGiB {
-			t.Errorf("plan %s %+v does not hold two %s (%+v)", plan, l, name, p)
-		}
-		var used Used
-		for i := 0; i < 2; i++ {
-			if e := CheckInstance(plan, used, p.CPU, p.MemoryMiB, p.DiskGiB); e != nil {
-				t.Errorf("plan %s refuses instance %d of its own profile %s: %v", plan, i+1, name, e)
-			}
-			used.Instances++
-			used.VCPU += p.CPU
-			used.MemoryMiB += p.MemoryMiB
-			used.DiskGiB += p.DiskGiB
-		}
-		// a third of the same size passes the CPU, the memory or the disk, whichever gives out first
-		if e := CheckInstance(plan, used, p.CPU, p.MemoryMiB, p.DiskGiB); e == nil {
-			t.Errorf("plan %s accepts a third instance of its own profile", plan)
-		}
+// The CPU, the memory and the disk hold two instances of the size of the profile s (or one of m), and nothing that is bigger.
+func TestTheLimitsHoldTwoOfTheProfileS(t *testing.T) {
+	m, ok := compute.ProfileNamed("s")
+	if !ok {
+		t.Fatal("no profile s")
 	}
-	// a profile bigger than the plan is refused
-	l, small := compute.BuiltinProfiles[2], tenants.Small
-	if e := CheckInstance(small, Used{}, l.CPU, l.MemoryMiB, l.DiskGiB); e == nil {
-		t.Error("a l on a small plan is accepted")
+	l := PerTenant
+	if l.VCPU != 2*m.CPU || l.MemoryMiB != 2*m.MemoryMiB || l.DiskGiB != 2*m.DiskGiB {
+		t.Errorf("%+v does not hold two s (%+v)", l, m)
 	}
-	// the count is reached only by instances smaller than the profile
-	if e := CheckInstance(tenants.Medium, Used{Instances: 4}, 1, 256, 1); e == nil || e.Limit != "instances" {
-		t.Errorf("a fifth instance on a medium plan: %v", e)
+	var used Used
+	for i := 0; i < 2; i++ {
+		if e := CheckInstance(used, m.CPU, m.MemoryMiB, m.DiskGiB); e != nil {
+			t.Errorf("instance %d of the profile s is refused: %v", i+1, e)
+		}
+		used.Instances++
+		used.VCPU += m.CPU
+		used.MemoryMiB += m.MemoryMiB
+		used.DiskGiB += m.DiskGiB
 	}
-	if e := CheckInstance(tenants.Large, Used{Instances: 5}, 1, 256, 1); e != nil {
-		t.Errorf("a sixth instance on a large plan: %v", e)
+	if e := CheckInstance(used, m.CPU, m.MemoryMiB, m.DiskGiB); e == nil {
+		t.Error("a third instance of the profile s is accepted")
+	}
+	// one m is all the CPU, the memory and the disk there is
+	if mm, _ := compute.ProfileNamed("m"); mm.CPU != PerTenant.VCPU || mm.MemoryMiB != PerTenant.MemoryMiB || mm.DiskGiB != PerTenant.DiskGiB {
+		t.Errorf("one m (%+v) is not the whole of %+v", mm, PerTenant)
+	}
+	// a profile bigger than the limits is refused
+	big := compute.BuiltinProfiles[2]
+	if e := CheckInstance(Used{}, big.CPU, big.MemoryMiB, big.DiskGiB); e == nil {
+		t.Error("a l is accepted")
 	}
 }
 
@@ -78,9 +62,9 @@ func TestUsedByCountsStoppedInstancesAndProfiles(t *testing.T) {
 			{Name: "c", CPU: 1, MemoryMiB: 1024, DiskGiB: 10, Running: false},
 		},
 		[]compute.Network{{Name: "n"}},
-		nil,
+		[]compute.Profile{{Name: "web", CPU: 1, MemoryMiB: 1024, DiskGiB: 10}},
 	)
-	want := Used{Instances: 3, VCPU: 5, MemoryMiB: 2048 + 4096 + 1024, DiskGiB: 158, Networks: 1}
+	want := Used{Instances: 3, VCPU: 5, MemoryMiB: 2048 + 4096 + 1024, DiskGiB: 158, Networks: 1, Profiles: 1}
 	if got != want {
 		t.Errorf("UsedBy = %+v, want %+v", got, want)
 	}
@@ -88,21 +72,19 @@ func TestUsedByCountsStoppedInstancesAndProfiles(t *testing.T) {
 
 func TestCheckInstanceSaysWhichLimitIsPassed(t *testing.T) {
 	for name, tt := range map[string]struct {
-		plan             tenants.Plan
 		used             Used
 		cpu, mem, disk   int
 		limit, mentioned string
 	}{
-		"nothing is passed":     {tenants.Medium, Used{Instances: 1, VCPU: 1, MemoryMiB: 1024, DiskGiB: 10}, 1, 1024, 10, "", ""},
-		"exactly the plan":      {tenants.Small, Used{}, 2, 4096, 128, "", ""},
-		"the count":             {tenants.Small, Used{Instances: 2}, 1, 1024, 10, "instances", "2 instances out of 2"},
-		"the count on medium":   {tenants.Medium, Used{Instances: 4}, 1, 1024, 10, "instances", "4 instances out of 4"},
-		"the CPU":               {tenants.Medium, Used{Instances: 1, VCPU: 3}, 2, 1024, 10, "vcpu", "needs 2 vCPU and the tenant has 3 out of 4"},
-		"the memory":            {tenants.Medium, Used{Instances: 1, MemoryMiB: 7168}, 1, 2048, 10, "memoryMiB", "2 GiB of memory and the tenant has 7 GiB out of 8 GiB"},
-		"the disk":              {tenants.Small, Used{}, 1, 1024, 200, "diskGiB", "200 GiB of disk and the tenant has 0 out of 128 GiB"},
-		"the count comes first": {tenants.Small, Used{Instances: 2, VCPU: 2}, 16, 65536, 500, "instances", ""},
+		"nothing is passed":     {Used{Instances: 1, VCPU: 1, MemoryMiB: 1024, DiskGiB: 10}, 1, 1024, 10, "", ""},
+		"exactly the limits":    {Used{}, 2, 4096, 128, "", ""},
+		"the count":             {Used{Instances: 2}, 1, 1024, 10, "instances", "2 instances out of 2 allowed: delete one first"},
+		"the CPU":               {Used{Instances: 1, VCPU: 1}, 2, 1024, 10, "vcpu", "needs 2 vCPU and the tenant has 1 out of 2"},
+		"the memory":            {Used{Instances: 1, MemoryMiB: 3072}, 2, 2048, 10, "memoryMiB", "2 GiB of memory and the tenant has 3 GiB out of 4 GiB"},
+		"the disk":              {Used{}, 1, 1024, 200, "diskGiB", "200 GiB of disk and the tenant has 0 out of 128 GiB"},
+		"the count comes first": {Used{Instances: 2, VCPU: 2}, 16, 65536, 500, "instances", ""},
 	} {
-		e := CheckInstance(tt.plan, tt.used, tt.cpu, tt.mem, tt.disk)
+		e := CheckInstance(tt.used, tt.cpu, tt.mem, tt.disk)
 		switch {
 		case tt.limit == "" && e != nil:
 			t.Errorf("%s: refused: %v", name, e)
@@ -116,12 +98,18 @@ func TestCheckInstanceSaysWhichLimitIsPassed(t *testing.T) {
 	}
 }
 
-func TestCheckNetworkAndCount(t *testing.T) {
-	if e := CheckNetwork(tenants.Small, Used{Networks: 1}); e == nil || e.Limit != "networks" || !strings.Contains(e.Message, "1 network out of 1") {
-		t.Errorf("a second network on a small plan: %v", e)
+func TestCheckNetworkProfileAndCount(t *testing.T) {
+	if e := CheckNetwork(Used{Networks: 2}); e == nil || e.Limit != "networks" || !strings.Contains(e.Message, "2 networks out of 2 allowed: delete one first") {
+		t.Errorf("a third network: %v", e)
 	}
-	if e := CheckNetwork(tenants.Large, Used{Networks: 2}); e != nil {
-		t.Errorf("a third network on a large plan: %v", e)
+	if e := CheckNetwork(Used{Networks: 1}); e != nil {
+		t.Errorf("a second network: %v", e)
+	}
+	if e := CheckProfile(Used{Profiles: 2}); e == nil || e.Limit != "profiles" || !strings.Contains(e.Message, "2 profiles out of 2 allowed") || !strings.Contains(e.Message, "delete one first") {
+		t.Errorf("a third profile: %v", e)
+	}
+	if e := CheckProfile(Used{Profiles: 1}); e != nil {
+		t.Errorf("a second profile: %v", e)
 	}
 	if e := CheckCount("images", 20, 20, "this tenant holds too many images"); e == nil || e.Limit != "images" || !strings.Contains(e.Message, "20 out of 20") {
 		t.Errorf("the 21st image: %v", e)
@@ -154,7 +142,7 @@ func TestSizeAskedTakesTheProfileOrTheDefaults(t *testing.T) {
 func TestAProfileTheUserMadeCountsWhatItComesTo(t *testing.T) {
 	mine := []compute.Profile{{Name: "web", CPU: 3, MemoryMiB: 3072, DiskGiB: 30}}
 	got := UsedBy([]compute.Instance{{Name: "a", Profile: "web"}, {Name: "b", Profile: "s"}}, nil, mine)
-	if want := (Used{Instances: 2, VCPU: 4, MemoryMiB: 3072 + 2048, DiskGiB: 94}); got != want {
+	if want := (Used{Instances: 2, VCPU: 4, MemoryMiB: 3072 + 2048, DiskGiB: 94, Profiles: 1}); got != want {
 		t.Errorf("UsedBy = %+v, want %+v", got, want)
 	}
 	if cpu, mem, disk := SizeAsked(compute.CreateInstance{Profile: "web"}, mine); cpu != 3 || mem != 3072 || disk != 30 {

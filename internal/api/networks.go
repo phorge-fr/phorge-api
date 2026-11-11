@@ -147,12 +147,12 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := r.PathValue("t")
-	// The plan limits how many: say it before asking, with a code, instead of leaving a network that never becomes ready.
-	plan, used, _, ok := holdings(w, r, &n.base, n.instances, n.store, n.profiles, tenant)
+	// The tenant is limited in how many: say it before asking, with a code, instead of leaving a network that never becomes ready.
+	_, used, _, ok := holdings(w, r, &n.base, n.instances, n.store, n.profiles, tenant)
 	if !ok {
 		return
 	}
-	if e := quota.CheckNetwork(plan, used); e != nil {
+	if e := quota.CheckNetwork(used); e != nil {
 		quotaExceeded(w, e)
 		return
 	}
@@ -169,7 +169,7 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n.log.Info("network created", "tenant", tenant, "network", nw.Name, "by", id.Subject)
-	// Accepted, not created: Incus takes a few seconds, and the plan's limit on networks is Incus's, its refusal comes back in
+	// Accepted, not created: Incus takes a few seconds, and the limit on networks is Incus's, its refusal comes back in
 	// problems.
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/networks/"+nw.Name)
 	writeJSON(w, http.StatusAccepted, n.body(nw))

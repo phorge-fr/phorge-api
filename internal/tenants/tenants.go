@@ -13,7 +13,8 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/status"
 )
 
-// Plan is the quota plan of a tenant, which Incus enforces as project limits.
+// Plan is the quota plan of a tenant. It is deprecated: every tenant has the same limits, whatever its plan, and it is kept only
+// until the console stops reading it.
 type Plan string
 
 // The plans of the Tenant XRD.

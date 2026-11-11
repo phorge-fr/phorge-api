@@ -68,7 +68,7 @@ paths:
             summary: What the API enforces on a request
             description: |
                 The bounds of an instance (CPU, memory, disk) with the value each takes when a request leaves it out, and the longest
-                names. The plan of a tenant is a limit of its own and is not here.
+                names. What a tenant may hold is the same for every tenant and is in `GET /v1/tenants/{t}/quota`.
             security:
                 - bearerAuth: []
             responses:
@@ -108,8 +108,9 @@ paths:
             summary: Create a tenant
             description: |
                 Any person creates a tenant for themselves (`canCreateTenants` of `GET /v1/whoami`): they own it, `owner` is left
-                out or is their own email, and the plan is `small` (another one is `403`: the platform administrators change a
-                plan on request, where the platform is run). A person owns a limited number of tenants:
+                out or is their own email. Every tenant has the same limits (2 VMs, 2 vCPU, 4 GiB of memory, 128 GiB of disk, 2 networks
+                and 2 profiles), so there is no plan to choose: leave `plan` out. It is deprecated and kept until the console stops
+                reading it: a `plan` other than `small` is `403`, and none changes a limit. A person owns a limited number of tenants:
                 past it the answer is `409` with the code `quota_exceeded`. A key never creates a tenant.
 
                 The answer is `202`: the tenant exists but Crossplane takes about a minute to make its namespace, its Incus
@@ -178,8 +179,8 @@ paths:
             operationId: updateTenant
             summary: Change the display name
             description: |
-                The admins of the tenant, the owner among them, change its display name. The plan is not changed through the API
-                (`403`): a person who needs another one asks the platform administrators. The name and the owner cannot change: to hand a tenant over, give the new person the
+                The admins of the tenant, the owner among them, change its display name. The `plan` is deprecated and changes
+                no limit, since every tenant has the same ones: a body that gives it is `403`. The name and the owner cannot change: to hand a tenant over, give the new person the
                 `admin` role with a membership.
             security:
                 - bearerAuth: []
@@ -191,7 +192,7 @@ paths:
                             $ref: "#/components/schemas/TenantPatch"
             responses:
                 "200":
-                    description: The tenant. The new plan is applied by Crossplane within a minute.
+                    description: The tenant.
                     content:
                         application/json:
                             schema:
@@ -397,7 +398,7 @@ paths:
                 An OVN network of the tenant, NATed: its instances reach the Internet and are not reachable from it. The user may
                 choose its range with `ipv4`; without one Incus chooses it. A range the platform uses, or that a network of any tenant
                 already has, is refused with `409` (`range_reserved`, `range_in_use`). The answer is `202`: poll the `Location` until `phase` is `Ready`. The number of networks is
-                limited by the plan of the tenant: the next one never becomes ready, and `problems` says that a limit is reached.
+                limited (2 for every tenant): a third is refused with `409` and the code `quota_exceeded`, and a message that says which limit.
             security:
                 - bearerAuth: []
             requestBody:
@@ -541,11 +542,12 @@ paths:
             tags:
                 - Tenants
             operationId: getQuota
-            summary: What the plan of a tenant allows and what it holds
+            summary: What a tenant may hold and what it holds
             description: |
-                The limits of the plan of the tenant (instances, vCPU, memory, disk, networks) and what the tenant holds. A stopped
-                instance counts, as it does for Incus. A request that would pass a limit is refused with `409` and the code
-                `quota_exceeded`, and a message that says which.
+                The limits of the tenant (instances, vCPU, memory, disk, networks, profiles), the same for every tenant, and what the
+                tenant holds. A stopped instance counts, as it does for Incus. The profiles are the ones its users made: `s`, `m` and
+                `l` are not counted. The `plan` is deprecated, it limits nothing and goes when the console stops reading it. A request that
+                would pass a limit is refused with `409` and the code `quota_exceeded`, and a message that says which.
             security:
                 - bearerAuth: []
             responses:
@@ -574,8 +576,8 @@ paths:
             description: |
                 Every tenant has the profiles `s` (1 vCPU, 2 GiB, 64 GiB), `m` (2, 4, 128) and `l` (4, 8, 256), created with it and
                 marked `builtin`, then the profiles its users made. An instance takes one of them (`profile`) or its own `cpu`,
-                `memoryMiB` and `diskGiB`. The plan of the tenant limits the total: a profile whose disk is above the plan's is
-                refused by Incus when an instance asks for it.
+                `memoryMiB` and `diskGiB`. The limits of the tenant hold the total: a profile whose disk is above them is
+                refused when an instance asks for it. A tenant holds at most 2 profiles of its own; `s`, `m` and `l` are not counted.
             security:
                 - bearerAuth: []
             responses:
@@ -600,10 +602,10 @@ paths:
             summary: Make a profile in a tenant
             description: |
                 A size of the user's own: CPU, memory and a root disk, all three given. The name is 1 to 32 characters, and `s`, `m`, `l`
-                and `default` are taken. A tenant holds a limited number of them (`quota_exceeded` past it). It may also say two settings
+                and `default` are taken. A tenant holds at most 2 of them (a third is `409`, `quota_exceeded`, delete one first); `s`, `m` and `l` are not counted. It may also say two settings
                 of an instance, `secureBoot` and `sshPublicKeys`, which an instance takes unless it says its own; there is no nesting
                 and no network on a profile (`400`, an unknown field). The answer is `202`: poll the `Location` until `phase` is
-                `Ready`. A profile that is bigger than the plan is a definition: it is the instance that Incus refuses.
+                `Ready`. A profile that is bigger than the limits of the tenant is a definition: it is the instance that is refused.
             security:
                 - bearerAuth: []
             requestBody:
@@ -727,7 +729,7 @@ paths:
                 The image has to be an image of the same tenant, and `Ready`. The answer is `202`: it takes about a minute. Poll the
                 `Location` until `phase` is `Ready`.
 
-                A request that would pass a limit of the tenant's plan is refused here, before Incus is asked: `409` with the code
+                A request that would pass a limit of the tenant is refused here, before Incus is asked: `409` with the code
                 `quota_exceeded` and a message that says which limit (`GET /v1/tenants/{t}/quota` says what is left). Stopped VMs count.
                 Incus stays the authority: a `PATCH` that grows an instance is only checked by Incus, and its refusal comes back as
                 `problems` of the instance, in words.
@@ -1445,7 +1447,7 @@ components:
                 problems:
                     type: string
                     description: |
-                        What is wrong, in a sentence made for the user: a limit of the plan that is reached, an image that does not
+                        What is wrong, in a sentence made for the user: a limit that is reached, an image that does not
                         boot, or that the platform could not complete a step yet. Never a Crossplane condition or a provider error.
                         Absent when all is well.
                 createdAt:
@@ -1489,6 +1491,7 @@ components:
                 - memoryMiB
                 - diskGiB
                 - networks
+                - profiles
             properties:
                 instances:
                     type: integer
@@ -1500,6 +1503,9 @@ components:
                     type: integer
                 networks:
                     type: integer
+                profiles:
+                    type: integer
+                    description: The profiles the users of the tenant made (as `limits`, how many they may make). `s`, `m` and `l` are not counted.
         Quota:
             type: object
             required:
@@ -1677,7 +1683,8 @@ components:
                             type: integer
                         maxPerTenant:
                             type: integer
-                            description: How many profiles the users of a tenant may make. `0` is no limit.
+                            description: |
+                                How many profiles the users of a tenant may make: 2, the same for every tenant (`s`, `m` and `l` are not counted).
                 image:
                     type: object
                     required:
@@ -1722,7 +1729,7 @@ components:
                 problems:
                     type: string
                     description: |
-                        What is wrong, in a sentence made for the user: a limit of the plan that is reached, or that the platform could
+                        What is wrong, in a sentence made for the user: a limit that is reached, or that the platform could
                         not complete a step yet. Never a Crossplane condition or a provider error. Absent when all is well.
                 createdAt:
                     type: string
@@ -2228,9 +2235,11 @@ components:
                     maxLength: 100
         Plan:
             type: string
+            deprecated: true
             description: |
-                The quota of the tenant, enforced by Incus. The CPU, the memory and the disk of each plan hold two instances of the
-                size of its own profile. `small`: 2 VMs, 2 vCPU, 4 GiB, 128 GiB of disk, 1 network. `medium`: 4, 4, 8, 256, 2. `large`: 6, 8, 16, 512, 3.
+                Deprecated: every tenant has the same limits (2 VMs, 2 vCPU, 4 GiB, 128 GiB of disk, 2 networks, 2 profiles), whatever
+                its plan, which is kept as it is read until the console stops using it and then removed. A new tenant is `small`;
+                another plan is `403` on creation and on change.
             enum:
                 - small
                 - medium

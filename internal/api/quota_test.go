@@ -10,27 +10,51 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
-// tiny is a tenant of the small plan (1 instance, 2 vCPU, 4 GiB, 20 GiB, 1 network) that alice may use as she uses demo.
+// tiny is a tenant like any other (2 instances, 2 vCPU, 4 GiB, 128 GiB, 2 networks, 2 profiles) that alice may use as she uses demo.
 func withTiny(e *env) {
 	e.store.tenants["tiny"] = tenants.Tenant{Name: "tiny", Owner: "alice@example.org", Plan: tenants.Small, CreatedAt: now, Ready: true, NotReadySince: now}
-	for _, rel := range []string{"can_read_tenant", "can_read_instances", "can_write_instances", "can_read_images", "can_write_images", "can_read_networks", "can_write_networks"} {
+	for _, rel := range []string{"can_read_tenant", "can_read_instances", "can_write_instances", "can_read_images", "can_write_images", "can_read_networks", "can_write_networks", "can_read_profiles", "can_write_profiles"} {
 		e.fga.grants["user:operator@example.org "+rel+" tenant:tiny"] = true
 	}
 	e.fga.objects["user:operator@example.org"] = append(e.fga.objects["user:operator@example.org"], "tenant:tiny")
 	e.images.put("tiny", readyImage("debian"))
 }
 
-func TestQuotaSaysWhatThePlanAllowsAndWhatTheTenantHolds(t *testing.T) {
+func TestQuotaSaysWhatEveryTenantMayHoldAndWhatItHolds(t *testing.T) {
 	e := newEnv(t)
 	e.instances.put("demo", compute.Instance{Name: "a", Image: "debian", CPU: 2, MemoryMiB: 2048, DiskGiB: 20})
 	e.instances.put("demo", compute.Instance{Name: "b", Image: "debian", Profile: "m", Running: false}) // stopped: it counts
 	var got quotaBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &got)
-	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 6, VCPU: 8, MemoryMiB: 16384, DiskGiB: 512, Networks: 3}) {
+	// the plan of demo is large and the limits are the same as for every tenant: the plan is shown, deprecated, and limits nothing
+	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 2, VCPU: 2, MemoryMiB: 4096, DiskGiB: 128, Networks: 2, Profiles: 2}) {
 		t.Errorf("plan and limits: %+v", got)
 	}
-	if want := (quota.Used{Instances: 2, VCPU: 4, MemoryMiB: 2048 + 4096, DiskGiB: 148, Networks: 1}); got.Used != want {
+	if want := (quota.Used{Instances: 2, VCPU: 4, MemoryMiB: 2048 + 4096, DiskGiB: 148, Networks: 1, Profiles: 0}); got.Used != want {
 		t.Errorf("used = %+v, want %+v (the network of the test environment, the stopped VM, the profile)", got.Used, want)
+	}
+}
+
+// The plan of a tenant is kept in the answer and limits nothing: a small one and a large one have the same limits.
+func TestThePlanOfATenantChangesNoLimit(t *testing.T) {
+	e := newEnv(t)
+	withTiny(e) // small, demo is large
+	var small, large quotaBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/tiny/quota", "operator", ""), &small)
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &large)
+	if small.Plan != tenants.Small || large.Plan != tenants.Large || small.Limits != large.Limits || small.Limits != quota.PerTenant {
+		t.Errorf("small %+v, large %+v: the limits are the same, whatever the plan", small, large)
+	}
+}
+
+// The profiles are in what a tenant holds, but the three every tenant has are not.
+func TestQuotaCountsTheProfilesTheUsersMade(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("one", 1, 1024, 10))
+	var got quotaBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &got)
+	if got.Used.Profiles != 1 || got.Limits.Profiles != 2 {
+		t.Errorf("profiles used %d of %d, want 1 of 2: s, m and l are not counted", got.Used.Profiles, got.Limits.Profiles)
 	}
 }
 
@@ -53,11 +77,11 @@ func quotaCode(t *testing.T, body string) string {
 	return body
 }
 
-func TestAnInstanceThatWouldPassThePlanIsRefusedWithTheLimit(t *testing.T) {
+func TestAnInstanceThatWouldPassTheLimitsIsRefusedWithTheLimit(t *testing.T) {
 	e := newEnv(t)
 	withTiny(e)
 	e.networks.put("tiny", readyNetwork("net"))
-	// 2 instances allowed on the small plan
+	// 2 instances are allowed
 	for _, n := range []string{"a", "b"} {
 		if code := call(t, e, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"`+n+`","image":"debian"}`); code != http.StatusAccepted {
 			t.Fatalf("instance %s: status %d", n, code)
@@ -72,7 +96,7 @@ func TestAnInstanceThatWouldPassThePlanIsRefusedWithTheLimit(t *testing.T) {
 	}
 }
 
-func TestAnInstanceBiggerThanThePlanIsRefusedBeforeIncusSeesIt(t *testing.T) {
+func TestAnInstanceBiggerThanTheLimitsIsRefusedBeforeIncusSeesIt(t *testing.T) {
 	for name, tt := range map[string]struct{ body, want string }{
 		"a disk":                    {`{"name":"a","image":"debian","diskGiB":200}`, "200 GiB of disk and the tenant has 0 out of 128 GiB"},
 		"a profile that is too big": {`{"name":"a","image":"debian","profile":"l"}`, "4 vCPU"},
@@ -89,18 +113,42 @@ func TestAnInstanceBiggerThanThePlanIsRefusedBeforeIncusSeesIt(t *testing.T) {
 	}
 }
 
-func TestASecondNetworkOnASmallPlanIsRefusedWithTheLimit(t *testing.T) {
+func TestAThirdNetworkIsRefusedWithTheLimit(t *testing.T) {
 	e := newEnv(t)
 	withTiny(e)
-	if code := call(t, e, "POST", "/v1/tenants/tiny/networks", "operator", `{"name":"one"}`); code != http.StatusAccepted {
-		t.Fatalf("the first network: status %d", code)
+	for _, n := range []string{"one", "two"} {
+		if code := call(t, e, "POST", "/v1/tenants/tiny/networks", "operator", `{"name":"`+n+`"}`); code != http.StatusAccepted {
+			t.Fatalf("network %s: status %d", n, code)
+		}
 	}
-	rec := e.do(t, "POST", "/v1/tenants/tiny/networks", "operator", `{"name":"two"}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "1 network out of 1") {
-		t.Errorf("the second: status %d: %s", rec.Code, rec.Body)
+	rec := e.do(t, "POST", "/v1/tenants/tiny/networks", "operator", `{"name":"three"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "2 networks out of 2 allowed: delete one first") {
+		t.Errorf("the third: status %d: %s", rec.Code, rec.Body)
 	}
-	if len(e.networks.created) != 1 {
+	if len(e.networks.created) != 2 {
 		t.Errorf("the refused network reached the store")
+	}
+}
+
+func TestAThirdProfileIsRefusedWithTheLimit(t *testing.T) {
+	e := newEnv(t)
+	withTiny(e)
+	const sz = `"cpu":1,"memoryMiB":1024,"diskGiB":10`
+	for _, n := range []string{"one", "two"} {
+		if code := call(t, e, "POST", "/v1/tenants/tiny/profiles", "operator", `{"name":"`+n+`",`+sz+`}`); code != http.StatusAccepted {
+			t.Fatalf("profile %s: status %d", n, code)
+		}
+	}
+	rec := e.do(t, "POST", "/v1/tenants/tiny/profiles", "operator", `{"name":"three",`+sz+`}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "2 profiles out of 2 allowed (s, m and l do not count): delete one first") {
+		t.Errorf("the third: status %d: %s", rec.Code, rec.Body)
+	}
+	if len(e.profiles.created) != 2 {
+		t.Errorf("the refused profile reached the store: %d created", len(e.profiles.created))
+	}
+	// s, m and l are not counted: the two above came next to them, and the profile of another tenant is not this one's
+	if code := call(t, e, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"one",`+sz+`}`); code != http.StatusAccepted {
+		t.Errorf("a profile of another tenant: status %d", code)
 	}
 }
 

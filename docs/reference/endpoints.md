@@ -13,9 +13,9 @@ verified: 2026-11-08
 | `GET /v1/whoami` | Who the credential stands for |
 | `GET /v1/limits` | What the API enforces on a request: the bounds of an instance and the value each takes when a request leaves it out, the longest names, and the ceilings of the deployment (profiles and images per tenant, tenants per person). Any credential; nothing about a tenant |
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you hold a role on |
-| `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create a tenant for yourself (plan `small`), rename and delete it (its admins, the owner among them) |
+| `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create a tenant for yourself (every tenant has the same limits), rename and delete it (its admins, the owner among them) |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with a role or a key tuple (`images:read`), write with `operator` or `images:write` |
-| `GET /v1/tenants/{t}/quota` | What the plan of the tenant allows (instances, vCPU, memory, disk, networks) and what it holds. Read with the right of the instances |
+| `GET /v1/tenants/{t}/quota` | What a tenant may hold (instances, vCPU, memory, disk, networks, profiles; the same for every tenant) and what it holds. Read with the right of the instances |
 | `GET`, `POST /v1/tenants/{t}/profiles`, `GET`, `DELETE /v1/tenants/{t}/profiles/{name}` | The sizes an instance can take: the profiles `s`, `m` and `l` every tenant is created with, and the ones its users make. Read with any role or `profiles:read`, write with `operator` or `profiles:write` |
 | `GET`, `POST /v1/tenants/{t}/networks`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/networks/{name}` | The networks of a tenant, which comes without one: read with a role (`viewer` and above) or `networks:read`, write with `operator` or `networks:write` |
 | `GET`, `POST /v1/tenants/{t}/memberships`, `GET`, `DELETE /v1/tenants/{t}/memberships/{name}` | The roles of the users: admins of the tenant, and the keys with `memberships:read` and `memberships:write` on it |

@@ -17,9 +17,9 @@ import (
 // tenantRoutes are the routes of the tenants.
 //
 // Seeing a tenant takes a right on it (a role; for a key, the scope tenants:read too). Any person creates a tenant for themselves:
-// they own it, it has the smallest plan, and the number of tenants a person owns is limited (MAX_TENANTS_PER_USER). Changing the
-// name of a tenant and deleting it is for its admins, the owner among them. Its plan is not a thing the API changes: an
-// administrator of the platform does it on request, where the platform is run. A key never creates, changes or deletes a tenant.
+// they own it, and the number of tenants a person owns is limited (MAX_TENANTS_PER_USER). Changing the
+// name of a tenant and deleting it is for its admins, the owner among them. Every tenant has the same limits (internal/quota),
+// whatever its plan, which is deprecated and kept as it is read until the console stops using it. A key never creates, changes or deletes a tenant.
 type tenantRoutes struct {
 	base
 	store    tenants.Store
@@ -125,14 +125,14 @@ func (t *tenantRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := auth.FromContext(r.Context())
 	req.CreatedBy = id.Subject
-	// A person creates a tenant for themselves: the owner is the caller, and the plan the smallest. A request that says otherwise
+	// A person creates a tenant for themselves: the owner is the caller, and the plan the default one, which limits nothing. A request that says otherwise
 	// is refused, not changed in silence.
 	if req.Owner != "" && !strings.EqualFold(req.Owner, id.Email) {
 		httperr.Write(w, http.StatusForbidden, "forbidden", "you can only create a tenant for yourself")
 		return
 	}
 	if req.Plan != "" && req.Plan != tenants.Small {
-		httperr.Write(w, http.StatusForbidden, "forbidden", "a new tenant has the small plan: ask the platform administrators for another one")
+		httperr.Write(w, http.StatusForbidden, "forbidden", "there is no choice of plan any more: every tenant has the same limits, leave plan out")
 		return
 	}
 	req.Owner, req.Plan = id.Email, tenants.Small
@@ -185,10 +185,10 @@ func (t *tenantRoutes) patch(w http.ResponseWriter, r *http.Request) {
 		t.storeError(w, err, "tenant")
 		return
 	}
-	// The plan is what a tenant is allowed to hold: its admins rename it, and the platform administrators change the plan on request,
-	// where the platform is run.
+	// Every tenant has the same limits: the plan is deprecated, kept until the console stops reading it, and it changes nothing. Its
+	// admins rename a tenant, and a request that gives a plan is still refused, as it always was.
 	if req.Plan != nil {
-		httperr.Write(w, http.StatusForbidden, "forbidden", "the plan of a tenant is changed by the platform administrators: ask them")
+		httperr.Write(w, http.StatusForbidden, "forbidden", "there is no choice of plan any more: every tenant has the same limits")
 		return
 	}
 	tn, err := t.store.Patch(r.Context(), r.PathValue("t"), req)

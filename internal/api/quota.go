@@ -14,7 +14,8 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
-// quotaRoutes tell a tenant what its plan allows and what it holds, so that a client draws what is left.
+// quotaRoutes tell a tenant what it is allowed to hold, the same for every tenant, and what it holds, so that a client draws what is
+// left.
 type quotaRoutes struct {
 	base
 	instances compute.InstanceStore
@@ -27,6 +28,7 @@ func (q *quotaRoutes) register(s *server.Server, authn func(http.Handler) http.H
 }
 
 type quotaBody struct {
+	// Plan is deprecated: it changes no limit, and goes when the console stops reading it.
 	Plan   tenants.Plan `json:"plan"`
 	Limits quota.Limits `json:"limits"`
 	Used   quota.Used   `json:"used"`
@@ -38,10 +40,10 @@ func (q *quotaRoutes) get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, quotaBody{Plan: plan, Limits: quota.LimitsOf(plan), Used: used})
+	writeJSON(w, http.StatusOK, quotaBody{Plan: plan, Limits: quota.PerTenant, Used: used})
 }
 
-// holdings reads the plan of a tenant, what it holds, and the profiles its users made (an instance counts what its profile comes to),
+// holdings reads the plan of a tenant (deprecated, it limits nothing), what it holds, and the profiles its users made (an instance counts what its profile comes to),
 // or answers.
 func holdings(w http.ResponseWriter, r *http.Request, b *base, instances compute.InstanceStore, networks compute.NetworkStore, profiles compute.ProfileStore, tenant string) (tenants.Plan, quota.Used, []compute.Profile, bool) {
 	tn, err := b.tenants.Get(r.Context(), tenant)
