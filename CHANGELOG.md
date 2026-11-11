@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.1](https://github.com/phorge-fr/phorge-api/compare/v0.15.0...v0.15.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* An empty list of SSH keys on creation means no key ([b53756e](https://github.com/phorge-fr/phorge-api/commit/b53756e1de240217324d13fa69cf25505a99d6c3))
+
 ## [0.15.0](https://github.com/phorge-fr/phorge-api/compare/v0.14.0...v0.15.0) (2026-11-11)
 
 
