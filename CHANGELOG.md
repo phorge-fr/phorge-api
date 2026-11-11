@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/phorge-fr/phorge-api/compare/v0.14.0...v0.15.0) (2026-11-11)
+
+
+### Features
+
+* **quota:** one set of limits for every tenant, with 2 profiles ([45645a9](https://github.com/phorge-fr/phorge-api/commit/45645a996411c92808d76d006f0d7ca724c56c7e))
+
 ## [0.14.0](https://github.com/phorge-fr/phorge-api/compare/v0.13.1...v0.14.0) (2026-11-11)
 
 
