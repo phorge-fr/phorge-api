@@ -64,6 +64,13 @@ func (s *Profiles) Create(ctx context.Context, tenant string, req compute.Create
 	if req.Description != "" {
 		spec["description"] = req.Description
 	}
+	// What the profile does not say stays absent: an absent secure boot is not false, the instance's own value or the default applies.
+	if req.SecureBoot != nil {
+		spec["secureBoot"] = *req.SecureBoot
+	}
+	if len(req.SSHPublicKeys) > 0 {
+		spec["sshPublicKeys"] = toAny(req.SSHPublicKeys)
+	}
 	obj, err := r.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": profilesGVR.GroupVersion().String(),
 		"kind":       "Profile",
@@ -94,15 +101,23 @@ func (s *Profiles) Delete(ctx context.Context, tenant, name string) error {
 func profileOf(obj *unstructured.Unstructured) compute.Profile {
 	description, _, _ := unstructured.NestedString(obj.Object, "spec", "description")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
+	// The settings the profile says, absent when it does not: the found flag is what counts, never the value.
+	var secureBoot *bool
+	if v, found, err := unstructured.NestedBool(obj.Object, "spec", "secureBoot"); found && err == nil {
+		secureBoot = &v
+	}
+	keys, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "sshPublicKeys")
 
 	return compute.Profile{
-		Name:        obj.GetName(),
-		Description: description,
-		CPU:         intOf(obj, "cpu"),
-		MemoryMiB:   intOf(obj, "memoryMiB"),
-		DiskGiB:     intOf(obj, "diskGiB"),
-		CreatedAt:   obj.GetCreationTimestamp().Time,
-		CreatedBy:   obj.GetAnnotations()[CreatedByAnnotation],
-		Status:      statusOf(obj, problems),
+		Name:          obj.GetName(),
+		Description:   description,
+		CPU:           intOf(obj, "cpu"),
+		MemoryMiB:     intOf(obj, "memoryMiB"),
+		DiskGiB:       intOf(obj, "diskGiB"),
+		SecureBoot:    secureBoot,
+		SSHPublicKeys: keys,
+		CreatedAt:     obj.GetCreationTimestamp().Time,
+		CreatedBy:     obj.GetAnnotations()[CreatedByAnnotation],
+		Status:        statusOf(obj, problems),
 	}
 }

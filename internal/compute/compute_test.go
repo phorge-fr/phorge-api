@@ -426,3 +426,31 @@ func TestTheNetworksOfAnInstanceAreChecked(t *testing.T) {
 		t.Error("a patch with a network twice was accepted")
 	}
 }
+
+// A profile checks its SSH keys with the function of the instance: the same keys are accepted and refused.
+func TestAProfileTakesTheSSHKeysOfAnInstance(t *testing.T) {
+	size := CreateProfile{Name: "web", CPU: ptr(2), MemoryMiB: ptr(1024), DiskGiB: ptr(10)}
+	for name, keys := range map[string][]string{
+		"none":            nil,
+		"a key":           {goodKey},
+		"a key with note": {goodKey + " user@host"},
+	} {
+		r := size
+		r.SSHPublicKeys = keys
+		if err := r.Validate(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, keys := range map[string][]string{
+		"not a key":     {"nope"},
+		"a line break":  {goodKey + "\nruncmd:"},
+		"given twice":   {goodKey, goodKey},
+		"too many keys": make([]string, MaxSSHKeys+1),
+	} {
+		r := size
+		r.SSHPublicKeys = keys
+		if err := r.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

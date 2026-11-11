@@ -40,6 +40,9 @@ type profileBody struct {
 	CPU         int    `json:"cpu"`
 	MemoryMiB   int    `json:"memoryMiB"`
 	DiskGiB     int    `json:"diskGiB"`
+	// SecureBoot and SSHPublicKeys are what the profile says, absent when it does not. An instance takes them unless it says its own.
+	SecureBoot    *bool    `json:"secureBoot,omitempty"`
+	SSHPublicKeys []string `json:"sshPublicKeys,omitempty"`
 	// Builtin tells the profiles every tenant is created with from the ones a user made. Only the latter have what follows.
 	Builtin   bool          `json:"builtin"`
 	Phase     *status.Phase `json:"phase,omitempty"`
@@ -53,6 +56,7 @@ func (p *profileRoutes) body(pr compute.Profile) profileBody {
 	if pr.Builtin {
 		return b
 	}
+	b.SecureBoot, b.SSHPublicKeys = pr.SecureBoot, pr.SSHPublicKeys
 	phase := pr.Status.At(p.now())
 	at := pr.CreatedAt
 	b.Phase, b.Problems, b.CreatedAt, b.CreatedBy = &phase, pr.Status.Message(phase), &at, pr.CreatedBy

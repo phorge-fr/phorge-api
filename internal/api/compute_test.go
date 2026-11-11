@@ -215,8 +215,8 @@ func (s *profileStore) Create(_ context.Context, tenant string, r compute.Create
 		return compute.Profile{}, compute.ErrExists
 	}
 	s.created = append(s.created, r)
-	p := compute.Profile{Name: r.Name, Description: r.Description, CPU: *r.CPU, MemoryMiB: *r.MemoryMiB, DiskGiB: *r.DiskGiB, CreatedBy: r.CreatedBy, CreatedAt: now,
-		Status: status.Object{NotReadySince: now}}
+	p := compute.Profile{Name: r.Name, Description: r.Description, CPU: *r.CPU, MemoryMiB: *r.MemoryMiB, DiskGiB: *r.DiskGiB, SecureBoot: r.SecureBoot, SSHPublicKeys: r.SSHPublicKeys,
+		CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
 	s.put(tenant, p)
 	return p, nil
 }

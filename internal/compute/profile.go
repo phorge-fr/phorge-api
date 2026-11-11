@@ -37,14 +37,20 @@ func Taken(name string) bool {
 // MaxProfileDescription is the longest description of a profile.
 const MaxProfileDescription = 200
 
-// Profile is a size an instance can take: CPU, memory and a root disk. A tenant has three of them, `s`, `m` and `l`, which its
-// project is created with (phorge-fr/Hangar, composition-tenant.yml); a user's own profiles come with phorge-fr/phorge-api#73.
+// Profile is a size an instance can take: CPU, memory and a root disk, and what a user's own profile says of two settings of an
+// instance, secure boot and SSH keys. A tenant has three profiles, `s`, `m` and `l`, which its project is created with
+// (phorge-fr/Hangar, composition-tenant.yml); a user's own profiles come with phorge-fr/phorge-api#73.
 type Profile struct {
 	Name        string
 	Description string
 	CPU         int
 	MemoryMiB   int
 	DiskGiB     int
+	// SecureBoot and SSHPublicKeys are what the profile says, nil when it says nothing: an instance takes them unless it says its
+	// own. An absent secure boot is not false, and an empty list of keys is the same as none. Never a network, never nesting: Incus
+	// refuses nesting on a profile of a tenant project, so the kind does not have it.
+	SecureBoot    *bool
+	SSHPublicKeys []string
 	// Builtin is a profile the tenant is created with, which the user cannot change or delete.
 	Builtin bool
 	// CreatedAt, CreatedBy and Status are those of a profile a user made. A builtin profile has none: it is made with the tenant.
@@ -60,6 +66,10 @@ type CreateProfile struct {
 	CPU         *int   `json:"cpu"`
 	MemoryMiB   *int   `json:"memoryMiB"`
 	DiskGiB     *int   `json:"diskGiB"`
+	// SecureBoot and SSHPublicKeys are the settings an instance takes from the profile unless it says its own. Written on the
+	// object only when given.
+	SecureBoot    *bool    `json:"secureBoot"`
+	SSHPublicKeys []string `json:"sshPublicKeys"`
 
 	// CreatedBy is the subject of the caller, recorded on the object. Not part of the request body.
 	CreatedBy string `json:"-"`
@@ -88,6 +98,8 @@ func (r CreateProfile) Validate() error {
 		}
 		checkBounds(&p, f.name, f.v, f.lo, f.hi)
 	}
+	// The keys of an instance and of a profile are the same, checked by the same function.
+	checkKeys(&p, r.SSHPublicKeys)
 	return p.err()
 }
 

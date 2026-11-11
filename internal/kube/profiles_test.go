@@ -42,6 +42,67 @@ func TestProfileCreateWritesTheThreeValues(t *testing.T) {
 	}
 }
 
+func TestProfileCreateWritesTheSettingsItIsGivenAndOnlyThose(t *testing.T) {
+	s, client := newProfileStore()
+	if _, err := s.Create(t.Context(), "demo", compute.CreateProfile{Name: "plain", CPU: ptr(1), MemoryMiB: ptr(1024), DiskGiB: ptr(10)}); err != nil {
+		t.Fatal(err)
+	}
+	obj, _ := client.Resource(profilesGVR).Namespace("t-demo").Get(t.Context(), "plain", metav1.GetOptions{})
+	for _, field := range []string{"secureBoot", "sshPublicKeys"} {
+		if _, ok, _ := unstructured.NestedFieldNoCopy(obj.Object, "spec", field); ok {
+			t.Errorf("%s was sent for a profile that does not say it: an absent value is not false nor empty", field)
+		}
+	}
+	// A secure boot of false is a value the profile says: it is written, not dropped as a zero.
+	got, err := s.Create(t.Context(), "demo", compute.CreateProfile{Name: "web", CPU: ptr(1), MemoryMiB: ptr(1024), DiskGiB: ptr(10),
+		SecureBoot: ptr(false), SSHPublicKeys: []string{key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SecureBoot == nil || *got.SecureBoot || len(got.SSHPublicKeys) != 1 || got.SSHPublicKeys[0] != key {
+		t.Errorf("the profile read back = %+v", got)
+	}
+	obj, _ = client.Resource(profilesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+	if v, ok, _ := unstructured.NestedBool(obj.Object, "spec", "secureBoot"); !ok || v {
+		t.Errorf("spec.secureBoot = %v, found %v, want false", v, ok)
+	}
+	if v, ok, _ := unstructured.NestedStringSlice(obj.Object, "spec", "sshPublicKeys"); !ok || len(v) != 1 || v[0] != key {
+		t.Errorf("spec.sshPublicKeys = %v, found %v", v, ok)
+	}
+}
+
+// A profile says what its object says: the field being there is what counts, never its value.
+func TestProfileReadsOnlyWhatTheObjectSays(t *testing.T) {
+	s, client := newProfileStore()
+	for name, spec := range map[string]map[string]any{
+		"none":  {"cpu": int64(1), "memoryMiB": int64(1024), "diskGiB": int64(10)},
+		"false": {"cpu": int64(1), "memoryMiB": int64(1024), "diskGiB": int64(10), "secureBoot": false},
+		"true":  {"cpu": int64(1), "memoryMiB": int64(1024), "diskGiB": int64(10), "secureBoot": true, "sshPublicKeys": []any{key}},
+		"empty": {"cpu": int64(1), "memoryMiB": int64(1024), "diskGiB": int64(10), "sshPublicKeys": []any{}},
+	} {
+		obj := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": profilesGVR.GroupVersion().String(), "kind": "Profile",
+			"metadata": map[string]any{"name": name, "namespace": "t-demo"}, "spec": spec,
+		}}
+		if _, err := client.Resource(profilesGVR).Namespace("t-demo").Create(t.Context(), obj, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := map[string]struct {
+		secureBoot *bool
+		keys       int
+	}{"none": {nil, 0}, "false": {ptr(false), 0}, "true": {ptr(true), 1}, "empty": {nil, 0}}
+	for name, w := range want {
+		got, err := s.Get(t.Context(), "demo", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if (got.SecureBoot == nil) != (w.secureBoot == nil) || (w.secureBoot != nil && *got.SecureBoot != *w.secureBoot) || len(got.SSHPublicKeys) != w.keys {
+			t.Errorf("%s: secureBoot %v, %d keys, want %v and %d", name, got.SecureBoot, len(got.SSHPublicKeys), w.secureBoot, w.keys)
+		}
+	}
+}
+
 func TestProfileCreateWithoutADescriptionSendsNone(t *testing.T) {
 	s, client := newProfileStore()
 	if _, err := s.Create(t.Context(), "demo", compute.CreateProfile{Name: "web", CPU: ptr(1), MemoryMiB: ptr(1024), DiskGiB: ptr(10)}); err != nil {
