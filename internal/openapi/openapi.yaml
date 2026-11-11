@@ -600,9 +600,10 @@ paths:
             summary: Make a profile in a tenant
             description: |
                 A size of the user's own: CPU, memory and a root disk, all three given. The name is 1 to 32 characters, and `s`, `m`, `l`
-                and `default` are taken. A tenant holds a limited number of them (`quota_exceeded` past it). The answer is `202`: poll the
-                `Location` until `phase` is `Ready`. A profile that is bigger than the plan is a definition: it is the instance that
-                Incus refuses.
+                and `default` are taken. A tenant holds a limited number of them (`quota_exceeded` past it). It may also say two settings
+                of an instance, `secureBoot` and `sshPublicKeys`, which an instance takes unless it says its own; there is no nesting
+                and no network on a profile (`400`, an unknown field). The answer is `202`: poll the `Location` until `phase` is
+                `Ready`. A profile that is bigger than the plan is a definition: it is the instance that Incus refuses.
             security:
                 - bearerAuth: []
             requestBody:
@@ -1532,6 +1533,18 @@ components:
                     type: integer
                 diskGiB:
                     type: integer
+                secureBoot:
+                    type: boolean
+                    description: |
+                        UEFI secure boot of the instances that have the profile and do not say their own. Absent when the profile does not
+                        say it (the instance's own value, else on, applies): an absent value is not `false`.
+                sshPublicKeys:
+                    type: array
+                    items:
+                        type: string
+                    description: |
+                        The keys injected into the instances that have the profile and do not give their own (an instance's keys replace
+                        these, they do not add to them). Absent when the profile has none.
                 builtin:
                     type: boolean
                     description: Created with the tenant, and not changeable. The profiles a user made are not.
@@ -1576,6 +1589,21 @@ components:
                     type: integer
                     minimum: 1
                     maximum: 500
+                secureBoot:
+                    type: boolean
+                    description: |
+                        UEFI secure boot of the instances that have the profile and do not say their own. No default: left out, the profile
+                        does not say it. Some cloud images do not boot with it (`alpine/3.22/cloud`).
+                sshPublicKeys:
+                    type: array
+                    maxItems: 20
+                    description: |
+                        Injected with cloud-init into the instances that have the profile and do not give their own keys, so their image must
+                        be a `cloud` variant. The same keys as an instance's: each is one line, its type (`ssh-ed25519`, `ssh-rsa`,
+                        `ecdsa-sha2-nistp256`/`384`/`521`, `sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`), the key in
+                        base64 and, at most, a comment of one word made of letters, digits and `@._+=/-`. Nothing else is accepted.
+                    items:
+                        type: string
         ProfileList:
             type: object
             required:
@@ -1927,13 +1955,15 @@ components:
                     default: false
                 secureBoot:
                     type: boolean
-                    description: UEFI secure boot. Some cloud images do not boot with it (`alpine/3.22/cloud`), set it to false for those.
-                    default: true
+                    description: |
+                        UEFI secure boot. Left out, the instance takes the one of its profile when that says it, else it is on. Some cloud
+                        images do not boot with it (`alpine/3.22/cloud`), set it to false for those.
                 sshPublicKeys:
                     type: array
                     maxItems: 20
                     description: |
-                        Injected with cloud-init, so the image must be a `cloud` variant. Each key is one line: its type
+                        Injected with cloud-init, so the image must be a `cloud` variant. Left out, the instance takes the keys of its profile
+                        when that has some; keys given here replace the profile's. Each key is one line: its type
                         (`ssh-ed25519`, `ssh-rsa`, `ecdsa-sha2-nistp256`/`384`/`521`, `sk-ssh-ed25519@openssh.com`,
                         `sk-ecdsa-sha2-nistp256@openssh.com`), the key in base64 and, at most, a comment of one word made of letters,
                         digits and `@._+=/-`. Nothing else is accepted, on purpose.
