@@ -124,7 +124,7 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 		gw, ok := f.networks[r.PathValue("name")]
 		gw6, ok6 := f.networks6[r.PathValue("name")]
 		f.mu.Unlock()
-		if !(ok || ok6) || r.URL.Query().Get("project") != "t-demo" {
+		if (!ok && !ok6) || r.URL.Query().Get("project") != "t-demo" {
 			http.Error(w, "unknown", http.StatusNotFound)
 			return
 		}
