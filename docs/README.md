@@ -23,7 +23,7 @@ Pages are grouped by what the reader wants, following [the organization's docume
 | [Networks](reference/networks.md) | Behavior of the network routes |
 | [Memberships and API keys](reference/memberships-and-api-keys.md) | Roles and personal keys |
 | [Terminal](reference/terminal.md) | Opening, protocol, closing codes and limits of a terminal |
-| [Limits and quotas](reference/limits-and-quotas.md) | The plan of a tenant, the images, the rate of a caller |
+| [Limits and quotas](reference/limits-and-quotas.md) | What every tenant may hold, the images, the rate of a caller |
 
 ## Explanation
 

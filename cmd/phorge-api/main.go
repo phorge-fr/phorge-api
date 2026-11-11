@@ -73,7 +73,7 @@ func main() {
 			InstanceBootGrace: cfg.InstanceBootGrace, InstanceStuckAfter: cfg.InstanceStuckAfter,
 			KeyMaxLifetime:     cfg.APIKeyMaxLifetime,
 			MaxTenantsPerUser:  cfg.MaxTenantsPerUser,
-			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant, MaxProfilesPerTenant: cfg.MaxProfilesPerTenant,
+			RateLimitPerMinute: cfg.RateLimitPerMinute, RateLimitBurst: cfg.RateLimitBurst, MaxImagesPerTenant: cfg.MaxImagesPerTenant,
 		},
 	})
 	srv := &http.Server{Addr: cfg.ListenAddr, Handler: srvAPI.Handler(), ReadHeaderTimeout: 10 * time.Second}

@@ -59,7 +59,6 @@ jobs:
                     -e RATE_LIMIT_WRITES_PER_MINUTE=60 \
                     -e RATE_LIMIT_BURST=10 \
                     -e MAX_IMAGES_PER_TENANT=20 \
-                    -e MAX_PROFILES_PER_TENANT=20 \
                     -e INCUS_URL=https://incus.example.org \
                     -e INCUS_CLIENT_ID=ci-incus \
                     -e OIDC_TOKEN_URL=https://auth.example.org/application/o/token/ \

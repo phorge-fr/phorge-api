@@ -20,14 +20,13 @@ func valid() map[string]string {
 		EnvOpenFGAStoreID: "01M50R0P12MY8JHNKP3ATYSJC2",
 		EnvOpenFGAModelID: "01M6XYT8C5Q4R8GB5QY5DYH87B",
 		// What decides how the API behaves has no default: a deployment writes it.
-		EnvInstanceBootGrace:    "5m",
-		EnvInstanceStuckAfter:   "10m",
-		EnvAPIKeyMaxLifetime:    "8784h",
-		EnvMaxTenantsPerUser:    "3",
-		EnvRateLimitPerMinute:   "60",
-		EnvRateLimitBurst:       "10",
-		EnvMaxImagesPerTenant:   "20",
-		EnvMaxProfilesPerTenant: "20",
+		EnvInstanceBootGrace:  "5m",
+		EnvInstanceStuckAfter: "10m",
+		EnvAPIKeyMaxLifetime:  "8784h",
+		EnvMaxTenantsPerUser:  "3",
+		EnvRateLimitPerMinute: "60",
+		EnvRateLimitBurst:     "10",
+		EnvMaxImagesPerTenant: "20",
 		// The terminal: Incus, the exchange at Authentik, and the limits of a session.
 		EnvIncusURL:             "https://incus.example.org",
 		EnvIncusClientID:        "incus-client",
@@ -173,7 +172,7 @@ func TestTheDurationsAreChecked(t *testing.T) {
 }
 
 func TestTheRateLimitAndTheImageCapAreRequiredWholeNumbers(t *testing.T) {
-	for _, key := range []string{EnvRateLimitPerMinute, EnvRateLimitBurst, EnvMaxImagesPerTenant, EnvMaxProfilesPerTenant} {
+	for _, key := range []string{EnvRateLimitPerMinute, EnvRateLimitBurst, EnvMaxImagesPerTenant} {
 		m := valid()
 		delete(m, key)
 		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), key+" is required") {

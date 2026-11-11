@@ -17,7 +17,7 @@ func readyNetwork(name string) compute.Network {
 }
 
 func TestNetworksWhoMayDoWhat(t *testing.T) {
-	const coll, item = "/v1/tenants/demo/networks", "/v1/tenants/demo/networks/lan"
+	const coll, item = "/v1/tenants/demo/networks", "/v1/tenants/demo/networks/net"
 	create := `{"name":"new"}`
 	tests := []struct {
 		who                       string
@@ -35,8 +35,7 @@ func TestNetworksWhoMayDoWhat(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.who, func(t *testing.T) {
-			e := newEnv(t)
-			e.networks.put("demo", readyNetwork("lan"))
+			e := newEnv(t) // the tenant has a network, net, and room for one more
 			for _, c := range []struct {
 				method, path, body string
 				want               int
@@ -266,11 +265,11 @@ func TestCreateInstanceCompletesItsSize(t *testing.T) {
 		cpu, mem, dsk int
 	}{
 		"no size":     {`{"name":"a","image":"debian"}`, 1, 1024, 10},
-		"only a cpu":  {`{"name":"b","image":"debian","cpu":4}`, 4, 1024, 10},
+		"only a cpu":  {`{"name":"b","image":"debian","cpu":2}`, 2, 1024, 10},
 		"only a disk": {`{"name":"c","image":"debian","diskGiB":50}`, 1, 1024, 50},
 		"all three":   {`{"name":"d","image":"debian","cpu":2,"memoryMiB":2048,"diskGiB":20}`, 2, 2048, 20},
 	} {
-		// a tenant of its own for each case: a plan holds two instances
+		// a tenant of its own for each case: the limits hold two instances
 		e := newEnv(t)
 		e.images.put("demo", readyImage("debian"))
 		if code := call(t, e, "POST", "/v1/tenants/demo/instances", "user", tt.body); code != http.StatusAccepted {
@@ -357,8 +356,8 @@ func TestCreateNetworkRefusesARangeAnotherTenantHas(t *testing.T) {
 	if code := call(t, e, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"lan","ipv4":"10.78.5.0/24"}`); code != http.StatusAccepted {
 		t.Errorf("a free range: status %d, want 202", code)
 	}
-	// Without a range there is nothing to compare: Incus chooses.
-	if code := call(t, e, "POST", "/v1/tenants/demo/networks", "operator", `{"name":"auto"}`); code != http.StatusAccepted {
+	// Without a range there is nothing to compare: Incus chooses. A tenant of its own: demo now has the two networks it may.
+	if code := call(t, newEnv(t), "POST", "/v1/tenants/demo/networks", "operator", `{"name":"auto"}`); code != http.StatusAccepted {
 		t.Errorf("no range: status %d, want 202", code)
 	}
 }

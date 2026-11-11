@@ -39,8 +39,8 @@ func TestAPersonCannotCreateATenantForSomeoneElseOrWithABiggerPlan(t *testing.T)
 	e := newEnvWith(t, usersMay())
 	for name, tt := range map[string]struct{ body, want string }{
 		"for someone else": {`{"name":"x1","owner":"bob@example.org"}`, "only create a tenant for yourself"},
-		"a bigger plan":    {`{"name":"x2","plan":"large"}`, "small plan"},
-		"a medium plan":    {`{"name":"x3","plan":"medium"}`, "small plan"},
+		"a bigger plan":    {`{"name":"x2","plan":"large"}`, "no choice of plan"},
+		"a medium plan":    {`{"name":"x3","plan":"medium"}`, "no choice of plan"},
 	} {
 		rec := e.do(t, "POST", "/v1/tenants", "mallory", tt.body)
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tt.want) {

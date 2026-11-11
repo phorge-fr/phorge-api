@@ -23,7 +23,6 @@ type profileRoutes struct {
 	base
 	store     compute.ProfileStore
 	instances compute.InstanceStore
-	settings  Settings
 }
 
 func (p *profileRoutes) register(s *server.Server, authn func(http.Handler) http.Handler) {
@@ -114,17 +113,16 @@ func (p *profileRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := r.PathValue("t")
-	// A tenant holds a few profiles, not a thousand: each one is an object of the cluster and a profile of Incus.
-	if max := p.settings.MaxProfilesPerTenant; max > 0 {
-		have, err := p.store.List(r.Context(), tenant)
-		if err != nil {
-			p.storeError(w, err, "profile")
-			return
-		}
-		if e := quota.CheckCount("profiles", len(have), max, "this tenant holds too many profiles"); e != nil {
-			quotaExceeded(w, e)
-			return
-		}
+	// A tenant holds a few profiles, not a thousand: each one is an object of the cluster and a profile of Incus, which has no limit
+	// for it. The profiles every tenant has (s, m and l) are not in the list of the store, nor counted.
+	have, err := p.store.List(r.Context(), tenant)
+	if err != nil {
+		p.storeError(w, err, "profile")
+		return
+	}
+	if e := quota.CheckProfile(quota.Used{Profiles: len(have)}); e != nil {
+		quotaExceeded(w, e)
+		return
 	}
 	pr, err := p.store.Create(r.Context(), tenant, req)
 	if errors.Is(err, resource.ErrNotFound) {
@@ -204,7 +202,7 @@ type limitsBody struct {
 	Profile struct {
 		MaxNameLength        int `json:"maxNameLength"`
 		MaxDescriptionLength int `json:"maxDescriptionLength"`
-		// MaxPerTenant is how many profiles the users of a tenant may make, 0 is no limit.
+		// MaxPerTenant is how many profiles the users of a tenant may make: the limit of every tenant, see GET /v1/tenants/{t}/quota.
 		MaxPerTenant int `json:"maxPerTenant"`
 	} `json:"profile"`
 	Image struct {
@@ -218,7 +216,7 @@ type limitsBody struct {
 }
 
 // limits answers GET /v1/limits: what the API enforces on a request, and the ceilings the deployment sets. It holds nothing about a
-// tenant: the plan of a tenant is a limit of its own, see GET /v1/tenants/{t}/quota.
+// tenant: what a tenant may hold is a limit of its own, see GET /v1/tenants/{t}/quota.
 func limits(s Settings) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		l := compute.CurrentLimits()
@@ -227,7 +225,7 @@ func limits(s Settings) http.Handler {
 		b.Instance.MaxSSHKeys, b.Instance.MaxNameLength = l.MaxSSHKeys, 63
 		b.Network.MaxNameLength, b.Network.MaxDescriptionLength = l.MaxNetworkName, l.MaxNetworkDescription
 		b.Profile.MaxNameLength, b.Profile.MaxDescriptionLength = 32, compute.MaxProfileDescription
-		b.Profile.MaxPerTenant = s.MaxProfilesPerTenant
+		b.Profile.MaxPerTenant = quota.PerTenant.Profiles
 		b.Image.MaxPerTenant = s.MaxImagesPerTenant
 		b.Tenant.MaxPerUser = s.MaxTenantsPerUser
 		writeJSON(w, http.StatusOK, b)

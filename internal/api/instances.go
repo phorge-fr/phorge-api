@@ -196,9 +196,9 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Networks, req.Network = nws, ""
-	// The plan limits the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
+	// The limits of the tenant hold the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
 	// that never becomes ready. The profiles the users made are read for it, an instance counts what its profile comes to.
-	plan, used, made, ok := holdings(w, r, &i.base, i.store, i.networks, i.profiles, tenant)
+	_, used, made, ok := holdings(w, r, &i.base, i.store, i.networks, i.profiles, tenant)
 	if !ok {
 		return
 	}
@@ -211,7 +211,7 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 	// A size is complete: the XRD has no defaults, so what the request left out takes the ones of the API.
 	req = req.WithDefaultSize()
 	cpu, mem, disk := quota.SizeAsked(req, made)
-	if e := quota.CheckInstance(plan, used, cpu, mem, disk); e != nil {
+	if e := quota.CheckInstance(used, cpu, mem, disk); e != nil {
 		quotaExceeded(w, e)
 		return
 	}
@@ -226,7 +226,7 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	i.log.Info("instance created", "tenant", tenant, "instance", in.Name, "by", id.Subject)
-	// Accepted, not created: it takes about a minute. The quota of the plan is Incus's, its refusal comes back in problems.
+	// Accepted, not created: it takes about a minute. The quota of the tenant is Incus's, its refusal comes back in problems.
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/instances/"+in.Name)
 	writeJSON(w, http.StatusAccepted, i.body(in, made))
 }

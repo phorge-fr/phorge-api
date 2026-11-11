@@ -46,16 +46,17 @@ func TestTheBuiltinProfilesDescribeTheirOwnNumbers(t *testing.T) {
 
 func TestLimitsPublishTheCeilingsOfTheDeployment(t *testing.T) {
 	set := testSettings
-	set.MaxProfilesPerTenant, set.MaxImagesPerTenant, set.MaxTenantsPerUser = 7, 9, 3
+	set.MaxImagesPerTenant, set.MaxTenantsPerUser = 9, 3
 	e := newEnvWith(t, set)
 	var body limitsBody
 	mustDecode(t, e.do(t, "GET", "/v1/limits", "mallory", ""), &body)
-	if body.Profile.MaxPerTenant != 7 || body.Image.MaxPerTenant != 9 || body.Tenant.MaxPerUser != 3 {
+	// the profiles are limited the same for every tenant, by the quota and not by the deployment
+	if body.Profile.MaxPerTenant != 2 || body.Image.MaxPerTenant != 9 || body.Tenant.MaxPerUser != 3 {
 		t.Errorf("ceilings = %+v %+v %+v", body.Profile, body.Image, body.Tenant)
 	}
 	// 0 is no limit and is said as 0
 	mustDecode(t, newEnv(t).do(t, "GET", "/v1/limits", "mallory", ""), &body)
-	if body.Profile.MaxPerTenant != 0 || body.Image.MaxPerTenant != 0 || body.Tenant.MaxPerUser != 0 {
+	if body.Profile.MaxPerTenant != 2 || body.Image.MaxPerTenant != 0 || body.Tenant.MaxPerUser != 0 {
 		t.Errorf("no limit set, got %+v %+v %+v", body.Profile, body.Image, body.Tenant)
 	}
 }
@@ -397,17 +398,15 @@ func TestMakeAProfileRefusesBadSettings(t *testing.T) {
 	}
 }
 
-func TestATenantHoldsAtMostSomeProfiles(t *testing.T) {
-	s := testSettings
-	s.MaxProfilesPerTenant = 2
-	e := newEnvWith(t, s)
+func TestATenantHoldsAtMostTwoProfiles(t *testing.T) {
+	e := newEnv(t)
 	e.profiles.put("demo", madeProfile("one", 1, 1024, 10))
 	const sz = `"cpu":1,"memoryMiB":1024,"diskGiB":10`
 	if code := call(t, e, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"two",`+sz+`}`); code != http.StatusAccepted {
 		t.Fatalf("the second: status %d", code)
 	}
 	rec := e.do(t, "POST", "/v1/tenants/demo/profiles", "operator", `{"name":"three",`+sz+`}`)
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"quota_exceeded"`) || !strings.Contains(rec.Body.String(), "2 out of 2") {
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"quota_exceeded"`) || !strings.Contains(rec.Body.String(), "2 profiles out of 2 allowed") {
 		t.Errorf("the third: status %d: %s", rec.Code, rec.Body)
 	}
 }
@@ -454,20 +453,20 @@ func TestDeleteAProfileInUseNamesTheInstances(t *testing.T) {
 func TestAnInstanceTakesAProfileTheUserMade(t *testing.T) {
 	e := newEnv(t)
 	e.images.put("demo", readyImage("debian"))
-	e.profiles.put("demo", madeProfile("web", 3, 3072, 30))
+	e.profiles.put("demo", madeProfile("web", 2, 2048, 30))
 	rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web1","image":"debian","profile":"web"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 	var body instanceBody
 	mustDecode(t, rec, &body)
-	if body.Profile != "web" || body.CPU != 3 || body.MemoryMiB != 3072 || body.DiskGiB != 30 {
+	if body.Profile != "web" || body.CPU != 2 || body.MemoryMiB != 2048 || body.DiskGiB != 30 {
 		t.Errorf("body = %+v: the profile, and what the user's own profile comes to", body)
 	}
 	// the list and one by one say it too
 	var got instanceBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/instances/web1", "viewer", ""), &got)
-	if got.CPU != 3 {
+	if got.CPU != 2 {
 		t.Errorf("get: %+v", got)
 	}
 	var list struct {
@@ -498,7 +497,7 @@ func TestAProfileTheUserMadeCountsInTheQuota(t *testing.T) {
 	e := newEnv(t)
 	withTiny(e)
 	e.networks.put("tiny", readyNetwork("net"))
-	e.profiles.put("tiny", madeProfile("big", 1, 1024, 200)) // the small plan holds 128 GiB of disk
+	e.profiles.put("tiny", madeProfile("big", 1, 1024, 200)) // a tenant holds 128 GiB of disk
 	rec := e.do(t, "POST", "/v1/tenants/tiny/instances", "operator", `{"name":"a","image":"debian","profile":"big"}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(quotaCode(t, rec.Body.String()), "200 GiB of disk") {
 		t.Errorf("status %d: %s", rec.Code, rec.Body)

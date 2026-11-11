@@ -20,14 +20,14 @@ var actionable = []struct {
 	re  *regexp.Regexp
 	say string
 }{
-	{regexp.MustCompile(`Reached maximum number of instances`), "This tenant has reached the maximum number of instances of its plan."},
+	{regexp.MustCompile(`Reached maximum number of instances`), "This tenant has reached the maximum number of instances it is allowed."},
 	// Incus says it either way: "Reached maximum number of networks" for a count, "Networks limit has been reached for project" for a
 	// network (verified on the cluster, 2026-11-08).
-	{regexp.MustCompile(`Reached maximum number of networks|Networks limit has been reached`), "This tenant has reached the maximum number of networks of its plan."},
-	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.disk`), "This tenant has reached the disk limit of its plan."},
-	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.memory`), "This tenant has reached the memory limit of its plan."},
-	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.cpu`), "This tenant has reached the CPU limit of its plan."},
-	{regexp.MustCompile(`Reached maximum`), "This tenant has reached a limit of its plan."},
+	{regexp.MustCompile(`Reached maximum number of networks|Networks limit has been reached`), "This tenant has reached the maximum number of networks it is allowed."},
+	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.disk`), "This tenant has reached its disk limit."},
+	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.memory`), "This tenant has reached its memory limit."},
+	{regexp.MustCompile(`Reached maximum aggregate value .*limits\.cpu`), "This tenant has reached its CPU limit."},
+	{regexp.MustCompile(`Reached maximum`), "This tenant has reached one of its limits."},
 	{regexp.MustCompile(`incompatible with secureboot`), "This image cannot start with secure boot: create the instance with secureBoot set to false."},
 	{regexp.MustCompile(`in-use by`), "This image is used by an instance: delete the instance first."},
 	{regexp.MustCompile(`prevent_destroy`), "This instance cannot be changed in place: delete it and create it again."},
