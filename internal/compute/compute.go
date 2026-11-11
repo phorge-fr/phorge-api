@@ -250,15 +250,18 @@ type CreateInstance struct {
 	Image string `json:"image"`
 	// Networks are the networks of the tenant the instance joins, one NIC each in this order. Network is the deprecated way to give
 	// one. With neither, the route picks the only network of the tenant.
-	Networks      []string `json:"networks"`
-	Network       string   `json:"network"`
-	Profile       string   `json:"profile"`
-	CPU           *int     `json:"cpu"`
-	MemoryMiB     *int     `json:"memoryMiB"`
-	DiskGiB       *int     `json:"diskGiB"`
-	Running       *bool    `json:"running"`
-	Nesting       *bool    `json:"nesting"`
-	SecureBoot    *bool    `json:"secureBoot"`
+	Networks   []string `json:"networks"`
+	Network    string   `json:"network"`
+	Profile    string   `json:"profile"`
+	CPU        *int     `json:"cpu"`
+	MemoryMiB  *int     `json:"memoryMiB"`
+	DiskGiB    *int     `json:"diskGiB"`
+	Running    *bool    `json:"running"`
+	Nesting    *bool    `json:"nesting"`
+	SecureBoot *bool    `json:"secureBoot"`
+
+	// SSHPublicKeys tells three things apart: nil (absent or null) leaves the field out of the object and the instance takes the keys
+	// of its profile; an empty, non-nil list is "no key" and the profile's do not apply; a list is the instance's own keys.
 	SSHPublicKeys []string `json:"sshPublicKeys"`
 
 	// CreatedBy is the subject of the caller, recorded on the object. Not part of the request body.

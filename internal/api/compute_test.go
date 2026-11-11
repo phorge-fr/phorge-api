@@ -518,6 +518,35 @@ func TestCreateInstance(t *testing.T) {
 	}
 }
 
+// The three ways to say the SSH keys of a new instance reach the store as three different values: nothing (the profile's keys
+// apply), an empty list (no key, the profile's do not apply) and the keys. The body of the answer is a list in every case.
+func TestCreateInstanceTellsAbsentKeysFromNone(t *testing.T) {
+	for name, tt := range map[string]struct {
+		field string
+		nil   bool
+		keys  int
+	}{
+		"absent":     {"", true, 0},
+		"null":       {`,"sshPublicKeys":null`, true, 0},
+		"empty list": {`,"sshPublicKeys":[]`, false, 0},
+		"keys":       {`,"sshPublicKeys":["` + sshKey + `"]`, false, 1},
+	} {
+		e := newEnv(t)
+		e.images.put("demo", readyImage("debian"))
+		rec := e.do(t, "POST", "/v1/tenants/demo/instances", "user", `{"name":"web","image":"debian","cpu":1,"memoryMiB":1024,"diskGiB":10`+tt.field+`}`)
+		if rec.Code != http.StatusAccepted || len(e.instances.created) != 1 {
+			t.Fatalf("%s: status %d, created %d: %s", name, rec.Code, len(e.instances.created), rec.Body.String())
+		}
+		got := e.instances.created[0].SSHPublicKeys
+		if (got == nil) != tt.nil || len(got) != tt.keys {
+			t.Errorf("%s: the store got %#v, want nil %v and %d keys", name, got, tt.nil, tt.keys)
+		}
+		if !strings.Contains(rec.Body.String(), `"sshPublicKeys":[`) {
+			t.Errorf("%s: the body has no list of keys: %s", name, rec.Body.String())
+		}
+	}
+}
+
 func TestCreateInstanceNeedsAnImageOfTheTenantThatIsReady(t *testing.T) {
 	e := newEnv(t)
 	e.images.put("other", readyImage("elsewhere"))

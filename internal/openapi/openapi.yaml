@@ -1969,8 +1969,10 @@ components:
                     type: array
                     maxItems: 20
                     description: |
-                        Injected with cloud-init, so the image must be a `cloud` variant. Left out, the instance takes the keys of its profile
-                        when that has some; keys given here replace the profile's. Each key is one line: its type
+                        Injected with cloud-init, so the image must be a `cloud` variant. Left out (or `null`), the instance takes the keys
+                        of its profile when that has some. An empty list, `[]`, is "no key": the instance has none, and the profile's do
+                        not apply. A list of keys replaces the profile's, it does not add to them. Send the field only when the person
+                        gave keys: a client that always sends `[]` overrides the keys of every profile. Each key is one line: its type
                         (`ssh-ed25519`, `ssh-rsa`, `ecdsa-sha2-nistp256`/`384`/`521`, `sk-ssh-ed25519@openssh.com`,
                         `sk-ecdsa-sha2-nistp256@openssh.com`), the key in base64 and, at most, a comment of one word made of letters,
                         digits and `@._+=/-`. Nothing else is accepted, on purpose.
@@ -2016,6 +2018,8 @@ components:
                 sshPublicKeys:
                     type: array
                     maxItems: 20
+                    description: |
+                        Replaces the keys of the instance. An empty list, `[]`, leaves it with no key, and its profile's do not apply.
                     items:
                         type: string
         Role:

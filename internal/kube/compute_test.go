@@ -130,6 +130,58 @@ func TestInstanceCreateSendsOnlyWhatWasAsked(t *testing.T) {
 	}
 }
 
+// An instance that does not say its SSH keys takes its profile's; one that says an empty list has none. The object must carry the
+// difference: absent is left out of the spec, an empty list is written as such, and the answer is read from the spec first so an empty
+// list is "no key" and does not fall through to the status.
+func TestInstanceCreateTellsAbsentKeysFromNone(t *testing.T) {
+	for name, tt := range map[string]struct {
+		keys    []string
+		written bool
+		want    int
+	}{
+		"absent":     {nil, false, 0},
+		"empty list": {[]string{}, true, 0},
+		"keys":       {[]string{key}, true, 1},
+	} {
+		client := newClient()
+		s := NewInstances(Static(client))
+		got, err := s.Create(t.Context(), "demo", compute.CreateInstance{Name: "web", Image: "debian", SSHPublicKeys: tt.keys})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.SSHPublicKeys) != tt.want {
+			t.Errorf("%s: the answer has %v, want %d keys", name, got.SSHPublicKeys, tt.want)
+		}
+		obj, err := client.Resource(instancesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, found, err := unstructured.NestedStringSlice(obj.Object, "spec", "sshPublicKeys")
+		if err != nil || found != tt.written || len(v) != tt.want {
+			t.Errorf("%s: spec.sshPublicKeys = %v, found %v, err %v; want written %v with %d keys", name, v, found, err, tt.written, tt.want)
+		}
+	}
+}
+
+// What the platform says it has in force does not replace an empty list the instance wrote.
+func TestInstanceCreatedWithNoKeyKeepsNoKeyWhenTheStatusHasSome(t *testing.T) {
+	client := newClient()
+	s := NewInstances(Static(client))
+	if _, err := s.Create(t.Context(), "demo", compute.CreateInstance{Name: "web", Image: "debian", SSHPublicKeys: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	obj, err := client.Resource(instancesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unstructured.SetNestedStringSlice(obj.Object, []string{key}, "status", "sshPublicKeys"); err != nil {
+		t.Fatal(err)
+	}
+	if got := instanceOf(obj); len(got.SSHPublicKeys) != 0 {
+		t.Errorf("keys = %v, the spec says none", got.SSHPublicKeys)
+	}
+}
+
 func TestInstancePatchChangesOnlyWhatWasGiven(t *testing.T) {
 	s := NewInstances(Static(newClient()))
 	if _, err := s.Create(t.Context(), "demo", compute.CreateInstance{Name: "web", Image: "debian", CPU: ptr(2), MemoryMiB: ptr(2048), SSHPublicKeys: []string{key}}); err != nil {

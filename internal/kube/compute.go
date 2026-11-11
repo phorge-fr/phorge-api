@@ -208,7 +208,10 @@ func (s *Instances) Create(ctx context.Context, tenant string, req compute.Creat
 	setBool("running", req.Running)
 	setBool("nesting", req.Nesting)
 	setBool("secureBoot", req.SecureBoot)
-	if len(req.SSHPublicKeys) > 0 {
+	// Absent (nil) is left out of the spec: the instance takes its profile's keys. An empty list is written as it is: it is "no key",
+	// and the platform then does not apply the profile's. A decoded `"sshPublicKeys": []` is a non-nil empty slice, an absent
+	// field or a null is nil.
+	if req.SSHPublicKeys != nil {
 		spec["sshPublicKeys"] = toAny(req.SSHPublicKeys)
 	}
 	obj, err := r.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
