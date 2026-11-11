@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/phorge-fr/phorge-api/compare/v0.13.1...v0.14.0) (2026-11-11)
+
+
+### Features
+
+* Give a profile the secure boot and the SSH keys of an instance ([f0be728](https://github.com/phorge-fr/phorge-api/commit/f0be728f188df6a9f4463eea8c4dbc14b29ab451))
+
 ## [0.13.1](https://github.com/phorge-fr/phorge-api/compare/v0.13.0...v0.13.1) (2026-11-11)
 
 
