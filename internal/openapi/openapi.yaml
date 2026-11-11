@@ -1814,10 +1814,13 @@ components:
                     type: boolean
                 nesting:
                     type: boolean
+                    description: Whether nesting is on in the VM. The instance's own value, else its profile's, else off.
                 secureBoot:
                     type: boolean
+                    description: Whether secure boot is on in the VM. The instance's own value, else its profile's, else on.
                 sshPublicKeys:
                     type: array
+                    description: The keys injected into the VM. The instance's own, else its profile's, else none.
                     items:
                         type: string
                 state:

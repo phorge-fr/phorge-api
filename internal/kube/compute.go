@@ -303,9 +303,9 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 	}
 	profile, _, _ := unstructured.NestedString(obj.Object, "spec", "profile")
 	running, _, _ := unstructured.NestedBool(obj.Object, "spec", "running")
-	nesting, _, _ := unstructured.NestedBool(obj.Object, "spec", "nesting")
-	secureBoot, _, _ := unstructured.NestedBool(obj.Object, "spec", "secureBoot")
-	keys, _, _ := unstructured.NestedStringSlice(obj.Object, "spec", "sshPublicKeys")
+	nesting := settingBool(obj, "nesting", false)
+	secureBoot := settingBool(obj, "secureBoot", true)
+	keys := settingKeys(obj)
 	state, _, _ := unstructured.NestedString(obj.Object, "status", "state")
 	ipv4, _, _ := unstructured.NestedString(obj.Object, "status", "ipv4")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
@@ -330,6 +330,34 @@ func instanceOf(obj *unstructured.Unstructured) compute.Instance {
 		RunningChangedAt: timeOfAnnotation(obj, RunningChangedAtAnnotation),
 		Status:           statusOf(obj, problems),
 	}
+}
+
+// settingBool reads a setting of an instance that has a default of its own: nesting off, secure boot on. The instance says it in
+// spec when it does, otherwise the status says the one in force (its profile's, else the default), and while neither is there the
+// default is. The spec comes first because it is what the API itself writes: the status follows it a moment later, and a reply
+// that shows the status right after a change would show the value before the change. Both are the same once the status caught up
+// (an instance that says a value wins over its profile). Whether the field is there is the found flag, never its value: an absent
+// bool is not a false.
+func settingBool(obj *unstructured.Unstructured, field string, def bool) bool {
+	if v, found, err := unstructured.NestedBool(obj.Object, "spec", field); found && err == nil {
+		return v
+	}
+	if v, found, err := unstructured.NestedBool(obj.Object, "status", field); found && err == nil {
+		return v
+	}
+	return def
+}
+
+// settingKeys reads the SSH keys of an instance in the same order as settingBool: spec, then status, then none. An empty list in the
+// spec is "no key" and is read as such, it does not fall through to the status.
+func settingKeys(obj *unstructured.Unstructured) []string {
+	if v, found, err := unstructured.NestedStringSlice(obj.Object, "spec", "sshPublicKeys"); found && err == nil {
+		return v
+	}
+	if v, found, err := unstructured.NestedStringSlice(obj.Object, "status", "sshPublicKeys"); found && err == nil {
+		return v
+	}
+	return nil
 }
 
 // timeOfAnnotation reads a date written in an annotation, zero when it is absent or cannot be read.
