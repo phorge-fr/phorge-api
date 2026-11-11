@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/phorge-fr/phorge-api/compare/v0.12.0...v0.13.0) (2026-11-11)
+
+
+### Features
+
+* Edit a network and give it a local IPv6 range ([e3eae59](https://github.com/phorge-fr/phorge-api/commit/e3eae59e00a9046ce0115ac847c47bb8db10e77d))
+
 ## [0.12.0](https://github.com/phorge-fr/phorge-api/compare/v0.11.1...v0.12.0) (2026-11-10)
 
 
