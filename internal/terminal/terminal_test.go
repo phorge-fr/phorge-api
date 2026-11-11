@@ -434,6 +434,21 @@ func TestARefusedExchangeIsToldApartFromAnOutage(t *testing.T) {
 	}
 }
 
+func TestALinkLocalAddressIsNotTheIPv6RangeOfANetwork(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/1.0/networks" {
+			_, _ = w.Write([]byte(`{"metadata":[{"name":"lan","managed":true}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"metadata":{"addresses":[{"family":"inet6","address":"fe80::1","netmask":"64","scope":"link"},{"family":"inet6","address":"fd42:1:2:3::1","netmask":"64","scope":"global"}]}}`))
+	}))
+	defer srv.Close()
+	got, err := (&Client{URL: srv.URL}).NetworkRanges(t.Context(), "tok", "t-demo")
+	if err != nil || got["lan"] != (Gateways{IPv6: "fd42:1:2:3::1/64"}) {
+		t.Fatalf("ranges = %v, %v", got, err)
+	}
+}
+
 func TestTheNetworksOfAProjectAreReadFromTheirStateWithTheTokenAndOnlyTheManagedOnes(t *testing.T) {
 	var mu sync.Mutex
 	var auths, paths []string
@@ -459,8 +474,8 @@ func TestTheNetworksOfAProjectAreReadFromTheirStateWithTheTokenAndOnlyTheManaged
 	}))
 	defer srv.Close()
 	got, err := (&Client{URL: srv.URL}).NetworkRanges(t.Context(), "tok", "t-demo")
-	if err != nil || len(got) != 1 || got["lan"] != "10.77.1.1/24" {
-		t.Fatalf("ranges = %v, %v: the IPv4 address of the state of a managed network, and nothing for one that is not up", got, err)
+	if err != nil || len(got) != 2 || got["lan"] != (Gateways{IPv4: "10.77.1.1/24", IPv6: "fd42::1/64"}) || got["v6only"] != (Gateways{IPv6: "fd42::1/64"}) {
+		t.Fatalf("ranges = %v, %v: the addresses of the state of a managed network, and nothing for one that is not up", got, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()

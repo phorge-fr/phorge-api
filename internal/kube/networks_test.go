@@ -186,3 +186,43 @@ func TestAStatusReadsWhenTheCompositionStoppedSyncing(t *testing.T) {
 		t.Errorf("SyncFailedSince = %v for a synced object", st.SyncFailedSince)
 	}
 }
+
+func TestNetworkCreateAndUpdateWriteTheRangesAsGateways(t *testing.T) {
+	s, client := newNetworkStore()
+	if _, err := s.Create(t.Context(), "demo", compute.CreateNetwork{Name: "lan", IPv4: "10.77.1.0/24", IPv6: "fd42:0:0:1::/64"}); err != nil {
+		t.Fatal(err)
+	}
+	spec := func() map[string]any {
+		obj, err := client.Resource(networksGVR).Namespace("t-demo").Get(t.Context(), "lan", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, _, _ := unstructured.NestedMap(obj.Object, "spec")
+		return m
+	}
+	if got := spec(); got["ipv4"] != "10.77.1.1/24" || got["ipv6"] != "fd42:0:0:1::1/64" {
+		t.Fatalf("spec = %v: the gateways the XRD takes", got)
+	}
+	d, v4, v6 := "office", "10.77.2.0/24", "fd42:1:2:3::/64"
+	got, err := s.Update(t.Context(), "demo", "lan", compute.UpdateNetwork{Description: &d, IPv4: &v4, IPv6: &v6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tenant != "demo" || got.Description != "office" || got.IPv4 != "10.77.2.0/24" || got.IPv6 != "fd42:1:2:3::/64" {
+		t.Errorf("answer = %+v: the ranges that were asked for, not the status that has not caught up", got)
+	}
+	if sp := spec(); sp["ipv4"] != "10.77.2.1/24" || sp["ipv6"] != "fd42:1:2:3::1/64" || sp["description"] != "office" {
+		t.Errorf("spec = %v", sp)
+	}
+	// What is absent stays, an empty description is removed.
+	empty := ""
+	if _, err := s.Update(t.Context(), "demo", "lan", compute.UpdateNetwork{Description: &empty}); err != nil {
+		t.Fatal(err)
+	}
+	if sp := spec(); sp["description"] != nil || sp["ipv4"] != "10.77.2.1/24" {
+		t.Errorf("spec = %v: the description goes, the ranges stay", sp)
+	}
+	if _, err := s.Update(t.Context(), "demo", "ghost", compute.UpdateNetwork{Description: &d}); !errors.Is(err, compute.ErrNotFound) {
+		t.Errorf("update of a network that does not exist: %v, want ErrNotFound", err)
+	}
+}

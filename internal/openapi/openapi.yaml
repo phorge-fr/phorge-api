@@ -457,6 +457,53 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
+        patch:
+            tags:
+                - Networks
+            operationId: updateNetwork
+            summary: Edit a network
+            description: |
+                Changes the `description`, the `ipv4` range and the `ipv6` range of a network; what is absent is left alone. The ranges get the
+                same checks as at creation (`422` for a bad one, `409` with `range_reserved` or `range_in_use` for one that the platform or another
+                network uses). A range that was given cannot be removed: give another one, or delete the network.
+
+                Changing `ipv4` cuts the running instances of the network off until they ask for an address again, so it is refused with `409`
+                and the code `running` while an instance runs on the network, and the message says which ones. Stop them (or take them off the
+                network), change the range, then start them again: the API never stops an instance by itself. A stopped instance takes the new
+                range when it starts. Changing `ipv6` is advertised to the running instances and cuts nothing, so it is accepted while they run.
+
+                The answer is `202`: Incus applies the change a few seconds later.
+            security:
+                - bearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/NetworkUpdate"
+            responses:
+                "202":
+                    description: Accepted, the network carries the ranges that were asked for.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Network"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
         delete:
             tags:
                 - Networks
@@ -1302,7 +1349,8 @@ components:
         Conflict:
             description: |
                 The name is taken (`already_exists`), the object is still used (`in_use`), something it needs is not ready (`image_not_ready`,
-                `network_not_ready`) or a limit would be passed (`quota_exceeded`, the message says which).
+                `network_not_ready`), a range is taken (`range_reserved`, `range_in_use`), the change needs the instances to be stopped first (`running`)
+                or a limit would be passed (`quota_exceeded`, the message says which).
             content:
                 application/json:
                     schema:
@@ -1636,6 +1684,11 @@ components:
                     example: 10.77.1.0/24
                     description: |
                         The range of the network: the one the user chose, or, when Incus chose it, the one it reports to the person who reads the network. Absent when it is not known (a key, a person Incus does not show the network to, an Incus that does not answer, a network just created).
+                ipv6:
+                    type: string
+                    example: fd42:1:2:3::/64
+                    description: |
+                        The local IPv6 range of the network, a `/64`, known the same way as `ipv4`: the one the user chose, or the one Incus chose and reports to the person who reads the network. Absent when it is not known.
                 phase:
                     $ref: "#/components/schemas/Phase"
                 problems:
@@ -1677,6 +1730,30 @@ components:
                     description: |
                         The range of the network, as its address with a prefix from `/16` to `/29`, in `10.0.0.0/8`, `172.16.0.0/12` or
                         `192.168.0.0/16`. Incus takes the first host as the gateway. Omit it to let Incus choose.
+                ipv6:
+                    type: string
+                    example: fd42:1:2:3::/64
+                    description: |
+                        The local IPv6 range of the network: a `/64` in `fd00::/8`, as the address of the network (`fd42:1:2:3::/64`). Incus takes
+                        `::1` as the gateway. Omit it to let Incus choose.
+        NetworkUpdate:
+            type: object
+            additionalProperties: false
+            minProperties: 1
+            properties:
+                description:
+                    type: string
+                    maxLength: 200
+                    description: An empty string clears it.
+                ipv4:
+                    type: string
+                    example: 10.77.2.0/24
+                    description: |
+                        A new range, as at creation. Refused with `409` (`running`) while an instance runs on the network. Cannot be removed.
+                ipv6:
+                    type: string
+                    example: fd42:1:2:3::/64
+                    description: A new local range, as at creation. Cannot be removed.
         Instance:
             type: object
             required:

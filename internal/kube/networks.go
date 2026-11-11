@@ -2,11 +2,13 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
 )
@@ -88,6 +90,13 @@ func (s *Networks) Create(ctx context.Context, tenant string, req compute.Create
 		}
 		spec["ipv4"] = compute.Gateway(p)
 	}
+	if req.IPv6 != "" {
+		p, err := compute.ParseRange6(req.IPv6)
+		if err != nil {
+			return compute.Network{}, err
+		}
+		spec["ipv6"] = compute.Gateway6(p)
+	}
 	obj, err := r.Create(ctx, &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": networksGVR.GroupVersion().String(),
 		"kind":       "Network",
@@ -98,6 +107,56 @@ func (s *Networks) Create(ctx context.Context, tenant string, req compute.Create
 		return compute.Network{}, mapError(err)
 	}
 	return networkOf(obj), nil
+}
+
+// Update patches the Network. A merge patch: what is absent stays, an empty description is removed. The answer carries the ranges that
+// were asked for, the status follows when the composition has reconciled.
+func (s *Networks) Update(ctx context.Context, tenant, name string, req compute.UpdateNetwork) (compute.Network, error) {
+	r, err := namespaced(s.conn, networksGVR, tenant)
+	if err != nil {
+		return compute.Network{}, err
+	}
+	spec := map[string]any{}
+	if req.Description != nil {
+		if *req.Description == "" {
+			spec["description"] = nil
+		} else {
+			spec["description"] = *req.Description
+		}
+	}
+	var v4, v6 string
+	if req.IPv4 != nil {
+		p, err := compute.ParseRange(*req.IPv4)
+		if err != nil {
+			return compute.Network{}, err
+		}
+		v4 = p.String()
+		spec["ipv4"] = compute.Gateway(p)
+	}
+	if req.IPv6 != nil {
+		p, err := compute.ParseRange6(*req.IPv6)
+		if err != nil {
+			return compute.Network{}, err
+		}
+		v6 = p.String()
+		spec["ipv6"] = compute.Gateway6(p)
+	}
+	patch, err := json.Marshal(map[string]any{"spec": spec})
+	if err != nil {
+		return compute.Network{}, err
+	}
+	obj, err := r.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+	if err != nil {
+		return compute.Network{}, mapError(err)
+	}
+	nw := networkOf(obj)
+	if v4 != "" {
+		nw.IPv4 = v4
+	}
+	if v6 != "" {
+		nw.IPv6 = v6
+	}
+	return nw, nil
 }
 
 // Delete deletes a network in the foreground. A network that an instance uses is refused by an admission webhook of Crossplane
@@ -124,11 +183,18 @@ func networkOf(obj *unstructured.Unstructured) compute.Network {
 		gateway, _, _ = unstructured.NestedString(obj.Object, "spec", "ipv4")
 	}
 	ipv4, _ := compute.RangeOfGateway(gateway)
+	gateway6, _, _ := unstructured.NestedString(obj.Object, "status", "ipv6")
+	if gateway6 == "" {
+		gateway6, _, _ = unstructured.NestedString(obj.Object, "spec", "ipv6")
+	}
+	ipv6, _ := compute.RangeOfGateway(gateway6)
 
 	return compute.Network{
 		Name:        obj.GetName(),
 		Description: description,
+		Tenant:      strings.TrimPrefix(obj.GetNamespace(), "t-"),
 		IPv4:        ipv4,
+		IPv6:        ipv6,
 		CreatedAt:   obj.GetCreationTimestamp().Time,
 		CreatedBy:   obj.GetAnnotations()[CreatedByAnnotation],
 		Status:      statusOf(obj, problems),
