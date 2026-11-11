@@ -87,6 +87,7 @@ type networkStore struct {
 	data    map[string]map[string]compute.Network
 	err     error
 	created []compute.CreateNetwork
+	updated []compute.UpdateNetwork
 	deleted []string
 }
 
@@ -133,8 +134,27 @@ func (s *networkStore) Create(_ context.Context, tenant string, r compute.Create
 		return compute.Network{}, compute.ErrExists
 	}
 	s.created = append(s.created, r)
-	n := compute.Network{Name: r.Name, Description: r.Description, IPv4: r.IPv4, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
+	n := compute.Network{Name: r.Name, Tenant: tenant, Description: r.Description, IPv4: r.IPv4, IPv6: r.IPv6, CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
 	s.put(tenant, n)
+	return n, nil
+}
+
+func (s *networkStore) Update(_ context.Context, tenant, name string, r compute.UpdateNetwork) (compute.Network, error) {
+	n, err := s.Get(context.Background(), tenant, name)
+	if err != nil {
+		return compute.Network{}, err
+	}
+	s.updated = append(s.updated, r)
+	if r.Description != nil {
+		n.Description = *r.Description
+	}
+	if r.IPv4 != nil {
+		n.IPv4 = *r.IPv4
+	}
+	if r.IPv6 != nil {
+		n.IPv6 = *r.IPv6
+	}
+	s.data[tenant][name] = n
 	return n, nil
 }
 
@@ -153,6 +173,7 @@ func (s *networkStore) put(tenant string, n compute.Network) {
 	if s.data[tenant] == nil {
 		s.data[tenant] = map[string]compute.Network{}
 	}
+	n.Tenant = tenant
 	s.data[tenant][n.Name] = n
 }
 

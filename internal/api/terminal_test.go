@@ -60,6 +60,7 @@ type fakeIncus struct {
 	forbid string
 	// networks are the gateways Incus reports by network name, netStatus its answer to the list, netTokens the tokens it was shown.
 	networks  map[string]string
+	networks6 map[string]string // the IPv6 gateways, by network name
 	netStatus int
 	netTokens []string
 }
@@ -89,7 +90,13 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 		f.mu.Lock()
 		f.netTokens = append(f.netTokens, r.Header.Get("Authorization"))
 		status := f.netStatus
-		nets := f.networks
+		nets := map[string]string{}
+		for name, gw := range f.networks {
+			nets[name] = gw
+		}
+		for name, gw := range f.networks6 {
+			nets[name] = nets[name] + "|" + gw
+		}
 		f.mu.Unlock()
 		if r.URL.Query().Get("project") != "t-demo" || r.URL.Query().Get("recursion") != "1" {
 			http.Error(w, "wrong query", http.StatusBadRequest)
@@ -115,13 +122,22 @@ func newFakeIncus(t *testing.T) *fakeIncus {
 		f.mu.Lock()
 		f.netTokens = append(f.netTokens, r.Header.Get("Authorization"))
 		gw, ok := f.networks[r.PathValue("name")]
+		gw6, ok6 := f.networks6[r.PathValue("name")]
 		f.mu.Unlock()
-		if !ok || r.URL.Query().Get("project") != "t-demo" {
+		if !(ok || ok6) || r.URL.Query().Get("project") != "t-demo" {
 			http.Error(w, "unknown", http.StatusNotFound)
 			return
 		}
-		addr, mask, _ := strings.Cut(gw, "/")
-		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]any{"addresses": []map[string]string{{"family": "inet", "address": addr, "netmask": mask, "scope": "link"}}}})
+		addresses := []map[string]string{}
+		if ok {
+			addr, mask, _ := strings.Cut(gw, "/")
+			addresses = append(addresses, map[string]string{"family": "inet", "address": addr, "netmask": mask, "scope": "link"})
+		}
+		if ok6 {
+			addr, mask, _ := strings.Cut(gw6, "/")
+			addresses = append(addresses, map[string]string{"family": "inet6", "address": addr, "netmask": mask, "scope": "global"})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": map[string]any{"addresses": addresses}})
 	})
 	mux.HandleFunc("GET /1.0/operations/{id}/websocket", func(w http.ResponseWriter, r *http.Request) {
 		c, err := websocket.Accept(w, r, nil)

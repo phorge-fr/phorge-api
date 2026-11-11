@@ -15,12 +15,15 @@ func TestTheRangeIncusChoseIsReadFromIncusWithTheTokenOfThePerson(t *testing.T) 
 	chosen := readyNetwork("mine")
 	chosen.IPv4 = "10.77.1.0/24"
 	e.networks.put("demo", chosen)
-	e.incus.set(func(f *fakeIncus) { f.networks = map[string]string{"auto": "10.88.2.1/24", "mine": "10.99.9.1/24"} })
+	e.incus.set(func(f *fakeIncus) {
+		f.networks = map[string]string{"auto": "10.88.2.1/24", "mine": "10.99.9.1/24"}
+		f.networks6 = map[string]string{"auto": "fd42:8:8:8::1/64", "mine": "fd42:9:9:9::1/64"}
+	})
 
 	var body networkBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/networks/auto", "tadmin", ""), &body)
-	if body.IPv4 != "10.88.2.0/24" {
-		t.Errorf("ipv4 = %q, want the range of the gateway Incus chose", body.IPv4)
+	if body.IPv4 != "10.88.2.0/24" || body.IPv6 != "fd42:8:8:8::/64" {
+		t.Errorf("ranges = %q, %q, want the ranges of the gateways Incus chose", body.IPv4, body.IPv6)
 	}
 	var list struct {
 		Items []networkBody `json:"items"`
@@ -28,9 +31,9 @@ func TestTheRangeIncusChoseIsReadFromIncusWithTheTokenOfThePerson(t *testing.T) 
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/networks", "tadmin", ""), &list)
 	got := map[string]string{}
 	for _, nw := range list.Items {
-		got[nw.Name] = nw.IPv4
+		got[nw.Name] = nw.IPv4 + " " + nw.IPv6
 	}
-	if got["auto"] != "10.88.2.0/24" || got["mine"] != "10.77.1.0/24" {
+	if got["auto"] != "10.88.2.0/24 fd42:8:8:8::/64" || got["mine"] != "10.77.1.0/24 fd42:9:9:9::/64" {
 		t.Errorf("ranges = %v: what the user chose is not replaced by what Incus says", got)
 	}
 	e.incus.mu.Lock()
@@ -48,11 +51,11 @@ func TestTheRangeIncusChoseIsReadFromIncusWithTheTokenOfThePerson(t *testing.T) 
 func TestNothingIsAskedOfIncusWhenEveryRangeIsKnown(t *testing.T) {
 	e := newEnv(t)
 	known := readyNetwork("mine")
-	known.IPv4 = "10.77.1.0/24"
+	known.IPv4, known.IPv6 = "10.77.1.0/24", "fd42:1:2:3::/64"
 	e.networks.put("demo", known)
 	// the network every test tenant starts with has its range too
 	net := readyNetwork("net")
-	net.IPv4 = "10.66.6.0/24"
+	net.IPv4, net.IPv6 = "10.66.6.0/24", "fd42:6:6:6::/64"
 	e.networks.put("demo", net)
 	if code := call(t, e, "GET", "/v1/tenants/demo/networks", "tadmin", ""); code != http.StatusOK {
 		t.Fatal(code)

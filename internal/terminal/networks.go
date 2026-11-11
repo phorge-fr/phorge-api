@@ -11,12 +11,17 @@ import (
 	"time"
 )
 
-// NetworkRanges asks Incus, with the token of a person, for the networks of a project and returns the gateway address that each
-// managed one has ("10.77.1.1/24"), by name. The address is read from the state of the network, not from its config: Incus gives a
+// Gateways are the gateway addresses Incus gave a network, with their netmask ("10.77.1.1/24", "fd42:1:2:3::1/64"). Empty: none.
+type Gateways struct {
+	IPv4, IPv6 string
+}
+
+// NetworkRanges asks Incus, with the token of a person, for the networks of a project and returns the gateway addresses that each
+// managed one has, by name. The address is read from the state of the network, not from its config: Incus gives a
 // person who only views the project an empty config, and the state, which lists the address and the netmask of the gateway, is what
 // they may see (measured on the platform). Incus decides what the person sees: a person with no right on the project gets
 // ErrForbidden, and a network that is not up yet is not in the map.
-func (c *Client) NetworkRanges(ctx context.Context, token, project string) (map[string]string, error) {
+func (c *Client) NetworkRanges(ctx context.Context, token, project string) (map[string]Gateways, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	base := strings.TrimRight(c.URL, "/")
@@ -29,7 +34,7 @@ func (c *Client) NetworkRanges(ctx context.Context, token, project string) (map[
 	if err := c.get(ctx, token, fmt.Sprintf("%s/1.0/networks?project=%s&recursion=1", base, url.QueryEscape(project)), &list); err != nil {
 		return nil, err
 	}
-	ranges := map[string]string{}
+	ranges := map[string]Gateways{}
 	for _, n := range list.Metadata {
 		if !n.Managed {
 			continue
@@ -46,11 +51,20 @@ func (c *Client) NetworkRanges(ctx context.Context, token, project string) (map[
 		if err := c.get(ctx, token, fmt.Sprintf("%s/1.0/networks/%s/state?project=%s", base, url.PathEscape(n.Name), url.QueryEscape(project)), &state); err != nil {
 			continue // a network that is not up yet has no state: the others are still read
 		}
+		var g Gateways
 		for _, a := range state.Metadata.Addresses {
-			if a.Family == "inet" && a.Address != "" && a.Netmask != "" {
-				ranges[n.Name] = a.Address + "/" + a.Netmask
-				break
+			if a.Address == "" || a.Netmask == "" {
+				continue
 			}
+			switch {
+			case a.Family == "inet" && g.IPv4 == "":
+				g.IPv4 = a.Address + "/" + a.Netmask
+			case a.Family == "inet6" && g.IPv6 == "" && !strings.HasPrefix(a.Address, "fe80:"):
+				g.IPv6 = a.Address + "/" + a.Netmask
+			}
+		}
+		if g != (Gateways{}) {
+			ranges[n.Name] = g
 		}
 	}
 	return ranges, nil
@@ -97,7 +111,7 @@ type Reader struct {
 
 // NetworkRanges returns the gateway addresses of the networks of a project, as the person is allowed to see them. Any failure is an
 // error the caller may ignore: what Incus knows is an addition to what the API says, not a condition of it.
-func (r *Reader) NetworkRanges(ctx context.Context, subjectToken, project string) (map[string]string, error) {
+func (r *Reader) NetworkRanges(ctx context.Context, subjectToken, project string) (map[string]Gateways, error) {
 	tok, err := r.Exchanger.Exchange(ctx, subjectToken)
 	if err != nil {
 		return nil, err
