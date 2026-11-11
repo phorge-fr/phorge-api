@@ -175,6 +175,114 @@ func TestInstanceOfReadsTheStatus(t *testing.T) {
 	}
 }
 
+// The XRD of the Instance used to default nesting, secureBoot and sshPublicKeys into every object and no longer does (an absent
+// field means "the instance did not say"), the status says the value in force. The API reads both shapes of object.
+func TestInstanceOfReadsTheSettingsInForce(t *testing.T) {
+	other := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPPP"
+	cases := []struct {
+		name       string
+		spec       map[string]any
+		status     map[string]any
+		nesting    bool
+		secureBoot bool
+		keys       []string
+	}{
+		{
+			name:       "defaults stored in the spec, no status",
+			spec:       map[string]any{"nesting": false, "secureBoot": true, "sshPublicKeys": []any{}},
+			nesting:    false,
+			secureBoot: true,
+		},
+		{
+			name:       "defaults stored in the spec, status says the same",
+			spec:       map[string]any{"nesting": false, "secureBoot": true, "sshPublicKeys": []any{}},
+			status:     map[string]any{"nesting": false, "secureBoot": true, "sshPublicKeys": []any{}},
+			nesting:    false,
+			secureBoot: true,
+		},
+		{
+			name:       "stored values the instance said",
+			spec:       map[string]any{"nesting": true, "secureBoot": false, "sshPublicKeys": []any{key}},
+			status:     map[string]any{"nesting": true, "secureBoot": false, "sshPublicKeys": []any{key}},
+			nesting:    true,
+			secureBoot: false,
+			keys:       []string{key},
+		},
+		{
+			name:       "absent fields and a status that says them",
+			spec:       map[string]any{},
+			status:     map[string]any{"nesting": true, "secureBoot": false, "sshPublicKeys": []any{key}},
+			nesting:    true,
+			secureBoot: false,
+			keys:       []string{key},
+		},
+		{
+			name:       "absent fields and a status that says the defaults",
+			spec:       map[string]any{},
+			status:     map[string]any{"nesting": false, "secureBoot": true, "sshPublicKeys": []any{}},
+			nesting:    false,
+			secureBoot: true,
+		},
+		{
+			name:       "absent fields, no status yet: the defaults, secure boot is on",
+			spec:       map[string]any{},
+			nesting:    false,
+			secureBoot: true,
+		},
+		{
+			name:       "absent fields and a status with none of the settings yet",
+			spec:       map[string]any{},
+			status:     map[string]any{"state": "Running"},
+			nesting:    false,
+			secureBoot: true,
+		},
+		{
+			name:       "a false in the spec is said, it is not absent",
+			spec:       map[string]any{"secureBoot": false},
+			nesting:    false,
+			secureBoot: false,
+		},
+		{
+			name:       "the spec just changed by the API wins over the status that did not follow yet",
+			spec:       map[string]any{"sshPublicKeys": []any{other}},
+			status:     map[string]any{"sshPublicKeys": []any{key}},
+			nesting:    false,
+			secureBoot: true,
+			keys:       []string{other},
+		},
+		{
+			name:       "keys cleared in the spec while the status still has them",
+			spec:       map[string]any{"sshPublicKeys": []any{}},
+			status:     map[string]any{"sshPublicKeys": []any{key}},
+			nesting:    false,
+			secureBoot: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			object := map[string]any{"metadata": map[string]any{"name": "web"}, "spec": c.spec}
+			if c.status != nil {
+				object["status"] = c.status
+			}
+			got := instanceOf(&unstructured.Unstructured{Object: object})
+			if got.Nesting != c.nesting || got.SecureBoot != c.secureBoot {
+				t.Errorf("nesting = %v, secureBoot = %v, want %v and %v", got.Nesting, got.SecureBoot, c.nesting, c.secureBoot)
+			}
+			if len(got.SSHPublicKeys) != len(c.keys) {
+				t.Fatalf("keys = %v, want %v", got.SSHPublicKeys, c.keys)
+			}
+			for i := range c.keys {
+				if got.SSHPublicKeys[i] != c.keys[i] {
+					t.Errorf("keys = %v, want %v", got.SSHPublicKeys, c.keys)
+				}
+			}
+		})
+	}
+	if bare := instanceOf(&unstructured.Unstructured{Object: map[string]any{"metadata": map[string]any{"name": "x"}}}); !bare.SecureBoot || bare.Nesting {
+		t.Errorf("an object with no spec has the defaults: %+v", bare)
+	}
+}
+
 func TestAChangeOfRunningIsRecordedOnTheObject(t *testing.T) {
 	client := newClient()
 	s := NewInstances(Static(client))
