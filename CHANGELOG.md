@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/phorge-fr/phorge-api/compare/v0.13.0...v0.13.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* Read the settings of an instance from its status ([4b4c56a](https://github.com/phorge-fr/phorge-api/commit/4b4c56ab60f034ff215d424031006b257fe65b95))
+
 ## [0.13.0](https://github.com/phorge-fr/phorge-api/compare/v0.12.0...v0.13.0) (2026-11-11)
 
 
