@@ -169,7 +169,7 @@ func TestANetworkShowsAPhaseAndNoCrossplaneCondition(t *testing.T) {
 		}
 	}
 	if !strings.Contains(body.Problems, "number of networks") {
-		t.Errorf("the limit of the plan is told in words: %q", body.Problems)
+		t.Errorf("the limit of the tenant is told in words: %q", body.Problems)
 	}
 }
 

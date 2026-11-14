@@ -11,7 +11,6 @@ import (
 	"github.com/phorge-fr/phorge-api/internal/quota"
 	"github.com/phorge-fr/phorge-api/internal/ratelimit"
 	"github.com/phorge-fr/phorge-api/internal/server"
-	"github.com/phorge-fr/phorge-api/internal/tenants"
 )
 
 // quotaRoutes tell a tenant what it is allowed to hold, the same for every tenant, and what it holds, so that a client draws what is
@@ -28,45 +27,42 @@ func (q *quotaRoutes) register(s *server.Server, authn func(http.Handler) http.H
 }
 
 type quotaBody struct {
-	// Plan is deprecated: it changes no limit, and goes when the console stops reading it.
-	Plan   tenants.Plan `json:"plan"`
 	Limits quota.Limits `json:"limits"`
 	Used   quota.Used   `json:"used"`
 }
 
 func (q *quotaRoutes) get(w http.ResponseWriter, r *http.Request) {
 	tenant := r.PathValue("t")
-	plan, used, _, ok := holdings(w, r, &q.base, q.instances, q.networks, q.profiles, tenant)
+	used, _, ok := holdings(w, r, &q.base, q.instances, q.networks, q.profiles, tenant)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, quotaBody{Plan: plan, Limits: quota.PerTenant, Used: used})
+	writeJSON(w, http.StatusOK, quotaBody{Limits: quota.PerTenant, Used: used})
 }
 
-// holdings reads the plan of a tenant (deprecated, it limits nothing), what it holds, and the profiles its users made (an instance counts what its profile comes to),
+// holdings reads what a tenant holds, and the profiles its users made (an instance counts what its profile comes to),
 // or answers.
-func holdings(w http.ResponseWriter, r *http.Request, b *base, instances compute.InstanceStore, networks compute.NetworkStore, profiles compute.ProfileStore, tenant string) (tenants.Plan, quota.Used, []compute.Profile, bool) {
-	tn, err := b.tenants.Get(r.Context(), tenant)
-	if err != nil {
+func holdings(w http.ResponseWriter, r *http.Request, b *base, instances compute.InstanceStore, networks compute.NetworkStore, profiles compute.ProfileStore, tenant string) (quota.Used, []compute.Profile, bool) {
+	if _, err := b.tenants.Get(r.Context(), tenant); err != nil {
 		b.storeError(w, err, "tenant")
-		return "", quota.Used{}, nil, false
+		return quota.Used{}, nil, false
 	}
 	in, err := instances.List(r.Context(), tenant)
 	if err != nil {
 		b.storeError(w, err, "instance")
-		return "", quota.Used{}, nil, false
+		return quota.Used{}, nil, false
 	}
 	nw, err := networks.List(r.Context(), tenant)
 	if err != nil {
 		b.storeError(w, err, "network")
-		return "", quota.Used{}, nil, false
+		return quota.Used{}, nil, false
 	}
 	made, err := profiles.List(r.Context(), tenant)
 	if err != nil {
 		b.storeError(w, err, "profile")
-		return "", quota.Used{}, nil, false
+		return quota.Used{}, nil, false
 	}
-	return tn.Plan, quota.UsedBy(in, nw, made), made, true
+	return quota.UsedBy(in, nw, made), made, true
 }
 
 // quotaExceeded answers a request that would pass a limit: 409, with a code a program can act on and a sentence that says which.

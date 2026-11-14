@@ -86,9 +86,6 @@ func (s *Tenants) Create(ctx context.Context, req tenants.CreateRequest) (tenant
 		return tenants.Tenant{}, err
 	}
 	spec := map[string]any{"owner": req.Owner}
-	if req.Plan != "" {
-		spec["plan"] = string(req.Plan)
-	}
 	if req.DisplayName != "" {
 		spec["displayName"] = req.DisplayName
 	}
@@ -108,16 +105,13 @@ func (s *Tenants) Create(ctx context.Context, req tenants.CreateRequest) (tenant
 	return tenantOf(obj), nil
 }
 
-// Patch changes the plan or the display name, with a JSON merge patch on the fields that were given.
+// Patch changes the display name, with a JSON merge patch on the fields that were given.
 func (s *Tenants) Patch(ctx context.Context, name string, req tenants.PatchRequest) (tenants.Tenant, error) {
 	r, err := s.resource()
 	if err != nil {
 		return tenants.Tenant{}, err
 	}
 	spec := map[string]any{}
-	if req.Plan != nil {
-		spec["plan"] = string(*req.Plan)
-	}
 	if req.DisplayName != nil {
 		spec["displayName"] = *req.DisplayName
 	}
@@ -200,7 +194,6 @@ func mapError(err error) error {
 func tenantOf(obj *unstructured.Unstructured) tenants.Tenant {
 	// A field of the wrong type reads as empty.
 	owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner")
-	plan, _, _ := unstructured.NestedString(obj.Object, "spec", "plan")
 	displayName, _, _ := unstructured.NestedString(obj.Object, "spec", "displayName")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 	namespace, _, _ := unstructured.NestedString(obj.Object, "status", "namespace")
@@ -210,7 +203,6 @@ func tenantOf(obj *unstructured.Unstructured) tenants.Tenant {
 		Name:         obj.GetName(),
 		DisplayName:  displayName,
 		Owner:        owner,
-		Plan:         tenants.Plan(plan),
 		CreatedAt:    obj.GetCreationTimestamp().Time,
 		CreatedBy:    obj.GetAnnotations()[CreatedByAnnotation],
 		Namespace:    namespace,

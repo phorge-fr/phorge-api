@@ -38,9 +38,9 @@ func TestAKeyWithTheScopesOfTheNetworksTheProfilesAndTheTenantPassesTheirRoutes(
 		{"GET", "/v1/apikeys", "", http.StatusForbidden},
 		{"GET", "/v1/tenants/other/networks", "", http.StatusNotFound},
 		{"POST", "/v1/tenants/other/networks", `{"name":"x"}`, http.StatusNotFound},
-		// the tenant: rename it, and do not choose its plan
+		// the tenant: rename it; there is no plan to give
 		{"PATCH", "/v1/tenants/demo", `{"displayName":"renamed"}`, http.StatusOK},
-		{"PATCH", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
+		{"PATCH", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusBadRequest},
 		{"POST", "/v1/tenants", `{"name":"fresh","owner":"x@example.org"}`, http.StatusForbidden},
 		{"DELETE", "/v1/tenants/demo", "", http.StatusAccepted},
 	} {

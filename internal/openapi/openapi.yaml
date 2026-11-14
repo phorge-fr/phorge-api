@@ -109,9 +109,8 @@ paths:
             description: |
                 Any person creates a tenant for themselves (`canCreateTenants` of `GET /v1/whoami`): they own it, `owner` is left
                 out or is their own email. Every tenant has the same limits (2 VMs, 2 vCPU, 4 GiB of memory, 128 GiB of disk, 2 networks
-                and 2 profiles), so there is no plan to choose: leave `plan` out. It is deprecated and kept until the console stops
-                reading it: a `plan` other than `small` is `403`, and none changes a limit. A person owns a limited number of tenants:
-                past it the answer is `409` with the code `quota_exceeded`. A key never creates a tenant.
+                and 2 profiles), so there is nothing to choose and no `plan`: a body that gives one is `400`. A person owns a limited
+                number of tenants: past it the answer is `409` with the code `quota_exceeded`. A key never creates a tenant.
 
                 The answer is `202`: the tenant exists but Crossplane takes about a minute to make its namespace, its Incus
                 project and the three profiles `s`, `m` and `l`. It comes without a network: deploy one in it. Poll the
@@ -179,9 +178,8 @@ paths:
             operationId: updateTenant
             summary: Change the display name
             description: |
-                The admins of the tenant, the owner among them, change its display name. The `plan` is deprecated and changes
-                no limit, since every tenant has the same ones: a body that gives it is `403`. The name and the owner cannot change: to hand a tenant over, give the new person the
-                `admin` role with a membership.
+                The admins of the tenant, the owner among them, change its display name. The name and the owner cannot change: to
+                hand a tenant over, give the new person the `admin` role with a membership.
             security:
                 - bearerAuth: []
             requestBody:
@@ -546,8 +544,7 @@ paths:
             description: |
                 The limits of the tenant (instances, vCPU, memory, disk, networks, profiles), the same for every tenant, and what the
                 tenant holds. A stopped instance counts, as it does for Incus. The profiles are the ones its users made: `s`, `m` and
-                `l` are not counted. The `plan` is deprecated, it limits nothing and goes when the console stops reading it. A request that
-                would pass a limit is refused with `409` and the code `quota_exceeded`, and a message that says which.
+                `l` are not counted. A request that would pass a limit is refused with `409` and the code `quota_exceeded`, and a message that says which.
             security:
                 - bearerAuth: []
             responses:
@@ -1561,12 +1558,9 @@ components:
         Quota:
             type: object
             required:
-                - plan
                 - limits
                 - used
             properties:
-                plan:
-                    $ref: "#/components/schemas/Plan"
                 limits:
                     $ref: "#/components/schemas/QuotaFigures"
                 used:
@@ -2321,23 +2315,11 @@ components:
                     type: string
                     minLength: 1
                     maxLength: 100
-        Plan:
-            type: string
-            deprecated: true
-            description: |
-                Deprecated: every tenant has the same limits (2 VMs, 2 vCPU, 4 GiB, 128 GiB of disk, 2 networks, 2 profiles), whatever
-                its plan, which is kept as it is read until the console stops using it and then removed. A new tenant is `small`;
-                another plan is `403` on creation and on change.
-            enum:
-                - small
-                - medium
-                - large
         Tenant:
             type: object
             required:
                 - name
                 - owner
-                - plan
                 - phase
                 - createdAt
             properties:
@@ -2351,8 +2333,6 @@ components:
                     type: string
                     description: Email of the owner, who is `admin` of the tenant. It cannot change.
                     example: alice@example.org
-                plan:
-                    $ref: "#/components/schemas/Plan"
                 phase:
                     $ref: "#/components/schemas/Phase"
                 problems:
@@ -2397,8 +2377,6 @@ components:
                         Email of the owner, exactly as it is in Authentik (case included). Leave it out: it is the caller's own email,
                         and another one is `403`.
                     example: alice@example.org
-                plan:
-                    $ref: "#/components/schemas/Plan"
                 displayName:
                     type: string
                     maxLength: 100
@@ -2407,8 +2385,6 @@ components:
             additionalProperties: false
             minProperties: 1
             properties:
-                plan:
-                    $ref: "#/components/schemas/Plan"
                 displayName:
                     type: string
                     maxLength: 100
