@@ -35,12 +35,12 @@ func TestPhaseAt(t *testing.T) {
 }
 
 func TestCreateRequestValidate(t *testing.T) {
-	good := CreateRequest{Name: "demo", Owner: "alice@example.org", Plan: Medium, DisplayName: "Demo"}
+	good := CreateRequest{Name: "demo", Owner: "alice@example.org", DisplayName: "Demo"}
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if err := (CreateRequest{Name: "demo", Owner: "alice@example.org"}).Validate(); err != nil {
-		t.Errorf("plan and display name are optional: %v", err)
+		t.Errorf("the display name is optional: %v", err)
 	}
 	if err := (CreateRequest{Name: "ab", Owner: "Alice@Example.org"}).Validate(); err != nil {
 		t.Errorf("the owner keeps its case, a two letters name is fine: %v", err)
@@ -58,7 +58,6 @@ func TestCreateRequestValidate(t *testing.T) {
 		"an owner that is a wildcard": {Name: "demo", Owner: "*"},
 		"an owner with a relation":    {Name: "demo", Owner: "a@b#admin"},
 		"an owner with a space":       {Name: "demo", Owner: "a @b"},
-		"an unknown plan":             {Name: "demo", Owner: "a@b", Plan: "huge"},
 		"a display name too long":     {Name: "demo", Owner: "a@b", DisplayName: strings.Repeat("é", MaxDisplayName+1)},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -74,7 +73,7 @@ func TestCreateRequestValidate(t *testing.T) {
 		t.Errorf("100 characters were refused: %v", err)
 	}
 
-	err := CreateRequest{Name: "D", Owner: "x", Plan: "huge"}.Validate()
+	err := CreateRequest{Name: "D", Owner: "x", DisplayName: strings.Repeat("a", MaxDisplayName+1)}.Validate()
 	var invalid *InvalidError
 	if !errors.As(err, &invalid) || len(invalid.Problems) != 3 {
 		t.Errorf("every problem is reported at once: %v", err)
@@ -82,15 +81,13 @@ func TestCreateRequestValidate(t *testing.T) {
 }
 
 func TestPatchRequestValidate(t *testing.T) {
-	large, bad, name := Large, Plan("huge"), "Production"
+	name := "Production"
 	long := strings.Repeat("a", MaxDisplayName+1)
 	empty := ""
 
 	for name, ok := range map[string]PatchRequest{
-		"a plan":               {Plan: &large},
 		"a display name":       {DisplayName: &name},
 		"an empty name clears": {DisplayName: &empty},
-		"both":                 {Plan: &large, DisplayName: &name},
 	} {
 		if err := ok.Validate(); err != nil {
 			t.Errorf("%s: %v", name, err)
@@ -98,7 +95,6 @@ func TestPatchRequestValidate(t *testing.T) {
 	}
 	for name, req := range map[string]PatchRequest{
 		"nothing":                 {},
-		"an unknown plan":         {Plan: &bad},
 		"a display name too long": {DisplayName: &long},
 	} {
 		if err := req.Validate(); err == nil {

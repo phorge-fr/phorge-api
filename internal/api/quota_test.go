@@ -12,7 +12,7 @@ import (
 
 // tiny is a tenant like any other (2 instances, 2 vCPU, 4 GiB, 128 GiB, 2 networks, 2 profiles) that alice may use as she uses demo.
 func withTiny(e *env) {
-	e.store.tenants["tiny"] = tenants.Tenant{Name: "tiny", Owner: "alice@example.org", Plan: tenants.Small, CreatedAt: now, Ready: true, NotReadySince: now}
+	e.store.tenants["tiny"] = tenants.Tenant{Name: "tiny", Owner: "alice@example.org", CreatedAt: now, Ready: true, NotReadySince: now}
 	for _, rel := range []string{"can_read_tenant", "can_read_instances", "can_write_instances", "can_read_images", "can_write_images", "can_read_networks", "can_write_networks", "can_read_profiles", "can_write_profiles"} {
 		e.fga.grants["user:operator@example.org "+rel+" tenant:tiny"] = true
 	}
@@ -26,24 +26,28 @@ func TestQuotaSaysWhatEveryTenantMayHoldAndWhatItHolds(t *testing.T) {
 	e.instances.put("demo", compute.Instance{Name: "b", Image: "debian", Profile: "m", Running: false}) // stopped: it counts
 	var got quotaBody
 	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &got)
-	// the plan of demo is large and the limits are the same as for every tenant: the plan is shown, deprecated, and limits nothing
-	if got.Plan != tenants.Large || got.Limits != (quota.Limits{Instances: 2, VCPU: 2, MemoryMiB: 4096, DiskGiB: 128, Networks: 2, Profiles: 2}) {
-		t.Errorf("plan and limits: %+v", got)
+	if got.Limits != (quota.Limits{Instances: 2, VCPU: 2, MemoryMiB: 4096, DiskGiB: 128, Networks: 2, Profiles: 2}) {
+		t.Errorf("limits: %+v", got.Limits)
 	}
 	if want := (quota.Used{Instances: 2, VCPU: 4, MemoryMiB: 2048 + 4096, DiskGiB: 148, Networks: 1, Profiles: 0}); got.Used != want {
 		t.Errorf("used = %+v, want %+v (the network of the test environment, the stopped VM, the profile)", got.Used, want)
 	}
 }
 
-// The plan of a tenant is kept in the answer and limits nothing: a small one and a large one have the same limits.
-func TestThePlanOfATenantChangesNoLimit(t *testing.T) {
+// Every tenant has the same limits, and the answer names no plan: there is none.
+func TestEveryTenantHasTheSameLimitsAndNoPlan(t *testing.T) {
 	e := newEnv(t)
-	withTiny(e) // small, demo is large
-	var small, large quotaBody
-	mustDecode(t, e.do(t, "GET", "/v1/tenants/tiny/quota", "operator", ""), &small)
-	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &large)
-	if small.Plan != tenants.Small || large.Plan != tenants.Large || small.Limits != large.Limits || small.Limits != quota.PerTenant {
-		t.Errorf("small %+v, large %+v: the limits are the same, whatever the plan", small, large)
+	withTiny(e)
+	var tiny, demo quotaBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/tiny/quota", "operator", ""), &tiny)
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &demo)
+	if tiny.Limits != demo.Limits || tiny.Limits != quota.PerTenant {
+		t.Errorf("tiny %+v, demo %+v: the limits are the same for every tenant", tiny.Limits, demo.Limits)
+	}
+	var raw map[string]any
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/quota", "viewer", ""), &raw)
+	if _, ok := raw["plan"]; ok {
+		t.Errorf("the answer carries a plan: %v", raw)
 	}
 }
 

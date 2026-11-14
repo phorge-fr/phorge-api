@@ -18,8 +18,8 @@ import (
 //
 // Seeing a tenant takes a right on it (a role; for a key, the scope tenants:read too). Any person creates a tenant for themselves:
 // they own it, and the number of tenants a person owns is limited (MAX_TENANTS_PER_USER). Changing the
-// name of a tenant and deleting it is for its admins, the owner among them. Every tenant has the same limits (internal/quota),
-// whatever its plan, which is deprecated and kept as it is read until the console stops using it. A key never creates, changes or deletes a tenant.
+// name of a tenant and deleting it is for its admins, the owner among them. Every tenant has the same limits (internal/quota).
+// A key never creates, changes or deletes a tenant.
 type tenantRoutes struct {
 	base
 	store    tenants.Store
@@ -69,7 +69,6 @@ type tenantBody struct {
 	Name         string        `json:"name"`
 	DisplayName  string        `json:"displayName,omitempty"`
 	Owner        string        `json:"owner"`
-	Plan         tenants.Plan  `json:"plan"`
 	Phase        tenants.Phase `json:"phase"`
 	Problems     string        `json:"problems,omitempty"`
 	Namespace    string        `json:"namespace,omitempty"`
@@ -80,7 +79,7 @@ type tenantBody struct {
 
 func (t *tenantRoutes) body(tn tenants.Tenant) tenantBody {
 	return tenantBody{
-		Name: tn.Name, DisplayName: tn.DisplayName, Owner: tn.Owner, Plan: tn.Plan, Phase: tn.PhaseAt(t.now()),
+		Name: tn.Name, DisplayName: tn.DisplayName, Owner: tn.Owner, Phase: tn.PhaseAt(t.now()),
 		Problems: tn.MessageAt(t.now()), Namespace: tn.Namespace, IncusProject: tn.IncusProject, CreatedAt: tn.CreatedAt, CreatedBy: tn.CreatedBy,
 	}
 }
@@ -125,17 +124,12 @@ func (t *tenantRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := auth.FromContext(r.Context())
 	req.CreatedBy = id.Subject
-	// A person creates a tenant for themselves: the owner is the caller, and the plan the default one, which limits nothing. A request that says otherwise
-	// is refused, not changed in silence.
+	// A person creates a tenant for themselves: the owner is the caller. A request that says otherwise is refused, not changed in silence.
 	if req.Owner != "" && !strings.EqualFold(req.Owner, id.Email) {
 		httperr.Write(w, http.StatusForbidden, "forbidden", "you can only create a tenant for yourself")
 		return
 	}
-	if req.Plan != "" && req.Plan != tenants.Small {
-		httperr.Write(w, http.StatusForbidden, "forbidden", "there is no choice of plan any more: every tenant has the same limits, leave plan out")
-		return
-	}
-	req.Owner, req.Plan = id.Email, tenants.Small
+	req.Owner = id.Email
 	if err := req.Validate(); err != nil {
 		t.storeError(w, err, "tenant")
 		return
@@ -183,12 +177,6 @@ func (t *tenantRoutes) patch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := req.Validate(); err != nil {
 		t.storeError(w, err, "tenant")
-		return
-	}
-	// Every tenant has the same limits: the plan is deprecated, kept until the console stops reading it, and it changes nothing. Its
-	// admins rename a tenant, and a request that gives a plan is still refused, as it always was.
-	if req.Plan != nil {
-		httperr.Write(w, http.StatusForbidden, "forbidden", "there is no choice of plan any more: every tenant has the same limits")
 		return
 	}
 	tn, err := t.store.Patch(r.Context(), r.PathValue("t"), req)

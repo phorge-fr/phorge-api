@@ -133,13 +133,13 @@ type ImageStore interface {
 
 // ---- Instance ----
 
-// The bounds of an instance, which are the ones of the XRD. The plan of the tenant limits the total on top of them.
+// The bounds of an instance, which are the ones of the XRD. The limits of the tenant cap the total on top of them.
 const (
 	MinCPU, MaxCPU       = 1, 16
 	MinMemory, MaxMemory = 256, 65536
 	MinDisk, MaxDisk     = 1, 500
 	MaxSSHKeys           = 20
-	// MaxInstanceNetworks is the number of networks one instance joins, the bound of the XRD. The plan limits how many networks a
+	// MaxInstanceNetworks is the number of networks one instance joins, the bound of the XRD. The limits of the tenant say how many networks a
 	// tenant has, not how many an instance is attached to.
 	MaxInstanceNetworks = 8
 )

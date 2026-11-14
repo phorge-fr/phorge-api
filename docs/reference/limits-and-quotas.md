@@ -1,7 +1,7 @@
 ---
 type: reference
 audience: developer or operator who needs to know what a caller or a tenant may do, and how the API says no
-verified: 2026-11-11
+verified: 2026-11-14
 ---
 
 # Limits and quotas
@@ -31,9 +31,9 @@ Creating an instance, a network or a profile that would pass a limit is refused 
 
 A profile bigger than what is left is refused with the limit it passes when an instance takes it: a `l`, or a third `s`.
 
-### The plan is deprecated
+### There is no plan
 
-There used to be three plans (`small`, `medium`, `large`) that set these limits, and only the platform administrators changed them. There is no choice of plan any more: the `plan` of a tenant limits nothing and changing it changes no limit. It is still in the body of a tenant and in the answer of the quota, and a plan other than `small` is refused with `403` on creation and on change, as before; a tenant is created without one. It stays only until the console stops reading it, then it is removed from the API. An existing tenant has the same limits as a new one, whatever plan it was created with.
+Every tenant has these limits, the ones of a tenant created today and of one created long ago. A tenant has no `plan`: it is not in its body, nor in the answer of the quota, and a body that gives one, to create or to change a tenant, is `400` like any field the API does not know.
 
 ## The rate
 

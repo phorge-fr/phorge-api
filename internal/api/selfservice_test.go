@@ -24,10 +24,10 @@ func TestAPersonCreatesATenantForThemselves(t *testing.T) {
 	}
 	var body tenantBody
 	mustDecode(t, rec, &body)
-	if body.Owner != "mallory@example.org" || body.Plan != tenants.Small || body.CreatedBy != "user:mallory@example.org" {
-		t.Errorf("the owner is the caller and the plan the smallest: %+v", body)
+	if body.Owner != "mallory@example.org" || body.CreatedBy != "user:mallory@example.org" {
+		t.Errorf("the owner is the caller: %+v", body)
 	}
-	if got := e.store.tenants["mine"]; got.Owner != "mallory@example.org" || got.Plan != tenants.Small {
+	if got := e.store.tenants["mine"]; got.Owner != "mallory@example.org" {
 		t.Errorf("the store received %+v", got)
 	}
 	if loc := rec.Header().Get("Location"); loc != "/v1/tenants/mine" {
@@ -35,25 +35,17 @@ func TestAPersonCreatesATenantForThemselves(t *testing.T) {
 	}
 }
 
-func TestAPersonCannotCreateATenantForSomeoneElseOrWithABiggerPlan(t *testing.T) {
+func TestAPersonCannotCreateATenantForSomeoneElse(t *testing.T) {
 	e := newEnvWith(t, usersMay())
-	for name, tt := range map[string]struct{ body, want string }{
-		"for someone else": {`{"name":"x1","owner":"bob@example.org"}`, "only create a tenant for yourself"},
-		"a bigger plan":    {`{"name":"x2","plan":"large"}`, "no choice of plan"},
-		"a medium plan":    {`{"name":"x3","plan":"medium"}`, "no choice of plan"},
-	} {
-		rec := e.do(t, "POST", "/v1/tenants", "mallory", tt.body)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), tt.want) {
-			t.Errorf("%s: status %d: %s", name, rec.Code, rec.Body)
-		}
+	rec := e.do(t, "POST", "/v1/tenants", "mallory", `{"name":"x1","owner":"bob@example.org"}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "only create a tenant for yourself") {
+		t.Errorf("for someone else: status %d: %s", rec.Code, rec.Body)
 	}
-	for _, name := range []string{"x1", "x2", "x3"} {
-		if _, ok := e.store.tenants[name]; ok {
-			t.Errorf("%s was created", name)
-		}
+	if _, ok := e.store.tenants["x1"]; ok {
+		t.Error("x1 was created")
 	}
-	// their own address, in another case, is theirs; the small plan is what they get anyway
-	if code := call(t, e, "POST", "/v1/tenants", "mallory", `{"name":"x4","owner":"Mallory@Example.org","plan":"small"}`); code != http.StatusAccepted {
+	// their own address, in another case, is theirs
+	if code := call(t, e, "POST", "/v1/tenants", "mallory", `{"name":"x4","owner":"Mallory@Example.org"}`); code != http.StatusAccepted {
 		t.Errorf("their own address: status %d", code)
 	}
 }
@@ -76,7 +68,7 @@ func TestAPersonOwnsAtMostSomeTenants(t *testing.T) {
 	if code := call(t, e, "POST", "/v1/tenants", "viewer", `{"name":"v1"}`); code != http.StatusAccepted {
 		t.Errorf("another person: status %d", code)
 	}
-	e.store.tenants["gift"] = tenants.Tenant{Name: "gift", Owner: "MALLORY@example.org", Plan: tenants.Small}
+	e.store.tenants["gift"] = tenants.Tenant{Name: "gift", Owner: "MALLORY@example.org"}
 	e.store.tenants["a3"] = tenants.Tenant{Name: "a3-gone"}
 	delete(e.store.tenants, "a3")
 	if code := call(t, e, "POST", "/v1/tenants", "mallory", `{"name":"a5"}`); code != http.StatusConflict {
@@ -96,19 +88,23 @@ func TestAPersonOwnsAtMostSomeTenants(t *testing.T) {
 func TestACreationAsksForNothingBeyondTheCaller(t *testing.T) {
 	e := newEnvWith(t, usersMay())
 	for name, body := range map[string]string{
-		"for somebody else":    `{"name":"fresh","owner":"bob@example.org"}`,
-		"another plan":         `{"name":"fresh","plan":"large"}`,
-		"another plan, medium": `{"name":"fresh","plan":"medium"}`,
+		"for somebody else": `{"name":"fresh","owner":"bob@example.org"}`,
 	} {
 		if code := call(t, e, "POST", "/v1/tenants", "mallory", body); code != http.StatusForbidden {
 			t.Errorf("%s: status %d, want 403", name, code)
 		}
 	}
+	// there is no plan to give, small or not: the field is unknown
+	for _, plan := range []string{"small", "large"} {
+		if code := call(t, e, "POST", "/v1/tenants", "mallory", `{"name":"fresh","plan":"`+plan+`"}`); code != http.StatusBadRequest {
+			t.Errorf("plan %s: status %d, want 400", plan, code)
+		}
+	}
 	if len(e.store.created) != 0 {
 		t.Errorf("something was created: %+v", e.store.created)
 	}
-	if code := call(t, e, "POST", "/v1/tenants", "mallory", `{"name":"fresh","owner":"MALLORY@example.org","plan":"small"}`); code != http.StatusAccepted {
-		t.Errorf("itself, the smallest plan: status %d, want 202", code)
+	if code := call(t, e, "POST", "/v1/tenants", "mallory", `{"name":"fresh","owner":"MALLORY@example.org"}`); code != http.StatusAccepted {
+		t.Errorf("itself: status %d, want 202", code)
 	}
 }
 
@@ -140,14 +136,14 @@ func TestWhoamiSaysWhetherTheCallerMayCreateATenant(t *testing.T) {
 
 func TestTheAdminsOfATenantChangeAndDeleteIt(t *testing.T) {
 	e := newEnvWith(t, usersMay())
-	e.store.tenants["demo"] = tenants.Tenant{Name: "demo", Owner: "alice@example.org", Plan: tenants.Small, Ready: true, NotReadySince: now}
+	e.store.tenants["demo"] = tenants.Tenant{Name: "demo", Owner: "alice@example.org", Ready: true, NotReadySince: now}
 	for who, want := range map[string]int{"alice": 200, "tadmin": 200, "operator": 403, "user": 403, "viewer": 403, "mallory": 404, "svc": 403, "": 401} {
 		if code := call(t, e, "PATCH", "/v1/tenants/demo", who, `{"displayName":"renamed"}`); code != want {
 			t.Errorf("rename by %q: status %d, want %d", who, code, want)
 		}
 	}
-	// the plan is changed where the platform is run, on request: not through the API, by nobody
-	for who, want := range map[string]int{"alice": 403, "tadmin": 403, "admin": 403} {
+	// there is no plan to change: the field is unknown, whoever asks
+	for who, want := range map[string]int{"alice": 400, "tadmin": 400, "admin": 400, "viewer": 403} {
 		if code := call(t, e, "PATCH", "/v1/tenants/demo", who, `{"plan":"large"}`); code != want {
 			t.Errorf("plan by %q: status %d, want %d", who, code, want)
 		}
