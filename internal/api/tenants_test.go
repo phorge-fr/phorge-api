@@ -28,7 +28,6 @@ var now = time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 type store struct {
 	tenants map[string]tenants.Tenant
 	created []tenants.CreateRequest
-	patched []string
 	deleted []string
 	err     error
 }
@@ -63,21 +62,8 @@ func (s *store) Create(_ context.Context, r tenants.CreateRequest) (tenants.Tena
 		return tenants.Tenant{}, tenants.ErrExists
 	}
 	s.created = append(s.created, r)
-	t := tenants.Tenant{Name: r.Name, Owner: r.Owner, DisplayName: r.DisplayName, CreatedBy: r.CreatedBy, CreatedAt: now, NotReadySince: now}
+	t := tenants.Tenant{Name: r.Name, Owner: r.Owner, CreatedBy: r.CreatedBy, CreatedAt: now, NotReadySince: now}
 	s.tenants[r.Name] = t
-	return t, nil
-}
-
-func (s *store) Patch(_ context.Context, name string, r tenants.PatchRequest) (tenants.Tenant, error) {
-	t, err := s.Get(context.Background(), name)
-	if err != nil {
-		return t, err
-	}
-	if r.DisplayName != nil {
-		t.DisplayName = *r.DisplayName
-	}
-	s.tenants[name] = t
-	s.patched = append(s.patched, name)
 	return t, nil
 }
 
@@ -429,7 +415,7 @@ func TestACrossplaneConditionNeverReachesTheClient(t *testing.T) {
 
 func TestCreate(t *testing.T) {
 	e := newEnv(t)
-	rec := e.do(t, http.MethodPost, "/v1/tenants", "alice", `{"name":"newone","displayName":"New one"}`)
+	rec := e.do(t, http.MethodPost, "/v1/tenants", "alice", `{"name":"newone"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -506,39 +492,29 @@ func TestCreateRefusesABadRequest(t *testing.T) {
 	}
 }
 
-func TestPatch(t *testing.T) {
+// A tenant has one name, which cannot change, and an owner, which cannot either: there is nothing left to patch, so the route is gone.
+func TestATenantHasOneNameAndCannotBePatched(t *testing.T) {
 	e := newEnv(t)
-	rec := e.do(t, http.MethodPatch, "/v1/tenants/demo", "admin", `{"displayName":"Production"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	for _, who := range []string{"admin", "viewer", "mallory", "svc", ""} {
+		if code := call(t, e, http.MethodPatch, "/v1/tenants/demo", who, `{"displayName":"Production"}`); code != http.StatusMethodNotAllowed {
+			t.Errorf("patch by %q: status %d, want 405", who, code)
+		}
+	}
+	// and there is no display name to give when creating one either: the field is unknown, whatever the value
+	for _, body := range []string{`{"name":"newone","displayName":"New one"}`, `{"name":"newone","displayName":""}`} {
+		if code := call(t, e, http.MethodPost, "/v1/tenants", "alice", body); code != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", body, code)
+		}
+	}
+	if len(e.store.created) != 0 {
+		t.Errorf("a tenant was created: %+v", e.store.created)
 	}
 	var got tenantBody
-	mustDecode(t, rec, &got)
-	if got.DisplayName != "Production" || got.Owner != "alice@example.org" {
-		t.Errorf("body: %+v", got)
-	}
-
-	for name, tt := range map[string]struct {
-		token, path, body string
-		want              int
-	}{
-		"the owner cannot be changed":  {"admin", "/v1/tenants/demo", `{"owner":"mallory@example.org"}`, http.StatusBadRequest},
-		"nor the name":                 {"admin", "/v1/tenants/demo", `{"name":"x"}`, http.StatusBadRequest},
-		"an empty patch":               {"admin", "/v1/tenants/demo", `{}`, http.StatusUnprocessableEntity},
-		"a plan, there is none":        {"admin", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusBadRequest},
-		"a tenant that does not exist": {"admin", "/v1/tenants/ghost", `{"displayName":"x"}`, http.StatusNotFound},
-		"a member who sees the tenant": {"viewer", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
-		"a stranger does not see it":   {"mallory", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusNotFound},
-		"a key without the scope":      {"svc", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
-		"nobody":                       {"", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusUnauthorized},
-	} {
-		before := len(e.store.patched)
-		if rec := e.do(t, http.MethodPatch, tt.path, tt.token, tt.body); rec.Code != tt.want {
-			t.Errorf("%s: status %d, want %d (%.200s)", name, rec.Code, tt.want, rec.Body.String())
-		}
-		if tt.want != http.StatusOK && len(e.store.patched) != before {
-			t.Errorf("%s: the tenant was patched", name)
-		}
+	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/demo", "admin", ""), &got)
+	var raw map[string]any
+	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/demo", "admin", ""), &raw)
+	if _, ok := raw["displayName"]; ok {
+		t.Errorf("the body of a tenant carries a display name: %v", raw)
 	}
 }
 
@@ -621,7 +597,6 @@ func TestAServiceKeyDoesWhatOpenFGAHoldsForIt(t *testing.T) {
 		{"is refused what it has no tuple for", http.MethodGet, "/v1/tenants/demo/images", "", http.StatusForbidden},
 		{"lists the tenants it can read", http.MethodGet, "/v1/tenants", "", http.StatusOK},
 		{"cannot create a tenant", http.MethodPost, "/v1/tenants", `{"name":"newone"}`, http.StatusForbidden},
-		{"cannot change a tenant", http.MethodPatch, "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
 		{"cannot create a key", http.MethodPost, "/v1/apikeys", `{"displayName":"x","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":["tenants:read"]}]}`, http.StatusForbidden},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

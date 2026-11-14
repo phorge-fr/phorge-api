@@ -183,11 +183,11 @@ func TestACallerThatWritesTooMuchIsSlowedDown(t *testing.T) {
 	s.RateLimitPerMinute, s.RateLimitBurst = 60, 3
 	e := newEnvWith(t, s)
 	for i := 0; i < 3; i++ {
-		if code := call(t, e, "PATCH", "/v1/tenants/demo", "admin", `{"displayName":"x"}`); code == http.StatusTooManyRequests {
+		if code := call(t, e, "DELETE", "/v1/tenants/demo/networks/ghost", "admin", ""); code == http.StatusTooManyRequests {
 			t.Fatalf("request %d of the burst was limited", i+1)
 		}
 	}
-	rec := e.do(t, "PATCH", "/v1/tenants/demo", "admin", `{"displayName":"x"}`)
+	rec := e.do(t, "DELETE", "/v1/tenants/demo/networks/ghost", "admin", "")
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("the 4th: status %d: %s", rec.Code, rec.Body)
 	}
@@ -203,7 +203,7 @@ func TestACallerThatWritesTooMuchIsSlowedDown(t *testing.T) {
 			t.Fatalf("a read was limited: %d", code)
 		}
 	}
-	if code := call(t, e, "PATCH", "/v1/tenants/demo", "admin2", `{"displayName":"x"}`); code == http.StatusTooManyRequests {
+	if code := call(t, e, "DELETE", "/v1/tenants/demo/networks/ghost", "admin2", ""); code == http.StatusTooManyRequests {
 		t.Error("another caller was slowed down")
 	}
 }
@@ -211,7 +211,7 @@ func TestACallerThatWritesTooMuchIsSlowedDown(t *testing.T) {
 func TestWithoutALimitNothingIsSlowedDown(t *testing.T) {
 	e := newEnv(t) // RateLimitPerMinute is 0
 	for i := 0; i < 50; i++ {
-		if code := call(t, e, "PATCH", "/v1/tenants/demo", "admin", `{"displayName":"x"}`); code == http.StatusTooManyRequests {
+		if code := call(t, e, "DELETE", "/v1/tenants/demo/networks/ghost", "admin", ""); code == http.StatusTooManyRequests {
 			t.Fatal("limited with no limit set")
 		}
 	}

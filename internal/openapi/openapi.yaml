@@ -112,6 +112,9 @@ paths:
                 and 2 profiles), so there is nothing to choose and no `plan`: a body that gives one is `400`. A person owns a limited
                 number of tenants: past it the answer is `409` with the code `quota_exceeded`. A key never creates a tenant.
 
+                A tenant has one name, the slug of `name`: there is no display name, and nothing else to change afterwards (the owner
+                cannot change either), so there is no `PATCH`. To hand a tenant over, give the new person the `admin` role with a membership.
+
                 The answer is `202`: the tenant exists but Crossplane takes about a minute to make its namespace, its Incus
                 project and the three profiles `s`, `m` and `l`. It comes without a network: deploy one in it. Poll the
                 `Location` until `phase` is `Ready`. A `phase` of `Failed` comes with `problems`, what is wrong in words made for you; the details of the platform are not shown.
@@ -170,43 +173,6 @@ paths:
                     $ref: "#/components/responses/Unauthenticated"
                 "404":
                     $ref: "#/components/responses/NotFound"
-                "503":
-                    $ref: "#/components/responses/Unavailable"
-        patch:
-            tags:
-                - Tenants
-            operationId: updateTenant
-            summary: Change the display name
-            description: |
-                The admins of the tenant, the owner among them, change its display name. The name and the owner cannot change: to
-                hand a tenant over, give the new person the `admin` role with a membership.
-            security:
-                - bearerAuth: []
-            requestBody:
-                required: true
-                content:
-                    application/json:
-                        schema:
-                            $ref: "#/components/schemas/TenantPatch"
-            responses:
-                "200":
-                    description: The tenant.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: "#/components/schemas/Tenant"
-                "400":
-                    $ref: "#/components/responses/BadRequest"
-                "401":
-                    $ref: "#/components/responses/Unauthenticated"
-                "403":
-                    $ref: "#/components/responses/Forbidden"
-                "404":
-                    $ref: "#/components/responses/NotFound"
-                "422":
-                    $ref: "#/components/responses/Invalid"
-                "429":
-                    $ref: "#/components/responses/TooManyRequests"
                 "503":
                     $ref: "#/components/responses/Unavailable"
         delete:
@@ -2049,7 +2015,7 @@ components:
             type: string
             description: |
                 What an API key may do on a tenant, named `<resource>:<verb>`. `instances:write` does not give `instances:read`.
-                `tenants:read` reads the tenant, `tenants:write` renames it and deletes it (which destroys its virtual machines).
+                `tenants:read` reads the tenant, `tenants:write` deletes it (which destroys its virtual machines).
                 A key never creates a tenant.
                 The list is also `GET /v1/apikeys/scopes`.
             enum:
@@ -2241,10 +2207,8 @@ components:
             properties:
                 name:
                     type: string
+                    description: The one name of the tenant. It is a slug, it cannot change, and it is the name of its Incus project too.
                     example: demo
-                displayName:
-                    type: string
-                    maxLength: 100
                 owner:
                     type: string
                     description: Email of the owner, who is `admin` of the tenant. It cannot change.
@@ -2293,17 +2257,6 @@ components:
                         Email of the owner, exactly as it is in Authentik (case included). Leave it out: it is the caller's own email,
                         and another one is `403`.
                     example: alice@example.org
-                displayName:
-                    type: string
-                    maxLength: 100
-        TenantPatch:
-            type: object
-            additionalProperties: false
-            minProperties: 1
-            properties:
-                displayName:
-                    type: string
-                    maxLength: 100
         Identity:
             type: object
             required:

@@ -74,7 +74,7 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	})
 
 	t.Log("create", name)
-	rec := e.do(t, http.MethodPost, "/v1/tenants", "owner", `{"name":"`+name+`","displayName":"created by the API tests"}`)
+	rec := e.do(t, http.MethodPost, "/v1/tenants", "owner", `{"name":"`+name+`"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create: status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -101,22 +101,12 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	if code := e.do(t, http.MethodGet, "/v1/tenants/"+name, "stranger", "").Code; code != http.StatusNotFound {
 		t.Errorf("a stranger gets %d, want 404", code)
 	}
-	if code := e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"plan":"large"}`).Code; code != http.StatusBadRequest {
-		t.Errorf("the owner giving a plan gets %d, want 400: there is no plan", code)
+	if code := e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"plan":"large"}`).Code; code != http.StatusMethodNotAllowed {
+		t.Errorf("patching a tenant gets %d, want 405: it has one name and nothing else to change", code)
 	}
 	if listed := names(t, e.do(t, http.MethodGet, "/v1/tenants", "owner", "")); !slices.Equal(listed, []string{name}) {
 		t.Errorf("the owner sees %v, want only %s", listed, name)
 	}
-
-	// Rename.
-	rec = e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"displayName":"resized"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("patch: status %d: %s", rec.Code, rec.Body.String())
-	}
-	waitFor(t, 3*time.Minute, "the renamed tenant to be Ready again", func() bool {
-		mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/"+name, "owner", ""), &got)
-		return got.DisplayName == "resized" && got.Phase == tenants.Ready
-	})
 
 	// Delete, in the foreground: it is Deleting until everything is gone, and then it is not found.
 	rec = e.do(t, http.MethodDelete, "/v1/tenants/"+name, "owner", "")

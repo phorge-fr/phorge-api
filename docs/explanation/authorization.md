@@ -1,7 +1,7 @@
 ---
 type: explanation
 audience: developer who needs to understand how the API decides what a caller may do
-verified: 2026-10-28
+verified: 2026-11-14
 ---
 
 # How the API authorizes a request
@@ -16,7 +16,7 @@ Authentication tells who calls, OpenFGA decides what they may do (`internal/auth
 | write images | `can_write_images` | `images:write` |
 | read, write networks | `can_read_networks`, `can_write_networks` | `networks:read`, `networks:write` |
 | read, write profiles | `can_read_profiles`, `can_write_profiles` | `profiles:read`, `profiles:write` |
-| rename and delete the tenant | `can_write_tenant` | `tenants:write` |
+| delete the tenant | `can_write_tenant` | `tenants:write` |
 | read, write memberships, and keys | `can_read_memberships`, `can_write_memberships` | `memberships:read`, `memberships:write` |
 
 A user gets those through a role (`admin` over `operator` over `user` over `viewer`). A key gets them from tuples of its own, `key_<resource>_<action>` on the tenant, one per scope and tenant, each with the condition `not_expired`: the API sends the current time (UTC) with every `Check` and `ListObjects`, and past its date OpenFGA itself refuses the key, with nothing deleted. No role is derived for a key, and no table in the API widens what its tuples say (`instances:write` does not give `instances:read`). `Authorizer.Require(action, ...)` is the middleware of a route: `404` when the caller cannot read the tenant (a tenant that is not yours is not shown to exist), `403` when it can but may not do this, `503` when OpenFGA cannot answer. A decision that cannot be taken is never an "allowed". Creating a tenant for oneself is not an OpenFGA question: any person with an email may, and the owner then becomes the `admin` of the tenant through the tuple the composition writes. There is no platform-administrators group in the API: whoever runs the platform acts on Kubernetes and Incus directly, and a user who needs a special case asks them. Changing the name of a tenant and deleting it is the relation `can_write_tenant` of the model, which the `admin` role holds; a key can be given it with the scope `tenants:write`, on a tenant its creator administers. `GET /v1/whoami` says whether the caller may write tenants.
