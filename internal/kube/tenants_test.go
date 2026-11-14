@@ -28,12 +28,12 @@ func TestCreateWritesTheObject(t *testing.T) {
 	s, client := newTenantStore()
 
 	got, err := s.Create(t.Context(), tenants.CreateRequest{
-		Name: "demo", Owner: "Alice@Example.org", Plan: tenants.Medium, DisplayName: "Demo", CreatedBy: "user:admin@example.org",
+		Name: "demo", Owner: "Alice@Example.org", DisplayName: "Demo", CreatedBy: "user:admin@example.org",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "demo" || got.Owner != "Alice@Example.org" || got.Plan != tenants.Medium || got.CreatedBy != "user:admin@example.org" {
+	if got.Name != "demo" || got.Owner != "Alice@Example.org" || got.DisplayName != "Demo" || got.CreatedBy != "user:admin@example.org" {
 		t.Errorf("unexpected tenant: %+v", got)
 	}
 
@@ -45,21 +45,20 @@ func TestCreateWritesTheObject(t *testing.T) {
 		t.Errorf("wrong object: %s %s in %s", obj.GetAPIVersion(), obj.GetKind(), obj.GetNamespace())
 	}
 	owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner")
-	plan, _, _ := unstructured.NestedString(obj.Object, "spec", "plan")
-	if owner != "Alice@Example.org" || plan != "medium" {
-		t.Errorf("spec: owner %q plan %q", owner, plan)
+	if owner != "Alice@Example.org" {
+		t.Errorf("spec: owner %q", owner)
+	}
+	if _, found, _ := unstructured.NestedString(obj.Object, "spec", "plan"); found {
+		t.Error("a plan was written: the API knows none")
 	}
 }
 
-func TestCreateLeavesThePlanToTheDefaultOfTheXRD(t *testing.T) {
+func TestCreateLeavesOutWhatWasNotAsked(t *testing.T) {
 	s, client := newTenantStore()
 	if _, err := s.Create(t.Context(), tenants.CreateRequest{Name: "demo", Owner: "a@b"}); err != nil {
 		t.Fatal(err)
 	}
 	obj, _ := client.Resource(tenantsGVR).Namespace(TenantNamespace).Get(t.Context(), "demo", metav1.GetOptions{})
-	if _, found, _ := unstructured.NestedString(obj.Object, "spec", "plan"); found {
-		t.Error("a plan was sent although none was asked for: the XRD has a default")
-	}
 	if _, found, _ := unstructured.NestedString(obj.Object, "spec", "displayName"); found {
 		t.Error("an empty display name was sent")
 	}
@@ -105,16 +104,16 @@ func ptr[T any](v T) *T { return &v }
 
 func TestPatchChangesOnlyWhatWasGiven(t *testing.T) {
 	s, client := newTenantStore()
-	if _, err := s.Create(t.Context(), tenants.CreateRequest{Name: "demo", Owner: "a@b", Plan: tenants.Small, DisplayName: "Old"}); err != nil {
+	if _, err := s.Create(t.Context(), tenants.CreateRequest{Name: "demo", Owner: "a@b", DisplayName: "Old"}); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := s.Patch(t.Context(), "demo", tenants.PatchRequest{Plan: ptr(tenants.Large)})
+	got, err := s.Patch(t.Context(), "demo", tenants.PatchRequest{DisplayName: ptr("New")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Plan != tenants.Large || got.DisplayName != "Old" || got.Owner != "a@b" {
-		t.Errorf("after the plan: %+v", got)
+	if got.DisplayName != "New" || got.Owner != "a@b" {
+		t.Errorf("after the rename: %+v", got)
 	}
 
 	if _, err := s.Patch(t.Context(), "demo", tenants.PatchRequest{DisplayName: ptr("")}); err != nil {
@@ -124,8 +123,8 @@ func TestPatchChangesOnlyWhatWasGiven(t *testing.T) {
 	if name, _, _ := unstructured.NestedString(obj.Object, "spec", "displayName"); name != "" {
 		t.Errorf("display name = %q, want it cleared", name)
 	}
-	if plan, _, _ := unstructured.NestedString(obj.Object, "spec", "plan"); plan != "large" {
-		t.Errorf("plan = %q, a patch of the display name changed it", plan)
+	if owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner"); owner != "a@b" {
+		t.Errorf("owner = %q, a patch of the display name changed it", owner)
 	}
 }
 
@@ -246,7 +245,7 @@ func TestTenantOfReadsTheStatus(t *testing.T) {
 			"name": "demo", "namespace": "phorge-system", "creationTimestamp": created.Format(time.RFC3339),
 			"annotations": map[string]any{CreatedByAnnotation: "user:admin@example.org"},
 		},
-		"spec": map[string]any{"owner": "a@b", "plan": "small", "displayName": "Demo"},
+		"spec": map[string]any{"owner": "a@b", "displayName": "Demo"},
 		"status": map[string]any{
 			"namespace": "t-demo", "incusProject": "t-demo", "problems": "Alias 'x' doesn't exist",
 			"conditions": []any{

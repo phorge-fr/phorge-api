@@ -63,11 +63,7 @@ func (s *store) Create(_ context.Context, r tenants.CreateRequest) (tenants.Tena
 		return tenants.Tenant{}, tenants.ErrExists
 	}
 	s.created = append(s.created, r)
-	plan := r.Plan
-	if plan == "" {
-		plan = tenants.Small
-	}
-	t := tenants.Tenant{Name: r.Name, Owner: r.Owner, Plan: plan, DisplayName: r.DisplayName, CreatedBy: r.CreatedBy, CreatedAt: now, NotReadySince: now}
+	t := tenants.Tenant{Name: r.Name, Owner: r.Owner, DisplayName: r.DisplayName, CreatedBy: r.CreatedBy, CreatedAt: now, NotReadySince: now}
 	s.tenants[r.Name] = t
 	return t, nil
 }
@@ -76,9 +72,6 @@ func (s *store) Patch(_ context.Context, name string, r tenants.PatchRequest) (t
 	t, err := s.Get(context.Background(), name)
 	if err != nil {
 		return t, err
-	}
-	if r.Plan != nil {
-		t.Plan = *r.Plan
 	}
 	if r.DisplayName != nil {
 		t.DisplayName = *r.DisplayName
@@ -166,8 +159,8 @@ func newEnvWith(t *testing.T, settings Settings) *env {
 	exchange := &fakeExchange{}
 	incus := newFakeIncus(t)
 	st := &store{tenants: map[string]tenants.Tenant{
-		"demo":  {Name: "demo", Owner: "alice@example.org", Plan: tenants.Large, CreatedAt: now, Ready: true, NotReadySince: now, Namespace: "t-demo", IncusProject: "t-demo"},
-		"other": {Name: "other", Owner: "bob@example.org", Plan: tenants.Large, CreatedAt: now, NotReadySince: now.Add(-time.Hour), Problems: "project Synced: Reached maximum"},
+		"demo":  {Name: "demo", Owner: "alice@example.org", CreatedAt: now, Ready: true, NotReadySince: now, Namespace: "t-demo", IncusProject: "t-demo"},
+		"other": {Name: "other", Owner: "bob@example.org", CreatedAt: now, NotReadySince: now.Add(-time.Hour), Problems: "project Synced: Reached maximum"},
 	}}
 	fga := &checker{
 		grants: map[string]bool{
@@ -360,7 +353,7 @@ func TestListShowsWhatTheCallerMaySee(t *testing.T) {
 
 func TestListIsSortedAndAnEmptyListIsAnArray(t *testing.T) {
 	e := newEnv(t)
-	e.store.tenants["alpha"] = tenants.Tenant{Name: "alpha", Owner: "a@b", Plan: tenants.Small}
+	e.store.tenants["alpha"] = tenants.Tenant{Name: "alpha", Owner: "a@b"}
 	e.fga.objects["user:admin@example.org"] = append(e.fga.objects["user:admin@example.org"], "tenant:alpha")
 	if got := names(t, e.do(t, http.MethodGet, "/v1/tenants", "admin", "")); !slices.Equal(got, []string{"alpha", "demo", "other"}) {
 		t.Errorf("order = %v", got)
@@ -403,7 +396,7 @@ func TestGetShowsThePhase(t *testing.T) {
 	var ready, failed tenantBody
 	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/demo", "admin", ""), &ready)
 	mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/other", "admin", ""), &failed)
-	if ready.Phase != tenants.Ready || ready.Namespace != "t-demo" || ready.Owner != "alice@example.org" || ready.Plan != tenants.Large {
+	if ready.Phase != tenants.Ready || ready.Namespace != "t-demo" || ready.Owner != "alice@example.org" {
 		t.Errorf("ready: %+v", ready)
 	}
 	if failed.Phase != tenants.Failed || failed.Problems != "This tenant has reached one of its limits." {
@@ -416,7 +409,7 @@ func TestGetShowsThePhase(t *testing.T) {
 func TestACrossplaneConditionNeverReachesTheClient(t *testing.T) {
 	e := newEnv(t)
 	e.fga.grants["user:admin@example.org can_read_tenant tenant:broken"] = true
-	e.store.tenants["broken"] = tenants.Tenant{Name: "broken", Owner: "alice@example.org", Plan: tenants.Small, CreatedAt: now, NotReadySince: now.Add(-time.Hour),
+	e.store.tenants["broken"] = tenants.Tenant{Name: "broken", Owner: "alice@example.org", CreatedAt: now, NotReadySince: now.Add(-time.Hour),
 		Problems: "network Ready: not ready | network Synced: create failed: apply failed: Failed to create network \"default\": Failed to load project \"t-broken\": Project not found | " +
 			"owner Ready: not ready | profile LastAsyncOperation: apply failed: Failed to create profile \"phorge\": Project not found | project Ready: not ready"}
 	var got tenantBody
@@ -445,7 +438,7 @@ func TestCreate(t *testing.T) {
 	}
 	var got tenantBody
 	mustDecode(t, rec, &got)
-	if got.Name != "newone" || got.Owner != "alice@example.org" || got.Plan != tenants.Small || got.Phase != tenants.Provisioning {
+	if got.Name != "newone" || got.Owner != "alice@example.org" || got.Phase != tenants.Provisioning {
 		t.Errorf("body: %+v", got)
 	}
 	if len(e.store.created) != 1 || e.store.created[0].CreatedBy != "user:alice@example.org" {
@@ -490,7 +483,7 @@ func TestCreateRefusesABadRequest(t *testing.T) {
 		{"a name that is not a slug", "application/json", `{"name":"Demo!"}`, http.StatusUnprocessableEntity},
 		{"no name", "application/json", `{}`, http.StatusUnprocessableEntity},
 		{"an owner that is somebody else", "application/json", `{"name":"newone","owner":"*"}`, http.StatusForbidden},
-		{"a plan that is not small", "application/json", `{"name":"newone","plan":"huge"}`, http.StatusForbidden},
+		{"a plan, there is none", "application/json", `{"name":"newone","plan":"small"}`, http.StatusBadRequest},
 		{"a name that exists", "application/json", `{"name":"demo"}`, http.StatusConflict},
 		{"not JSON", "application/json", `name=newone`, http.StatusBadRequest},
 		{"a field that does not exist", "application/json", `{"name":"newone","admin":true}`, http.StatusBadRequest},
@@ -521,7 +514,7 @@ func TestPatch(t *testing.T) {
 	}
 	var got tenantBody
 	mustDecode(t, rec, &got)
-	if got.Plan != tenants.Large || got.DisplayName != "Production" || got.Owner != "alice@example.org" {
+	if got.DisplayName != "Production" || got.Owner != "alice@example.org" {
 		t.Errorf("body: %+v", got)
 	}
 
@@ -529,15 +522,15 @@ func TestPatch(t *testing.T) {
 		token, path, body string
 		want              int
 	}{
-		"the owner cannot be changed":             {"admin", "/v1/tenants/demo", `{"owner":"mallory@example.org"}`, http.StatusBadRequest},
-		"nor the name":                            {"admin", "/v1/tenants/demo", `{"name":"x"}`, http.StatusBadRequest},
-		"an empty patch":                          {"admin", "/v1/tenants/demo", `{}`, http.StatusUnprocessableEntity},
-		"the plan is not changed through the API": {"admin", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusForbidden},
-		"a tenant that does not exist":            {"admin", "/v1/tenants/ghost", `{"displayName":"x"}`, http.StatusNotFound},
-		"a member who sees the tenant":            {"viewer", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
-		"a stranger does not see it":              {"mallory", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusNotFound},
-		"a key without the scope":                 {"svc", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
-		"nobody":                                  {"", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusUnauthorized},
+		"the owner cannot be changed":  {"admin", "/v1/tenants/demo", `{"owner":"mallory@example.org"}`, http.StatusBadRequest},
+		"nor the name":                 {"admin", "/v1/tenants/demo", `{"name":"x"}`, http.StatusBadRequest},
+		"an empty patch":               {"admin", "/v1/tenants/demo", `{}`, http.StatusUnprocessableEntity},
+		"a plan, there is none":        {"admin", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusBadRequest},
+		"a tenant that does not exist": {"admin", "/v1/tenants/ghost", `{"displayName":"x"}`, http.StatusNotFound},
+		"a member who sees the tenant": {"viewer", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
+		"a stranger does not see it":   {"mallory", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusNotFound},
+		"a key without the scope":      {"svc", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
+		"nobody":                       {"", "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusUnauthorized},
 	} {
 		before := len(e.store.patched)
 		if rec := e.do(t, http.MethodPatch, tt.path, tt.token, tt.body); rec.Code != tt.want {
@@ -627,7 +620,7 @@ func TestAServiceKeyDoesWhatOpenFGAHoldsForIt(t *testing.T) {
 		{"does not see another tenant", http.MethodGet, "/v1/tenants/other", "", http.StatusNotFound},
 		{"is refused what it has no tuple for", http.MethodGet, "/v1/tenants/demo/images", "", http.StatusForbidden},
 		{"lists the tenants it can read", http.MethodGet, "/v1/tenants", "", http.StatusOK},
-		{"cannot create a tenant", http.MethodPost, "/v1/tenants", `{"name":"newone","plan":"small"}`, http.StatusForbidden},
+		{"cannot create a tenant", http.MethodPost, "/v1/tenants", `{"name":"newone"}`, http.StatusForbidden},
 		{"cannot change a tenant", http.MethodPatch, "/v1/tenants/demo", `{"displayName":"x"}`, http.StatusForbidden},
 		{"cannot create a key", http.MethodPost, "/v1/apikeys", `{"displayName":"x","expiresAt":"2026-12-31T00:00:00Z","grants":[{"tenant":"demo","scopes":["tenants:read"]}]}`, http.StatusForbidden},
 	} {

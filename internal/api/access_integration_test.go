@@ -104,7 +104,7 @@ func TestMembershipsOnTheRealCluster(t *testing.T) {
 		{"POST", base + "/instances", `{"name":"web","image":"nope"}`, http.StatusForbidden},
 		{"POST", base + "/images", `{"name":"x","source":{"name":"alpine/3.22"}}`, http.StatusForbidden},
 		{"GET", base + "/memberships", "", http.StatusForbidden},
-		{"PATCH", base, `{"plan":"large"}`, http.StatusForbidden},
+		{"PATCH", base, `{"displayName":"x"}`, http.StatusForbidden},
 		{"DELETE", base, "", http.StatusForbidden},
 	} {
 		if code := call(t, e, c.method, c.path, "bob", c.body); code != c.want {

@@ -198,7 +198,7 @@ func (i *instanceRoutes) create(w http.ResponseWriter, r *http.Request) {
 	req.Networks, req.Network = nws, ""
 	// The limits of the tenant hold the count and the total of CPU, memory and disk: say which before asking Incus, who would leave an instance
 	// that never becomes ready. The profiles the users made are read for it, an instance counts what its profile comes to.
-	_, used, made, ok := holdings(w, r, &i.base, i.store, i.networks, i.profiles, tenant)
+	used, made, ok := holdings(w, r, &i.base, i.store, i.networks, i.profiles, tenant)
 	if !ok {
 		return
 	}

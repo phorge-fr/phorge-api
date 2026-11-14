@@ -90,7 +90,7 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 		return got.Phase == tenants.Ready
 	})
 	t.Logf("ready after %s: namespace %s, project %s", time.Since(started).Round(time.Second), got.Namespace, got.IncusProject)
-	if got.Namespace != "t-"+name || got.IncusProject != "t-"+name || got.Plan != tenants.Small || got.Owner != ownerEmail {
+	if got.Namespace != "t-"+name || got.IncusProject != "t-"+name || got.Owner != ownerEmail {
 		t.Errorf("unexpected tenant: %+v", got)
 	}
 
@@ -101,8 +101,8 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	if code := e.do(t, http.MethodGet, "/v1/tenants/"+name, "stranger", "").Code; code != http.StatusNotFound {
 		t.Errorf("a stranger gets %d, want 404", code)
 	}
-	if code := e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"plan":"large"}`).Code; code != http.StatusForbidden {
-		t.Errorf("the owner changing the plan gets %d, want 403: it is changed where the platform is run", code)
+	if code := e.do(t, http.MethodPatch, "/v1/tenants/"+name, "owner", `{"plan":"large"}`).Code; code != http.StatusBadRequest {
+		t.Errorf("the owner giving a plan gets %d, want 400: there is no plan", code)
 	}
 	if listed := names(t, e.do(t, http.MethodGet, "/v1/tenants", "owner", "")); !slices.Equal(listed, []string{name}) {
 		t.Errorf("the owner sees %v, want only %s", listed, name)
@@ -115,7 +115,7 @@ func TestTenantLifecycleOnTheRealCluster(t *testing.T) {
 	}
 	waitFor(t, 3*time.Minute, "the renamed tenant to be Ready again", func() bool {
 		mustDecode(t, e.do(t, http.MethodGet, "/v1/tenants/"+name, "owner", ""), &got)
-		return got.Plan == tenants.Small && got.DisplayName == "resized" && got.Phase == tenants.Ready
+		return got.DisplayName == "resized" && got.Phase == tenants.Ready
 	})
 
 	// Delete, in the foreground: it is Deleting until everything is gone, and then it is not found.

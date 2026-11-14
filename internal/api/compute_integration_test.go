@@ -148,7 +148,7 @@ func TestImageAndInstanceOnTheRealCluster(t *testing.T) {
 		})
 	}
 
-	// The plan small allows one VM: Incus refuses the second, and says so in problems.
+	// Incus refuses the instance that passes a limit of the tenant, and says so in problems.
 	if code := call(t, e, "POST", base+"/instances", "owner", `{"name":"second","image":"debian"}`); code != http.StatusAccepted {
 		t.Fatalf("create the second instance: %d", code)
 	}

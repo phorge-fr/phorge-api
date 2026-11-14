@@ -148,7 +148,7 @@ func (n *networkRoutes) create(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant := r.PathValue("t")
 	// The tenant is limited in how many: say it before asking, with a code, instead of leaving a network that never becomes ready.
-	_, used, _, ok := holdings(w, r, &n.base, n.instances, n.store, n.profiles, tenant)
+	used, _, ok := holdings(w, r, &n.base, n.instances, n.store, n.profiles, tenant)
 	if !ok {
 		return
 	}
