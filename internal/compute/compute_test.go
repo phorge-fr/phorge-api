@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -451,6 +452,66 @@ func TestAProfileTakesTheSSHKeysOfAnInstance(t *testing.T) {
 		r.SSHPublicKeys = keys
 		if err := r.Validate(); err == nil {
 			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// An absent field is left alone, a null removes the setting, a value sets it: a plain pointer cannot tell the first two apart.
+func TestPatchProfileTellsAbsentFromNull(t *testing.T) {
+	for name, tt := range map[string]struct {
+		body             string
+		present, hasData bool
+		value            bool
+	}{
+		"absent": {`{"cpu":2}`, false, false, false},
+		"null":   {`{"secureBoot":null}`, true, false, false},
+		"false":  {`{"secureBoot":false}`, true, true, false},
+		"true":   {`{"secureBoot":true}`, true, true, true},
+	} {
+		var got PatchProfile
+		if err := json.Unmarshal([]byte(tt.body), &got); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.SecureBoot.Present != tt.present || (got.SecureBoot.Value != nil) != tt.hasData || (tt.hasData && *got.SecureBoot.Value != tt.value) {
+			t.Errorf("%s: %+v", name, got.SecureBoot)
+		}
+	}
+	var got PatchProfile
+	if err := json.Unmarshal([]byte(`{"secureBoot":"yes"}`), &got); err == nil {
+		t.Error("a secure boot that is not a boolean was accepted")
+	}
+}
+
+func TestPatchProfileValidate(t *testing.T) {
+	for name, ok := range map[string]PatchProfile{
+		"a cpu":                  {CPU: ptr(2)},
+		"a description":          {Description: ptr("web")},
+		"an emptied description": {Description: ptr("")},
+		"a secure boot":          {SecureBoot: Setting[bool]{Present: true, Value: ptr(false)}},
+		"a secure boot removed":  {SecureBoot: Setting[bool]{Present: true}},
+		"no keys":                {SSHPublicKeys: &[]string{}},
+		"a key":                  {SSHPublicKeys: &[]string{goodKey}},
+		"the bounds, low":        {CPU: ptr(MinCPU), MemoryMiB: ptr(MinMemory), DiskGiB: ptr(MinDisk)},
+		"the bounds, high":       {CPU: ptr(MaxCPU), MemoryMiB: ptr(MaxMemory), DiskGiB: ptr(MaxDisk)},
+	} {
+		if err := ok.Validate(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for name, bad := range map[string]PatchProfile{
+		"nothing":                {},
+		"a cpu of 0":             {CPU: ptr(0)},
+		"a cpu too high":         {CPU: ptr(MaxCPU + 1)},
+		"a memory too low":       {MemoryMiB: ptr(MinMemory - 1)},
+		"a memory too high":      {MemoryMiB: ptr(MaxMemory + 1)},
+		"a disk of 0":            {DiskGiB: ptr(0)},
+		"a disk too high":        {DiskGiB: ptr(MaxDisk + 1)},
+		"a description too long": {Description: ptr(strings.Repeat("a", MaxProfileDescription+1))},
+		"a bad key":              {SSHPublicKeys: &[]string{"ssh-ed25519\nruncmd"}},
+	} {
+		var invalid *InvalidError
+		if err := bad.Validate(); !errors.As(err, &invalid) {
+			t.Errorf("%s was accepted: %v", name, err)
 		}
 	}
 }

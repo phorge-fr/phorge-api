@@ -2,11 +2,13 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/phorge-fr/phorge-api/internal/compute"
 )
@@ -81,6 +83,59 @@ func (s *Profiles) Create(ctx context.Context, tenant string, req compute.Create
 		return compute.Profile{}, mapError(err)
 	}
 	return profileOf(obj), nil
+}
+
+// Patch is a JSON merge patch of the fields that were given. A description that is emptied, a secure boot that is set to null and an
+// empty list of keys are removed from the object, which is then as if it had never said them: the composition writes nothing for them.
+func (s *Profiles) Patch(ctx context.Context, tenant, name string, req compute.PatchProfile) (compute.Profile, error) {
+	r, err := namespaced(s.conn, profilesGVR, tenant)
+	if err != nil {
+		return compute.Profile{}, err
+	}
+	spec := map[string]any{}
+	if req.Description != nil {
+		spec["description"] = nilIfEmpty(*req.Description)
+	}
+	if req.CPU != nil {
+		spec["cpu"] = int64(*req.CPU)
+	}
+	if req.MemoryMiB != nil {
+		spec["memoryMiB"] = int64(*req.MemoryMiB)
+	}
+	if req.DiskGiB != nil {
+		spec["diskGiB"] = int64(*req.DiskGiB)
+	}
+	if req.SecureBoot.Present {
+		if req.SecureBoot.Value != nil {
+			spec["secureBoot"] = *req.SecureBoot.Value
+		} else {
+			spec["secureBoot"] = nil
+		}
+	}
+	if req.SSHPublicKeys != nil {
+		if len(*req.SSHPublicKeys) > 0 {
+			spec["sshPublicKeys"] = toAny(*req.SSHPublicKeys)
+		} else {
+			spec["sshPublicKeys"] = nil
+		}
+	}
+	patch, err := json.Marshal(map[string]any{"spec": spec})
+	if err != nil {
+		return compute.Profile{}, err
+	}
+	obj, err := r.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
+	if err != nil {
+		return compute.Profile{}, mapError(err)
+	}
+	return profileOf(obj), nil
+}
+
+// nilIfEmpty is the value of a field of a merge patch that an empty string removes.
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 // Delete deletes a profile in the foreground. A profile that an instance has is refused by an admission webhook of Crossplane

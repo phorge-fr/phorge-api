@@ -667,6 +667,58 @@ paths:
                     $ref: "#/components/responses/NotFound"
                 "503":
                     $ref: "#/components/responses/Unavailable"
+        patch:
+            tags:
+                - Profiles
+            operationId: updateProfile
+            summary: Change a profile
+            description: |
+                Changes a profile a user made, in place: what the body leaves out is left alone, and `s`, `m` and `l` are not changed
+                (`403`). The instances that have the profile follow, except the ones that say their own value. Same checks as the creation.
+                `description` set to `""` goes back to the one made from the size, `secureBoot` set to `null` removes the setting, and
+                `sshPublicKeys` set to `[]` removes the keys.
+
+                Incus applies a higher memory to a running VM at once, a higher disk once the VM has it, and a CPU that the guest sees after
+                a restart. A change never starts, stops or restarts an instance. What cannot be done in place is refused with `409`, and
+                the sentence says what to do:
+
+                - **a smaller disk**, while an instance has the profile (code `in_use`, naming the instances): a disk cannot be made
+                  smaller. Make another profile with the disk you want and create the instances again with it.
+                - **less memory**, while an instance that has the profile is running (code `running`): as for an instance, stop it, change
+                  the profile, then start it again.
+                - **a size that takes the tenant over a limit** (code `quota_exceeded`): every instance that has the profile counts what
+                  it comes to, so a bigger profile is a bigger tenant.
+            security:
+                - bearerAuth: []
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: "#/components/schemas/ProfilePatch"
+            responses:
+                "200":
+                    description: The profile, as it is now. Crossplane updates the Incus profile a moment later.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Profile"
+                "400":
+                    $ref: "#/components/responses/BadRequest"
+                "401":
+                    $ref: "#/components/responses/Unauthenticated"
+                "403":
+                    $ref: "#/components/responses/Forbidden"
+                "404":
+                    $ref: "#/components/responses/NotFound"
+                "409":
+                    $ref: "#/components/responses/Conflict"
+                "422":
+                    $ref: "#/components/responses/Invalid"
+                "429":
+                    $ref: "#/components/responses/TooManyRequests"
+                "503":
+                    $ref: "#/components/responses/Unavailable"
         delete:
             tags:
                 - Profiles
@@ -1608,6 +1660,38 @@ components:
                         be a `cloud` variant. The same keys as an instance's: each is one line, its type (`ssh-ed25519`, `ssh-rsa`,
                         `ecdsa-sha2-nistp256`/`384`/`521`, `sk-ssh-ed25519@openssh.com`, `sk-ecdsa-sha2-nistp256@openssh.com`), the key in
                         base64 and, at most, a comment of one word made of letters, digits and `@._+=/-`. Nothing else is accepted.
+                    items:
+                        type: string
+        ProfilePatch:
+            type: object
+            additionalProperties: false
+            minProperties: 1
+            description: What changes on a profile. What is absent is left alone. The name cannot change.
+            properties:
+                description:
+                    type: string
+                    maxLength: 200
+                    description: An empty string goes back to the description made from the size.
+                cpu:
+                    type: integer
+                    minimum: 1
+                    maximum: 16
+                memoryMiB:
+                    type: integer
+                    minimum: 256
+                    maximum: 65536
+                diskGiB:
+                    type: integer
+                    minimum: 1
+                    maximum: 500
+                secureBoot:
+                    type: boolean
+                    nullable: true
+                    description: '`null` removes the setting: the instances that have the profile then take the default.'
+                sshPublicKeys:
+                    type: array
+                    maxItems: 20
+                    description: The keys of the creation, checked the same way. `[]` removes them, which is the same as none.
                     items:
                         type: string
         ProfileList:

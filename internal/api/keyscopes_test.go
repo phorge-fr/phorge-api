@@ -25,6 +25,7 @@ func TestAKeyWithTheScopesOfTheNetworksTheProfilesAndTheTenantPassesTheirRoutes(
 		// the profiles
 		{"GET", "/v1/tenants/demo/profiles", "", http.StatusOK},
 		{"POST", "/v1/tenants/demo/profiles", `{"name":"api","cpu":1,"memoryMiB":1024,"diskGiB":10}`, http.StatusAccepted},
+		{"PATCH", "/v1/tenants/demo/profiles/api", `{"cpu":2}`, http.StatusOK},
 		{"DELETE", "/v1/tenants/demo/profiles/api", "", http.StatusAccepted},
 		// what the scopes do not give
 		{"GET", "/v1/tenants/demo/instances", "", http.StatusForbidden},

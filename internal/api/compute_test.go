@@ -182,6 +182,7 @@ type profileStore struct {
 	data    map[string]map[string]compute.Profile
 	err     error
 	created []compute.CreateProfile
+	patched []compute.PatchProfile
 	deleted []string
 }
 
@@ -217,6 +218,35 @@ func (s *profileStore) Create(_ context.Context, tenant string, r compute.Create
 	s.created = append(s.created, r)
 	p := compute.Profile{Name: r.Name, Description: r.Description, CPU: *r.CPU, MemoryMiB: *r.MemoryMiB, DiskGiB: *r.DiskGiB, SecureBoot: r.SecureBoot, SSHPublicKeys: r.SSHPublicKeys,
 		CreatedBy: r.CreatedBy, CreatedAt: now, Status: status.Object{NotReadySince: now}}
+	s.put(tenant, p)
+	return p, nil
+}
+
+// Patch applies what the patch gives, as the merge patch of the real store does.
+func (s *profileStore) Patch(_ context.Context, tenant, name string, r compute.PatchProfile) (compute.Profile, error) {
+	p, err := s.Get(context.Background(), tenant, name)
+	if err != nil {
+		return p, err
+	}
+	s.patched = append(s.patched, r)
+	if r.Description != nil {
+		p.Description = *r.Description
+	}
+	if r.CPU != nil {
+		p.CPU = *r.CPU
+	}
+	if r.MemoryMiB != nil {
+		p.MemoryMiB = *r.MemoryMiB
+	}
+	if r.DiskGiB != nil {
+		p.DiskGiB = *r.DiskGiB
+	}
+	if r.SecureBoot.Present {
+		p.SecureBoot = r.SecureBoot.Value
+	}
+	if r.SSHPublicKeys != nil {
+		p.SSHPublicKeys = *r.SSHPublicKeys
+	}
 	s.put(tenant, p)
 	return p, nil
 }

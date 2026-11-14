@@ -82,7 +82,7 @@ var scopeDescriptions = map[string]string{
 	"networks:read":     "See the networks",
 	"networks:write":    "Deploy and delete networks",
 	"profiles:read":     "See the profiles",
-	"profiles:write":    "Make and delete profiles",
+	"profiles:write":    "Make, change and delete profiles",
 	"memberships:read":  "See who has a role on the tenant",
 	"memberships:write": "Give and take away roles on the tenant",
 }

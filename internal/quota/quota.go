@@ -87,6 +87,43 @@ func CheckInstance(used Used, cpu, memMiB, diskGiB int) *Error {
 	return nil
 }
 
+// CheckProfileSize returns an *Error when giving the profile called name the size cpu, memMiB, diskGiB would take the tenant over a
+// limit: every instance that has the profile counts what the profile comes to, so a bigger profile is a bigger tenant. Only what the
+// change raises is checked: a tenant that holds more than it may (an instance made before a limit was lowered) can still shrink a
+// profile. The count of instances does not change.
+func CheckProfileSize(instances []compute.Instance, user []compute.Profile, name string, cpu, memMiB, diskGiB int) *Error {
+	var have compute.Profile
+	var users int
+	for _, p := range user {
+		if p.Name == name {
+			have = p
+		}
+	}
+	for _, in := range instances {
+		if in.Profile == name {
+			users++
+		}
+	}
+	if users == 0 {
+		return nil
+	}
+	used := UsedBy(instances, nil, user)
+	l := PerTenant
+	which := fmt.Sprintf("the %s with this profile count what it comes to", plural(users, "instance", "instances"))
+	if users == 1 {
+		which = "the instance with this profile counts what it comes to"
+	}
+	switch {
+	case cpu > have.CPU && used.VCPU+users*(cpu-have.CPU) > l.VCPU:
+		return &Error{"vcpu", fmt.Sprintf("this profile would bring the tenant to %d vCPU out of %d allowed: %s", used.VCPU+users*(cpu-have.CPU), l.VCPU, which)}
+	case memMiB > have.MemoryMiB && used.MemoryMiB+users*(memMiB-have.MemoryMiB) > l.MemoryMiB:
+		return &Error{"memoryMiB", fmt.Sprintf("this profile would bring the tenant to %s of memory out of %s allowed: %s", gib(used.MemoryMiB+users*(memMiB-have.MemoryMiB)), gib(l.MemoryMiB), which)}
+	case diskGiB > have.DiskGiB && used.DiskGiB+users*(diskGiB-have.DiskGiB) > l.DiskGiB:
+		return &Error{"diskGiB", fmt.Sprintf("this profile would bring the tenant to %d GiB of disk out of %d GiB allowed: %s", used.DiskGiB+users*(diskGiB-have.DiskGiB), l.DiskGiB, which)}
+	}
+	return nil
+}
+
 // CheckNetwork returns an *Error when one more network would pass the limit of the tenant.
 func CheckNetwork(used Used) *Error {
 	if l := PerTenant; used.Networks+1 > l.Networks {
