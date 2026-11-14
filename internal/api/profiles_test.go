@@ -185,17 +185,17 @@ func TestProfilesWhoMayDoWhat(t *testing.T) {
 	const coll, item = "/v1/tenants/demo/profiles", "/v1/tenants/demo/profiles/web"
 	create := `{"name":"new","cpu":1,"memoryMiB":1024,"diskGiB":10}`
 	tests := []struct {
-		who                       string
-		list, get, create, delete int
+		who                              string
+		list, get, create, patch, delete int
 	}{
-		{"viewer", 200, 200, 403, 403},
-		{"user", 200, 200, 403, 403},
-		{"operator", 200, 200, 202, 202},
-		{"admin", 200, 200, 202, 202},
-		{"svc", 403, 403, 403, 403},
-		{"svc_mgr", 403, 403, 403, 403},
-		{"mallory", 404, 404, 404, 404},
-		{"", 401, 401, 401, 401},
+		{"viewer", 200, 200, 403, 403, 403},
+		{"user", 200, 200, 403, 403, 403},
+		{"operator", 200, 200, 202, 200, 202},
+		{"admin", 200, 200, 202, 200, 202},
+		{"svc", 403, 403, 403, 403, 403},
+		{"svc_mgr", 403, 403, 403, 403, 403},
+		{"mallory", 404, 404, 404, 404, 404},
+		{"", 401, 401, 401, 401, 401},
 	}
 	for _, tt := range tests {
 		t.Run(tt.who, func(t *testing.T) {
@@ -205,7 +205,8 @@ func TestProfilesWhoMayDoWhat(t *testing.T) {
 				method, path, body string
 				want               int
 			}{
-				{"GET", coll, "", tt.list}, {"GET", item, "", tt.get}, {"POST", coll, create, tt.create}, {"DELETE", item, "", tt.delete},
+				{"GET", coll, "", tt.list}, {"GET", item, "", tt.get}, {"POST", coll, create, tt.create},
+				{"PATCH", item, `{"cpu":2}`, tt.patch}, {"DELETE", item, "", tt.delete},
 			} {
 				if got := call(t, e, c.method, c.path, tt.who, c.body); got != c.want {
 					t.Errorf("%s %s: status %d, want %d", c.method, c.path, got, c.want)
@@ -523,5 +524,196 @@ func TestAnInstanceMovesToAProfileTheUserMade(t *testing.T) {
 	}
 	if p := e.instances.patched[0]; p.Profile == nil || *p.Profile != "web" {
 		t.Errorf("patch = %+v", p)
+	}
+}
+
+func patchProfile(t *testing.T, e *env, who, name, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return e.do(t, "PATCH", "/v1/tenants/demo/profiles/"+name, who, body)
+}
+
+func TestPatchAProfileChangesOnlyWhatIsGiven(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	rec := patchProfile(t, e, "operator", "web", `{"cpu":2,"description":"for the web servers"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var body profileBody
+	mustDecode(t, rec, &body)
+	if body.CPU != 2 || body.MemoryMiB != 1024 || body.DiskGiB != 10 || body.Description != "for the web servers" {
+		t.Errorf("body = %+v: the cpu and the description changed, the rest did not", body)
+	}
+	if len(e.profiles.patched) != 1 || e.profiles.patched[0].MemoryMiB != nil || e.profiles.patched[0].DiskGiB != nil {
+		t.Errorf("what reached the store: %+v", e.profiles.patched)
+	}
+}
+
+func TestPatchTheSettingsOfAProfile(t *testing.T) {
+	e := newEnv(t)
+	p := madeProfile("web", 1, 1024, 10)
+	on := true
+	p.SecureBoot, p.SSHPublicKeys = &on, []string{sshKey}
+	e.profiles.put("demo", p)
+
+	// false is a value, null removes the setting, absent leaves it
+	if rec := patchProfile(t, e, "operator", "web", `{"secureBoot":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("secure boot false: %d %s", rec.Code, rec.Body)
+	}
+	got, _ := e.profiles.Get(t.Context(), "demo", "web")
+	if got.SecureBoot == nil || *got.SecureBoot || len(got.SSHPublicKeys) != 1 {
+		t.Errorf("false: secure boot %v, %d keys", got.SecureBoot, len(got.SSHPublicKeys))
+	}
+	if rec := patchProfile(t, e, "operator", "web", `{"secureBoot":null,"sshPublicKeys":[]}`); rec.Code != http.StatusOK {
+		t.Fatalf("null and []: %d %s", rec.Code, rec.Body)
+	}
+	got, _ = e.profiles.Get(t.Context(), "demo", "web")
+	if got.SecureBoot != nil || len(got.SSHPublicKeys) != 0 {
+		t.Errorf("null and []: secure boot %v, keys %v: both removed", got.SecureBoot, got.SSHPublicKeys)
+	}
+	var body profileBody
+	mustDecode(t, e.do(t, "GET", "/v1/tenants/demo/profiles/web", "viewer", ""), &body)
+	if body.SecureBoot != nil || body.SSHPublicKeys != nil {
+		t.Errorf("the body shows what was removed: %+v", body)
+	}
+	if rec := patchProfile(t, e, "operator", "web", `{"sshPublicKeys":["`+sshKey+` leo@laptop"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("a key: %d %s", rec.Code, rec.Body)
+	}
+	got, _ = e.profiles.Get(t.Context(), "demo", "web")
+	if len(got.SSHPublicKeys) != 1 || got.SecureBoot != nil {
+		t.Errorf("a key: %v, secure boot %v left alone", got.SSHPublicKeys, got.SecureBoot)
+	}
+}
+
+func TestPatchAProfileRefusesWhatCannotBePatched(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	for name, tt := range map[string]struct {
+		profile, body string
+		want          int
+		say           string
+	}{
+		"a profile every tenant has":  {"m", `{"cpu":4}`, http.StatusForbidden, "every tenant has"},
+		"default":                     {"default", `{"cpu":4}`, http.StatusForbidden, "every tenant has"},
+		"a profile that is not there": {"ghost", `{"cpu":4}`, http.StatusNotFound, ""},
+		"a name that is not a name":   {"Web!", `{"cpu":4}`, http.StatusNotFound, ""},
+		"nothing":                     {"web", `{}`, http.StatusUnprocessableEntity, "nothing to change"},
+		"a cpu too high":              {"web", `{"cpu":17}`, http.StatusUnprocessableEntity, "cpu"},
+		"a memory too low":            {"web", `{"memoryMiB":10}`, http.StatusUnprocessableEntity, "memoryMiB"},
+		"a disk of 0":                 {"web", `{"diskGiB":0}`, http.StatusUnprocessableEntity, "diskGiB"},
+		"a bad key":                   {"web", `{"sshPublicKeys":["ssh-ed25519\nruncmd"]}`, http.StatusUnprocessableEntity, "key"},
+		"the name":                    {"web", `{"name":"other"}`, http.StatusBadRequest, ""},
+		"a network":                   {"web", `{"network":"net"}`, http.StatusBadRequest, ""},
+		"nesting":                     {"web", `{"nesting":true}`, http.StatusBadRequest, ""},
+		"a secure boot that is text":  {"web", `{"secureBoot":"yes"}`, http.StatusBadRequest, ""},
+		"not JSON":                    {"web", `cpu=2`, http.StatusBadRequest, ""},
+	} {
+		rec := patchProfile(t, e, "operator", tt.profile, tt.body)
+		if rec.Code != tt.want || !strings.Contains(rec.Body.String(), tt.say) {
+			t.Errorf("%s: status %d, want %d, saying %q: %s", name, rec.Code, tt.want, tt.say, rec.Body)
+		}
+	}
+	if len(e.profiles.patched) != 0 {
+		t.Errorf("something reached the store: %+v", e.profiles.patched)
+	}
+	if code := call(t, e, "PATCH", "/v1/tenants/ghost/profiles/web", "admin", `{"cpu":2}`); code != http.StatusNotFound {
+		t.Errorf("a tenant that does not exist: %d", code)
+	}
+}
+
+// Incus saves a smaller disk on the profile and the VM keeps its own ("Block volumes cannot be shrunk"): the two would differ.
+func TestAProfileThatInstancesHaveCannotGetASmallerDisk(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 20))
+	e.instances.put("demo", compute.Instance{Name: "b", Profile: "web", State: "Stopped"})
+	e.instances.put("demo", compute.Instance{Name: "a", Profile: "web", State: "Running"})
+	e.instances.put("demo", compute.Instance{Name: "c", Profile: "s", State: "Running"})
+
+	rec := patchProfile(t, e, "operator", "web", `{"diskGiB":10}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"in_use"`) || !strings.Contains(rec.Body.String(), "the instances a, b have this profile") ||
+		!strings.Contains(rec.Body.String(), "Make another profile") || strings.Contains(rec.Body.String(), ", c") {
+		t.Errorf("status %d: %s: the refusal names the instances that have it, stopped ones too, and says what to do", rec.Code, rec.Body)
+	}
+	if len(e.profiles.patched) != 0 {
+		t.Errorf("a smaller disk reached the store: %+v", e.profiles.patched)
+	}
+	// the same disk, or a bigger one, is fine
+	for _, body := range []string{`{"diskGiB":20}`, `{"diskGiB":21}`} {
+		if code := call(t, e, "PATCH", "/v1/tenants/demo/profiles/web", "operator", body); code != http.StatusOK {
+			t.Errorf("%s: status %d", body, code)
+		}
+	}
+	// nobody has this profile: nothing holds its disk
+	e.profiles.put("demo", madeProfile("free", 1, 1024, 20))
+	if code := call(t, e, "PATCH", "/v1/tenants/demo/profiles/free", "operator", `{"diskGiB":5}`); code != http.StatusOK {
+		t.Errorf("a profile nobody has: status %d", code)
+	}
+}
+
+// As for an instance, never stopping it: the API says what to do.
+func TestAProfileThatARunningInstanceHasCanOnlyGetMoreMemory(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 2, 1024, 10))
+	e.instances.put("demo", compute.Instance{Name: "a", Profile: "web", State: "Running"})
+	e.instances.put("demo", compute.Instance{Name: "b", Profile: "web", State: "Stopped"})
+
+	rec := patchProfile(t, e, "operator", "web", `{"memoryMiB":512}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"running"`) || !strings.Contains(rec.Body.String(), "stop the instance a,") ||
+		strings.Contains(rec.Body.String(), "the instances") || !strings.Contains(rec.Body.String(), "start it again") {
+		t.Errorf("status %d: %s: only the running instance is named", rec.Code, rec.Body)
+	}
+	if len(e.profiles.patched) != 0 {
+		t.Errorf("less memory reached the store: %+v", e.profiles.patched)
+	}
+	// the same memory, more of it (two instances of 2 GiB are the 4 GiB of the tenant) and a smaller cpu are fine
+	for _, body := range []string{`{"memoryMiB":1024}`, `{"memoryMiB":2048}`, `{"cpu":1}`} {
+		if code := call(t, e, "PATCH", "/v1/tenants/demo/profiles/web", "operator", body); code != http.StatusOK {
+			t.Errorf("%s: status %d", body, code)
+		}
+	}
+	// no instance runs: the memory may go down, and a smaller CPU is fine while one runs
+	e.instances.put("demo", compute.Instance{Name: "a", Profile: "web", State: "Stopped"})
+	if code := call(t, e, "PATCH", "/v1/tenants/demo/profiles/web", "operator", `{"memoryMiB":1024}`); code != http.StatusOK {
+		t.Errorf("less memory, every instance stopped: status %d", code)
+	}
+}
+
+// Every instance that has a profile counts what it comes to, and Incus refuses a profile that passes a limit of the project and leaves the
+// Profile in error: so the tenant's limits (2 vCPU, 4 GiB, 128 GiB) are checked first.
+func TestABiggerProfileCannotTakeTheTenantOverItsLimits(t *testing.T) {
+	e := newEnv(t)
+	e.profiles.put("demo", madeProfile("web", 1, 1024, 10))
+	e.instances.put("demo", compute.Instance{Name: "a", Profile: "web", State: "Running"})
+	e.instances.put("demo", compute.Instance{Name: "b", Profile: "web", State: "Running"})
+
+	for name, tt := range map[string]struct{ body, say string }{
+		"the vCPU":   {`{"cpu":2}`, "4 vCPU out of 2 allowed"},
+		"the memory": {`{"memoryMiB":2049}`, "4098 MiB of memory out of 4 GiB allowed"},
+		"the disk":   {`{"diskGiB":65}`, "130 GiB of disk out of 128 GiB allowed"},
+	} {
+		rec := patchProfile(t, e, "operator", "web", tt.body)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"quota_exceeded"`) || !strings.Contains(rec.Body.String(), tt.say) ||
+			!strings.Contains(rec.Body.String(), "the instances with this profile count what it comes to") {
+			t.Errorf("%s: status %d: %s", name, rec.Code, rec.Body)
+		}
+	}
+	if len(e.profiles.patched) != 0 {
+		t.Errorf("a profile over the limits reached the store: %+v", e.profiles.patched)
+	}
+	// up to the limits is fine: 2 x 1 vCPU, 2 x 2 GiB, 2 x 64 GiB
+	if code := call(t, e, "PATCH", "/v1/tenants/demo/profiles/web", "operator", `{"cpu":1,"memoryMiB":2048,"diskGiB":64}`); code != http.StatusOK {
+		t.Errorf("up to the limits: status %d", code)
+	}
+	// with one instance, the sentence says it in the singular; an instance that has another profile does not count for this one
+	one := newEnv(t)
+	one.profiles.put("demo", madeProfile("big", 1, 1024, 10))
+	one.instances.put("demo", compute.Instance{Name: "c", Profile: "big", State: "Running"})
+	one.instances.put("demo", compute.Instance{Name: "d", Profile: "s", State: "Stopped"})
+	if code := call(t, one, "PATCH", "/v1/tenants/demo/profiles/big", "operator", `{"cpu":1}`); code != http.StatusOK {
+		t.Errorf("the same cpu: status %d", code)
+	}
+	rec := patchProfile(t, one, "operator", "big", `{"cpu":2}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "3 vCPU out of 2 allowed") || !strings.Contains(rec.Body.String(), "the instance with this profile counts") {
+		t.Errorf("one instance: status %d: %s", rec.Code, rec.Body)
 	}
 }

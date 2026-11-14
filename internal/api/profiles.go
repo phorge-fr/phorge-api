@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
@@ -30,6 +31,7 @@ func (p *profileRoutes) register(s *server.Server, authn func(http.Handler) http
 	s.Handle("GET "+collection, authn(p.guard(authz.ReadProfiles, http.HandlerFunc(p.list))))
 	s.Handle("POST "+collection, authn(p.guard(authz.WriteProfiles, http.HandlerFunc(p.create))))
 	s.Handle("GET "+item, authn(p.guard(authz.ReadProfiles, http.HandlerFunc(p.get))))
+	s.Handle("PATCH "+item, authn(p.guard(authz.WriteProfiles, http.HandlerFunc(p.patch))))
 	s.Handle("DELETE "+item, authn(p.guard(authz.WriteProfiles, http.HandlerFunc(p.delete))))
 }
 
@@ -136,6 +138,122 @@ func (p *profileRoutes) create(w http.ResponseWriter, r *http.Request) {
 	p.log.Info("profile created", "tenant", tenant, "profile", pr.Name, "by", id.Subject)
 	w.Header().Set("Location", "/v1/tenants/"+tenant+"/profiles/"+pr.Name)
 	writeJSON(w, http.StatusAccepted, p.body(pr))
+}
+
+// patch changes a profile a user made, in place: the instances that have it follow, the ones that say their own value do not.
+// Incus applies a higher memory, a higher disk and any CPU to a running VM, and the instances are never stopped or started by it: what
+// Incus would refuse, or leave half done, is refused here with what to do (measured on the platform, see the reference page).
+func (p *profileRoutes) patch(w http.ResponseWriter, r *http.Request) {
+	tenant, name := r.PathValue("t"), r.PathValue("name")
+	if compute.Taken(name) {
+		httperr.Write(w, http.StatusForbidden, "forbidden", "the profile "+name+" is one every tenant has: it is not changed nor deleted")
+		return
+	}
+	if !compute.ValidNewProfileName(name) {
+		httperr.Write(w, http.StatusNotFound, "not_found", "no such profile")
+		return
+	}
+	var req compute.PatchProfile
+	if !decode(w, r, &req) {
+		return
+	}
+	if err := req.Validate(); err != nil {
+		p.storeError(w, err, "profile")
+		return
+	}
+	current, err := p.store.Get(r.Context(), tenant, name)
+	if err != nil {
+		p.storeError(w, err, "profile")
+		return
+	}
+	instances, err := p.instances.List(r.Context(), tenant)
+	if err != nil {
+		p.storeError(w, err, "instance")
+		return
+	}
+	if refused := p.refuseWhileInUse(w, current, req, instances); refused {
+		return
+	}
+	// Bigger, the profile makes the tenant bigger: every instance that has it counts what it comes to. Incus refuses a profile that
+	// passes a limit of the project and leaves the Profile in error until it is put back, so it is said here.
+	if req.CPU != nil || req.MemoryMiB != nil || req.DiskGiB != nil {
+		made, err := p.store.List(r.Context(), tenant)
+		if err != nil {
+			p.storeError(w, err, "profile")
+			return
+		}
+		cpu, mem, disk := orElse(req.CPU, current.CPU), orElse(req.MemoryMiB, current.MemoryMiB), orElse(req.DiskGiB, current.DiskGiB)
+		if e := quota.CheckProfileSize(instances, made, name, cpu, mem, disk); e != nil {
+			quotaExceeded(w, e)
+			return
+		}
+	}
+
+	pr, err := p.store.Patch(r.Context(), tenant, name, req)
+	if err != nil {
+		p.storeError(w, err, "profile")
+		return
+	}
+	id, _ := auth.FromContext(r.Context())
+	p.log.Info("profile changed", "tenant", tenant, "profile", name, "by", id.Subject)
+	writeJSON(w, http.StatusOK, p.body(pr))
+}
+
+// refuseWhileInUse answers, and reports true, when the patch asks for what a profile that instances have cannot do: a smaller disk (Incus
+// saves the profile and the VM keeps its disk: "Block volumes cannot be shrunk"), or less memory while a VM is running, as for an
+// instance (the API never stops one). It does not say who may change what: the route already did.
+func (p *profileRoutes) refuseWhileInUse(w http.ResponseWriter, current compute.Profile, req compute.PatchProfile, instances []compute.Instance) bool {
+	var users, running []string
+	for _, in := range instances {
+		if in.Profile != current.Name {
+			continue
+		}
+		users = append(users, in.Name)
+		if in.State == "Running" {
+			running = append(running, in.Name)
+		}
+	}
+	slices.Sort(users)
+	slices.Sort(running)
+	switch {
+	case len(users) > 0 && req.DiskGiB != nil && *req.DiskGiB < current.DiskGiB:
+		httperr.Write(w, http.StatusConflict, "in_use", "a disk cannot be made smaller: "+listOf(users)+" "+haveOrHas(users)+" this profile. "+
+			"Make another profile with the disk you want and create the instances again with it")
+		return true
+	case len(running) > 0 && req.MemoryMiB != nil && *req.MemoryMiB < current.MemoryMiB:
+		httperr.Write(w, http.StatusConflict, "running", "the memory of a running instance can only be raised: to lower it, stop "+listOf(running)+
+			", change the profile, then start "+themOrIt(running)+" again")
+		return true
+	}
+	return false
+}
+
+func orElse(v *int, otherwise int) int {
+	if v != nil {
+		return *v
+	}
+	return otherwise
+}
+
+func listOf(names []string) string {
+	if len(names) == 1 {
+		return "the instance " + names[0]
+	}
+	return "the instances " + strings.Join(names, ", ")
+}
+
+func haveOrHas(names []string) string {
+	if len(names) == 1 {
+		return "has"
+	}
+	return "have"
+}
+
+func themOrIt(names []string) string {
+	if len(names) == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 func (p *profileRoutes) delete(w http.ResponseWriter, r *http.Request) {

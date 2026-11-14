@@ -159,3 +159,52 @@ func TestProfileDeleteIsInTheForegroundAndInUseIsAConflict(t *testing.T) {
 		t.Errorf("err = %v, want an InUseError", err)
 	}
 }
+
+func TestProfilePatchChangesOnlyWhatWasGiven(t *testing.T) {
+	s, client := newProfileStore()
+	if _, err := s.Create(t.Context(), "demo", compute.CreateProfile{Name: "web", Description: "old", CPU: ptr(1), MemoryMiB: ptr(1024), DiskGiB: ptr(10),
+		SecureBoot: ptr(false), SSHPublicKeys: []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"}}); err != nil {
+		t.Fatal(err)
+	}
+	get := func() compute.Profile {
+		obj, err := client.Resource(profilesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return profileOf(obj)
+	}
+
+	got, err := s.Patch(t.Context(), "demo", "web", compute.PatchProfile{CPU: ptr(2), MemoryMiB: ptr(2048)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CPU != 2 || got.MemoryMiB != 2048 || got.DiskGiB != 10 || got.Description != "old" || got.SecureBoot == nil || len(got.SSHPublicKeys) != 1 {
+		t.Errorf("only the size was given: %+v", got)
+	}
+
+	// an emptied description, a secure boot set to null and an empty list of keys leave the object, as if it had never said them
+	if _, err := s.Patch(t.Context(), "demo", "web", compute.PatchProfile{Description: ptr(""), SecureBoot: compute.Setting[bool]{Present: true}, SSHPublicKeys: &[]string{}}); err != nil {
+		t.Fatal(err)
+	}
+	obj, _ := client.Resource(profilesGVR).Namespace("t-demo").Get(t.Context(), "web", metav1.GetOptions{})
+	for _, field := range []string{"description", "secureBoot", "sshPublicKeys"} {
+		if _, found, _ := unstructured.NestedFieldNoCopy(obj.Object, "spec", field); found {
+			t.Errorf("spec.%s is still there", field)
+		}
+	}
+	if p := get(); p.CPU != 2 || p.DiskGiB != 10 {
+		t.Errorf("the size changed with the settings: %+v", p)
+	}
+
+	// a value sets what was removed
+	if _, err := s.Patch(t.Context(), "demo", "web", compute.PatchProfile{SecureBoot: compute.Setting[bool]{Present: true, Value: ptr(true)}}); err != nil {
+		t.Fatal(err)
+	}
+	if p := get(); p.SecureBoot == nil || !*p.SecureBoot {
+		t.Errorf("secure boot not set: %+v", p.SecureBoot)
+	}
+
+	if _, err := s.Patch(t.Context(), "demo", "ghost", compute.PatchProfile{CPU: ptr(2)}); !errors.Is(err, compute.ErrNotFound) {
+		t.Errorf("a profile that does not exist: err = %v", err)
+	}
+}

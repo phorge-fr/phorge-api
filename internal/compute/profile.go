@@ -2,6 +2,7 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"slices"
 	"strings"
@@ -103,12 +104,68 @@ func (r CreateProfile) Validate() error {
 	return p.err()
 }
 
+// Setting is a field of a patch that tells three things apart: absent (Present is false, the field is left alone), null (Present
+// and a nil Value: the setting is removed) and a value. A plain pointer cannot: absent and null both decode to nil.
+type Setting[T any] struct {
+	Present bool
+	Value   *T
+}
+
+// UnmarshalJSON is called for a null too, which is how a null is told from an absent field.
+func (s *Setting[T]) UnmarshalJSON(b []byte) error {
+	s.Present = true
+	if string(b) == "null" {
+		s.Value = nil
+		return nil
+	}
+	var v T
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	s.Value = &v
+	return nil
+}
+
+// PatchProfile is what changes on a profile a user made: what is absent is left alone. The name cannot change, and the profiles every
+// tenant has (s, m and l) are not changed at all.
+type PatchProfile struct {
+	// Description set to an empty string goes back to the one made from the size.
+	Description *string `json:"description"`
+	CPU         *int    `json:"cpu"`
+	MemoryMiB   *int    `json:"memoryMiB"`
+	DiskGiB     *int    `json:"diskGiB"`
+	// SecureBoot null removes the setting: an instance then takes the default of Incus. SSHPublicKeys set to an empty list removes
+	// the keys, which is the same as none, as it is when an instance is created.
+	SecureBoot    Setting[bool] `json:"secureBoot"`
+	SSHPublicKeys *[]string     `json:"sshPublicKeys"`
+}
+
+// Validate checks the patch with the rules of the creation, before anything is sent to the cluster.
+func (r PatchProfile) Validate() error {
+	var p problems
+	if r.Description == nil && r.CPU == nil && r.MemoryMiB == nil && r.DiskGiB == nil && !r.SecureBoot.Present && r.SSHPublicKeys == nil {
+		p.add("nothing to change: give description, cpu, memoryMiB, diskGiB, secureBoot or sshPublicKeys")
+	}
+	if r.Description != nil && len(*r.Description) > MaxProfileDescription {
+		p.add("description must be at most %d characters", MaxProfileDescription)
+	}
+	checkBounds(&p, "cpu", r.CPU, MinCPU, MaxCPU)
+	checkBounds(&p, "memoryMiB", r.MemoryMiB, MinMemory, MaxMemory)
+	checkBounds(&p, "diskGiB", r.DiskGiB, MinDisk, MaxDisk)
+	if r.SSHPublicKeys != nil {
+		checkKeys(&p, *r.SSHPublicKeys)
+	}
+	return p.err()
+}
+
 // ProfileStore reads and writes the profiles a user made in a tenant. The three every tenant is created with are not objects of
 // the API: they are BuiltinProfiles. Delete is in the foreground, like every deletion.
 type ProfileStore interface {
 	List(ctx context.Context, tenant string) ([]Profile, error)
 	Get(ctx context.Context, tenant, name string) (Profile, error)
 	Create(ctx context.Context, tenant string, r CreateProfile) (Profile, error)
+	// Patch changes what the patch gives, in place: Crossplane updates the Incus profile, and the instances that have it follow.
+	Patch(ctx context.Context, tenant, name string, r PatchProfile) (Profile, error)
 	// Delete returns an *InUseError when an instance still has the profile.
 	Delete(ctx context.Context, tenant, name string) error
 }
