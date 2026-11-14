@@ -13,7 +13,7 @@ verified: 2026-11-14
 | `GET /v1/whoami` | Who the credential stands for |
 | `GET /v1/limits` | What the API enforces on a request: the bounds of an instance and the value each takes when a request leaves it out, the longest names, and the ceilings of the deployment (profiles and images per tenant, tenants per person). Any credential; nothing about a tenant |
 | `GET /v1/tenants`, `GET /v1/tenants/{t}` | The tenants you hold a role on |
-| `POST /v1/tenants`, `PATCH /v1/tenants/{t}`, `DELETE /v1/tenants/{t}` | Create a tenant for yourself (every tenant has the same limits), rename and delete it (its admins, the owner among them) |
+| `POST /v1/tenants`, `DELETE /v1/tenants/{t}` | Create a tenant for yourself (one name, and every tenant has the same limits), and delete it (its admins, the owner among them) |
 | `GET`, `POST /v1/tenants/{t}/images`, `GET`, `DELETE /v1/tenants/{t}/images/{name}` | The images of a tenant: read with a role or a key tuple (`images:read`), write with `operator` or `images:write` |
 | `GET /v1/tenants/{t}/quota` | What a tenant may hold (instances, vCPU, memory, disk, networks, profiles; the same for every tenant) and what it holds. Read with the right of the instances |
 | `GET`, `POST /v1/tenants/{t}/profiles`, `GET`, `PATCH`, `DELETE /v1/tenants/{t}/profiles/{name}` | The sizes an instance can take: the profiles `s`, `m` and `l` every tenant is created with, and the ones its users make. Read with any role or `profiles:read`, write with `operator` or `profiles:write` |

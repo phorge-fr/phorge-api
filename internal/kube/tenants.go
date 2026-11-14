@@ -2,7 +2,6 @@ package kube
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/phorge-fr/phorge-api/internal/status"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/phorge-fr/phorge-api/internal/tenants"
@@ -86,9 +84,6 @@ func (s *Tenants) Create(ctx context.Context, req tenants.CreateRequest) (tenant
 		return tenants.Tenant{}, err
 	}
 	spec := map[string]any{"owner": req.Owner}
-	if req.DisplayName != "" {
-		spec["displayName"] = req.DisplayName
-	}
 	meta := map[string]any{"name": req.Name, "namespace": TenantNamespace}
 	if req.CreatedBy != "" {
 		meta["annotations"] = map[string]any{CreatedByAnnotation: req.CreatedBy}
@@ -99,27 +94,6 @@ func (s *Tenants) Create(ctx context.Context, req tenants.CreateRequest) (tenant
 		"metadata":   meta,
 		"spec":       spec,
 	}}, metav1.CreateOptions{})
-	if err != nil {
-		return tenants.Tenant{}, mapError(err)
-	}
-	return tenantOf(obj), nil
-}
-
-// Patch changes the display name, with a JSON merge patch on the fields that were given.
-func (s *Tenants) Patch(ctx context.Context, name string, req tenants.PatchRequest) (tenants.Tenant, error) {
-	r, err := s.resource()
-	if err != nil {
-		return tenants.Tenant{}, err
-	}
-	spec := map[string]any{}
-	if req.DisplayName != nil {
-		spec["displayName"] = *req.DisplayName
-	}
-	patch, err := json.Marshal(map[string]any{"spec": spec})
-	if err != nil {
-		return tenants.Tenant{}, err
-	}
-	obj, err := r.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
 	if err != nil {
 		return tenants.Tenant{}, mapError(err)
 	}
@@ -194,14 +168,12 @@ func mapError(err error) error {
 func tenantOf(obj *unstructured.Unstructured) tenants.Tenant {
 	// A field of the wrong type reads as empty.
 	owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner")
-	displayName, _, _ := unstructured.NestedString(obj.Object, "spec", "displayName")
 	problems, _, _ := unstructured.NestedString(obj.Object, "status", "problems")
 	namespace, _, _ := unstructured.NestedString(obj.Object, "status", "namespace")
 	project, _, _ := unstructured.NestedString(obj.Object, "status", "incusProject")
 
 	t := tenants.Tenant{
 		Name:         obj.GetName(),
-		DisplayName:  displayName,
 		Owner:        owner,
 		CreatedAt:    obj.GetCreationTimestamp().Time,
 		CreatedBy:    obj.GetAnnotations()[CreatedByAnnotation],

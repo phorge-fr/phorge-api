@@ -38,9 +38,8 @@ func TestAKeyWithTheScopesOfTheNetworksTheProfilesAndTheTenantPassesTheirRoutes(
 		{"GET", "/v1/apikeys", "", http.StatusForbidden},
 		{"GET", "/v1/tenants/other/networks", "", http.StatusNotFound},
 		{"POST", "/v1/tenants/other/networks", `{"name":"x"}`, http.StatusNotFound},
-		// the tenant: rename it; there is no plan to give
-		{"PATCH", "/v1/tenants/demo", `{"displayName":"renamed"}`, http.StatusOK},
-		{"PATCH", "/v1/tenants/demo", `{"plan":"large"}`, http.StatusBadRequest},
+		// the tenant: it has nothing to patch
+		{"PATCH", "/v1/tenants/demo", `{"displayName":"renamed"}`, http.StatusMethodNotAllowed},
 		{"POST", "/v1/tenants", `{"name":"fresh","owner":"x@example.org"}`, http.StatusForbidden},
 		{"DELETE", "/v1/tenants/demo", "", http.StatusAccepted},
 	} {
@@ -66,7 +65,6 @@ func TestAKeyThatOnlyReadsTheNetworksCannotWriteThem(t *testing.T) {
 		{"POST", "/v1/tenants/demo/networks", `{"name":"two"}`, http.StatusForbidden},
 		{"DELETE", "/v1/tenants/demo/networks/lan", "", http.StatusForbidden},
 		{"GET", "/v1/tenants/demo/profiles", "", http.StatusForbidden},
-		{"PATCH", "/v1/tenants/demo", `{"displayName":"renamed"}`, http.StatusForbidden},
 		{"DELETE", "/v1/tenants/demo", "", http.StatusForbidden},
 	} {
 		if got := call(t, e, c.method, c.path, "svc_netro", c.body); got != c.want {
