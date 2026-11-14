@@ -18,7 +18,7 @@ func usersMay() Settings {
 
 func TestAPersonCreatesATenantForThemselves(t *testing.T) {
 	e := newEnvWith(t, usersMay())
-	rec := e.do(t, "POST", "/v1/tenants", "mallory", `{"name":"mine","displayName":"Mine"}`)
+	rec := e.do(t, "POST", "/v1/tenants", "mallory", `{"name":"mine"}`)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -134,20 +134,9 @@ func TestWhoamiSaysWhetherTheCallerMayCreateATenant(t *testing.T) {
 	}
 }
 
-func TestTheAdminsOfATenantChangeAndDeleteIt(t *testing.T) {
+func TestTheAdminsOfATenantDeleteIt(t *testing.T) {
 	e := newEnvWith(t, usersMay())
 	e.store.tenants["demo"] = tenants.Tenant{Name: "demo", Owner: "alice@example.org", Ready: true, NotReadySince: now}
-	for who, want := range map[string]int{"alice": 200, "tadmin": 200, "operator": 403, "user": 403, "viewer": 403, "mallory": 404, "svc": 403, "": 401} {
-		if code := call(t, e, "PATCH", "/v1/tenants/demo", who, `{"displayName":"renamed"}`); code != want {
-			t.Errorf("rename by %q: status %d, want %d", who, code, want)
-		}
-	}
-	// there is no plan to change: the field is unknown, whoever asks
-	for who, want := range map[string]int{"alice": 400, "tadmin": 400, "admin": 400, "viewer": 403} {
-		if code := call(t, e, "PATCH", "/v1/tenants/demo", who, `{"plan":"large"}`); code != want {
-			t.Errorf("plan by %q: status %d, want %d", who, code, want)
-		}
-	}
 	for who, want := range map[string]int{"operator": 403, "mallory": 404, "svc": 403, "alice": 202} {
 		if code := call(t, e, "DELETE", "/v1/tenants/demo", who, ""); code != want {
 			t.Errorf("delete by %q: status %d, want %d", who, code, want)

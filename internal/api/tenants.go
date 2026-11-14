@@ -17,8 +17,8 @@ import (
 // tenantRoutes are the routes of the tenants.
 //
 // Seeing a tenant takes a right on it (a role; for a key, the scope tenants:read too). Any person creates a tenant for themselves:
-// they own it, and the number of tenants a person owns is limited (MAX_TENANTS_PER_USER). Changing the
-// name of a tenant and deleting it is for its admins, the owner among them. Every tenant has the same limits (internal/quota).
+// they own it, and the number of tenants a person owns is limited (MAX_TENANTS_PER_USER). Deleting
+// a tenant is for its admins, the owner among them. A tenant has one name and nothing else to change: its owner cannot change either. Every tenant has the same limits (internal/quota).
 // A key never creates, changes or deletes a tenant.
 type tenantRoutes struct {
 	base
@@ -30,7 +30,6 @@ func (t *tenantRoutes) register(s *server.Server, authn func(http.Handler) http.
 	s.Handle("GET /v1/tenants", authn(http.HandlerFunc(t.list)))
 	s.Handle("POST /v1/tenants", authn(t.mayCreate(http.HandlerFunc(t.create))))
 	s.Handle("GET /v1/tenants/{t}", authn(t.visible(http.HandlerFunc(t.get))))
-	s.Handle("PATCH /v1/tenants/{t}", authn(t.visible(t.adminOfTheTenant(http.HandlerFunc(t.patch)))))
 	s.Handle("DELETE /v1/tenants/{t}", authn(t.visible(t.adminOfTheTenant(http.HandlerFunc(t.delete)))))
 }
 
@@ -67,7 +66,6 @@ func (t *tenantRoutes) adminOfTheTenant(next http.Handler) http.Handler {
 // tenantBody is how a tenant is shown.
 type tenantBody struct {
 	Name         string        `json:"name"`
-	DisplayName  string        `json:"displayName,omitempty"`
 	Owner        string        `json:"owner"`
 	Phase        tenants.Phase `json:"phase"`
 	Problems     string        `json:"problems,omitempty"`
@@ -79,7 +77,7 @@ type tenantBody struct {
 
 func (t *tenantRoutes) body(tn tenants.Tenant) tenantBody {
 	return tenantBody{
-		Name: tn.Name, DisplayName: tn.DisplayName, Owner: tn.Owner, Phase: tn.PhaseAt(t.now()),
+		Name: tn.Name, Owner: tn.Owner, Phase: tn.PhaseAt(t.now()),
 		Problems: tn.MessageAt(t.now()), Namespace: tn.Namespace, IncusProject: tn.IncusProject, CreatedAt: tn.CreatedAt, CreatedBy: tn.CreatedBy,
 	}
 }
@@ -168,25 +166,6 @@ func (t *tenantRoutes) checkOwnedTenants(r *http.Request, email string) *quota.E
 		}
 	}
 	return quota.CheckCount("tenants", owned, max, "you own too many tenants")
-}
-
-func (t *tenantRoutes) patch(w http.ResponseWriter, r *http.Request) {
-	var req tenants.PatchRequest
-	if !decode(w, r, &req) {
-		return
-	}
-	if err := req.Validate(); err != nil {
-		t.storeError(w, err, "tenant")
-		return
-	}
-	tn, err := t.store.Patch(r.Context(), r.PathValue("t"), req)
-	if err != nil {
-		t.storeError(w, err, "tenant")
-		return
-	}
-	id, _ := auth.FromContext(r.Context())
-	t.log.Info("tenant changed", "tenant", tn.Name, "by", id.Subject)
-	writeJSON(w, http.StatusOK, t.body(tn))
 }
 
 func (t *tenantRoutes) delete(w http.ResponseWriter, r *http.Request) {

@@ -28,12 +28,12 @@ func TestCreateWritesTheObject(t *testing.T) {
 	s, client := newTenantStore()
 
 	got, err := s.Create(t.Context(), tenants.CreateRequest{
-		Name: "demo", Owner: "Alice@Example.org", DisplayName: "Demo", CreatedBy: "user:admin@example.org",
+		Name: "demo", Owner: "Alice@Example.org", CreatedBy: "user:admin@example.org",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "demo" || got.Owner != "Alice@Example.org" || got.DisplayName != "Demo" || got.CreatedBy != "user:admin@example.org" {
+	if got.Name != "demo" || got.Owner != "Alice@Example.org" || got.CreatedBy != "user:admin@example.org" {
 		t.Errorf("unexpected tenant: %+v", got)
 	}
 
@@ -60,7 +60,7 @@ func TestCreateLeavesOutWhatWasNotAsked(t *testing.T) {
 	}
 	obj, _ := client.Resource(tenantsGVR).Namespace(TenantNamespace).Get(t.Context(), "demo", metav1.GetOptions{})
 	if _, found, _ := unstructured.NestedString(obj.Object, "spec", "displayName"); found {
-		t.Error("an empty display name was sent")
+		t.Error("a display name was sent: a tenant has one name")
 	}
 }
 
@@ -95,38 +95,9 @@ func TestGetAndListAndNotFound(t *testing.T) {
 	if err := s.Delete(t.Context(), "ghost"); !errors.Is(err, tenants.ErrNotFound) {
 		t.Errorf("delete: err = %v, want ErrNotFound", err)
 	}
-	if _, err := s.Patch(t.Context(), "ghost", tenants.PatchRequest{DisplayName: ptr("x")}); !errors.Is(err, tenants.ErrNotFound) {
-		t.Errorf("patch: err = %v, want ErrNotFound", err)
-	}
 }
 
 func ptr[T any](v T) *T { return &v }
-
-func TestPatchChangesOnlyWhatWasGiven(t *testing.T) {
-	s, client := newTenantStore()
-	if _, err := s.Create(t.Context(), tenants.CreateRequest{Name: "demo", Owner: "a@b", DisplayName: "Old"}); err != nil {
-		t.Fatal(err)
-	}
-
-	got, err := s.Patch(t.Context(), "demo", tenants.PatchRequest{DisplayName: ptr("New")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.DisplayName != "New" || got.Owner != "a@b" {
-		t.Errorf("after the rename: %+v", got)
-	}
-
-	if _, err := s.Patch(t.Context(), "demo", tenants.PatchRequest{DisplayName: ptr("")}); err != nil {
-		t.Fatal(err)
-	}
-	obj, _ := client.Resource(tenantsGVR).Namespace(TenantNamespace).Get(t.Context(), "demo", metav1.GetOptions{})
-	if name, _, _ := unstructured.NestedString(obj.Object, "spec", "displayName"); name != "" {
-		t.Errorf("display name = %q, want it cleared", name)
-	}
-	if owner, _, _ := unstructured.NestedString(obj.Object, "spec", "owner"); owner != "a@b" {
-		t.Errorf("owner = %q, a patch of the display name changed it", owner)
-	}
-}
 
 func TestDeleteIsInTheForeground(t *testing.T) {
 	s, client := newTenantStore()
@@ -245,7 +216,7 @@ func TestTenantOfReadsTheStatus(t *testing.T) {
 			"name": "demo", "namespace": "phorge-system", "creationTimestamp": created.Format(time.RFC3339),
 			"annotations": map[string]any{CreatedByAnnotation: "user:admin@example.org"},
 		},
-		"spec": map[string]any{"owner": "a@b", "displayName": "Demo"},
+		"spec": map[string]any{"owner": "a@b"},
 		"status": map[string]any{
 			"namespace": "t-demo", "incusProject": "t-demo", "problems": "Alias 'x' doesn't exist",
 			"conditions": []any{

@@ -4,17 +4,12 @@ package tenants
 
 import (
 	"context"
-	"fmt"
 	"time"
-	"unicode/utf8"
 
 	"github.com/phorge-fr/phorge-api/internal/auth"
 	"github.com/phorge-fr/phorge-api/internal/resource"
 	"github.com/phorge-fr/phorge-api/internal/status"
 )
-
-// MaxDisplayName is the limit of the XRD (characters, not bytes).
-const MaxDisplayName = 100
 
 // Phase is where a tenant is, for a client that polls it.
 type Phase = status.Phase
@@ -32,11 +27,10 @@ const FailedAfter = status.FailedAfter
 
 // Tenant is a Tenant object as the API presents it.
 type Tenant struct {
-	Name        string
-	DisplayName string
-	Owner       string
-	CreatedAt   time.Time
-	CreatedBy   string
+	Name      string
+	Owner     string
+	CreatedAt time.Time
+	CreatedBy string
 
 	// Namespace and IncusProject are set once the composition has made them.
 	Namespace    string
@@ -64,18 +58,11 @@ func (t Tenant) MessageAt(now time.Time) string {
 
 // CreateRequest is what creating a tenant asks for.
 type CreateRequest struct {
-	Name        string `json:"name"`
-	Owner       string `json:"owner"`
-	DisplayName string `json:"displayName"`
+	Name  string `json:"name"`
+	Owner string `json:"owner"`
 
 	// CreatedBy is the subject of the caller, recorded on the object. Not part of the request body.
 	CreatedBy string `json:"-"`
-}
-
-// PatchRequest is what changes on a tenant. The name and the owner cannot: the owner is an OpenFGA tuple, which cannot be
-// edited, and to hand a tenant over a Membership with the admin role is created.
-type PatchRequest struct {
-	DisplayName *string `json:"displayName"`
 }
 
 // InvalidError lists what is wrong with a request, field by field.
@@ -89,24 +76,6 @@ func (r CreateRequest) Validate() error {
 	}
 	if !auth.SafeEmail(r.Owner) {
 		problems = append(problems, "owner must be an email address")
-	}
-	if utf8.RuneCountInString(r.DisplayName) > MaxDisplayName {
-		problems = append(problems, fmt.Sprintf("displayName must be at most %d characters", MaxDisplayName))
-	}
-	if len(problems) > 0 {
-		return &InvalidError{Problems: problems}
-	}
-	return nil
-}
-
-// Validate checks the patch.
-func (r PatchRequest) Validate() error {
-	var problems []string
-	if r.DisplayName == nil {
-		problems = append(problems, "nothing to change: give displayName")
-	}
-	if r.DisplayName != nil && utf8.RuneCountInString(*r.DisplayName) > MaxDisplayName {
-		problems = append(problems, fmt.Sprintf("displayName must be at most %d characters", MaxDisplayName))
 	}
 	if len(problems) > 0 {
 		return &InvalidError{Problems: problems}
@@ -126,6 +95,5 @@ type Store interface {
 	List(ctx context.Context) ([]Tenant, error)
 	Get(ctx context.Context, name string) (Tenant, error)
 	Create(ctx context.Context, r CreateRequest) (Tenant, error)
-	Patch(ctx context.Context, name string, r PatchRequest) (Tenant, error)
 	Delete(ctx context.Context, name string) error
 }

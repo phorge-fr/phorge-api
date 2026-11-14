@@ -35,12 +35,12 @@ func TestPhaseAt(t *testing.T) {
 }
 
 func TestCreateRequestValidate(t *testing.T) {
-	good := CreateRequest{Name: "demo", Owner: "alice@example.org", DisplayName: "Demo"}
+	good := CreateRequest{Name: "demo", Owner: "alice@example.org"}
 	if err := good.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if err := (CreateRequest{Name: "demo", Owner: "alice@example.org"}).Validate(); err != nil {
-		t.Errorf("the display name is optional: %v", err)
+		t.Errorf("the owner keeps its case: %v", err)
 	}
 	if err := (CreateRequest{Name: "ab", Owner: "Alice@Example.org"}).Validate(); err != nil {
 		t.Errorf("the owner keeps its case, a two letters name is fine: %v", err)
@@ -58,7 +58,6 @@ func TestCreateRequestValidate(t *testing.T) {
 		"an owner that is a wildcard": {Name: "demo", Owner: "*"},
 		"an owner with a relation":    {Name: "demo", Owner: "a@b#admin"},
 		"an owner with a space":       {Name: "demo", Owner: "a @b"},
-		"a display name too long":     {Name: "demo", Owner: "a@b", DisplayName: strings.Repeat("é", MaxDisplayName+1)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var invalid *InvalidError
@@ -68,37 +67,9 @@ func TestCreateRequestValidate(t *testing.T) {
 		})
 	}
 
-	// Characters are counted, not bytes: 100 accents are 200 bytes.
-	if err := (CreateRequest{Name: "demo", Owner: "a@b", DisplayName: strings.Repeat("é", MaxDisplayName)}).Validate(); err != nil {
-		t.Errorf("100 characters were refused: %v", err)
-	}
-
-	err := CreateRequest{Name: "D", Owner: "x", DisplayName: strings.Repeat("a", MaxDisplayName+1)}.Validate()
+	err := CreateRequest{Name: "D", Owner: "x"}.Validate()
 	var invalid *InvalidError
-	if !errors.As(err, &invalid) || len(invalid.Problems) != 3 {
+	if !errors.As(err, &invalid) || len(invalid.Problems) != 2 {
 		t.Errorf("every problem is reported at once: %v", err)
-	}
-}
-
-func TestPatchRequestValidate(t *testing.T) {
-	name := "Production"
-	long := strings.Repeat("a", MaxDisplayName+1)
-	empty := ""
-
-	for name, ok := range map[string]PatchRequest{
-		"a display name":       {DisplayName: &name},
-		"an empty name clears": {DisplayName: &empty},
-	} {
-		if err := ok.Validate(); err != nil {
-			t.Errorf("%s: %v", name, err)
-		}
-	}
-	for name, req := range map[string]PatchRequest{
-		"nothing":                 {},
-		"a display name too long": {DisplayName: &long},
-	} {
-		if err := req.Validate(); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
 	}
 }

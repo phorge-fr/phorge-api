@@ -32,7 +32,7 @@ const (
 	WriteProfiles    Action = "write_profiles"
 	ReadMemberships  Action = "read_memberships"
 	WriteMemberships Action = "write_memberships"
-	// WriteTenant is changing and deleting the tenant that the caller administers: the admin role of the tenant, which the owner
+	// WriteTenant is deleting the tenant that the caller administers: the admin role of the tenant, which the owner
 	// holds. A key has no scope for it yet.
 	WriteTenant Action = "write_tenant"
 )
@@ -74,7 +74,7 @@ var keyScopes = map[string]Action{
 // <resource>:<verb>, and a console groups them by resource.
 var scopeDescriptions = map[string]string{
 	"tenants:read":      "See the tenant and what it holds",
-	"tenants:write":     "Rename the tenant and delete it, which destroys its virtual machines",
+	"tenants:write":     "Delete the tenant, which destroys its virtual machines",
 	"instances:read":    "See the instances",
 	"instances:write":   "Create, change, start, stop and delete instances",
 	"images:read":       "See the images",
