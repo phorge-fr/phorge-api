@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.16.0](https://github.com/phorge-fr/phorge-api/compare/v0.15.1...v0.16.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* A tenant has one name
+* Remove the plan from the API
+
+### Features
+
+* A tenant has one name ([81e20d8](https://github.com/phorge-fr/phorge-api/commit/81e20d826c90acc578a77373f2f5a2e4407639ba)), closes [#118](https://github.com/phorge-fr/phorge-api/issues/118)
+* Change a profile in place ([3d779dd](https://github.com/phorge-fr/phorge-api/commit/3d779dda58281f90527277a11b382eb76c8a6235)), closes [#135](https://github.com/phorge-fr/phorge-api/issues/135)
+* Remove the plan from the API ([3cb3e1d](https://github.com/phorge-fr/phorge-api/commit/3cb3e1d735ace74ccf121445fce02ed1e2c99007)), closes [#139](https://github.com/phorge-fr/phorge-api/issues/139)
+
 ## [0.15.1](https://github.com/phorge-fr/phorge-api/compare/v0.15.0...v0.15.1) (2026-11-11)
 
 
