@@ -8,8 +8,8 @@ require (
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/prometheus/client_golang v1.25.0
-	k8s.io/apimachinery v0.37.2
-	k8s.io/client-go v0.37.2
+	k8s.io/apimachinery v0.37.3
+	k8s.io/client-go v0.37.3
 )
 
 require (
